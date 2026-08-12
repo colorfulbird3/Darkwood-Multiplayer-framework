@@ -1,5 +1,9 @@
 # Darkwood Multiplayer Framework
 
+这是正在开发中的 Darkwood 主机权威联机框架与游戏适配层。`0.8.0-alpha.5` 已实现独立 Telepathy Host/Client、Protocol Envelope/Handshake、实时存档分块收发、隔离存档加载、Entity Registry 校验、独立 WorldSnapshot、实体/容器增量同步，以及主机和客户端玩家的双向姿态广播。
+
+当前仍是需要双端游戏验证的 alpha，不应视为完整可玩版本。场景切换权威流程和客户端容器 Action Request/Host 原子事务仍在开发。
+
 开源中的网络同步架构与 Darkwood 适配层实验工程。
 
 ## 构建

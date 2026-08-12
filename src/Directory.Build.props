@@ -2,9 +2,8 @@
   <PropertyGroup>
     <DmfDarkwoodDir Condition="'$(DmfDarkwoodDir)' == ''">$(DMF_DARKWOOD_DIR)</DmfDarkwoodDir>
     <DmfDependencyDir Condition="'$(DmfDependencyDir)' == ''">$(DMF_DEPENDENCY_DIR)</DmfDependencyDir>
-    <DmfLocalBuildRoot Condition="'$(DmfLocalBuildRoot)' == ''">$(MSBuildThisFileDirectory)..\artifacts-local</DmfLocalBuildRoot>
-    <BaseIntermediateOutputPath>$(DmfLocalBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(DmfLocalBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
-    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;artifacts-local\**</DefaultItemExcludes>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts-local\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\artifacts-local\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;src-staging\**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

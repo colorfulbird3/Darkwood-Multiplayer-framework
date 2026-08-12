@@ -15,6 +15,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramewor
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.Network", "DarkwoodMultiplayerFramework.Network\DarkwoodMultiplayerFramework.Network.csproj", "{B920857E-9DA3-4BD4-938E-9A74F09E1090}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.Protocol", "DarkwoodMultiplayerFramework.Protocol\DarkwoodMultiplayerFramework.Protocol.csproj", "{0F9DA104-90AA-46F1-9BD7-0751BD33F4A0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.SelfTests", "DarkwoodMultiplayerFramework.SelfTests\DarkwoodMultiplayerFramework.SelfTests.csproj", "{C88D3F8B-F12A-4BDB-A55A-B7B2F1414A30}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.Rendering", "DarkwoodMultiplayerFramework.Rendering\DarkwoodMultiplayerFramework.Rendering.csproj", "{7C36CB08-06B5-4C6C-B087-49A98AB6DBAD}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.Snapshots", "DarkwoodMultiplayerFramework.Snapshots\DarkwoodMultiplayerFramework.Snapshots.csproj", "{14F171BB-158C-4DB6-824C-73B0909A62BB}"
@@ -54,6 +58,14 @@ Global
 		{B920857E-9DA3-4BD4-938E-9A74F09E1090}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B920857E-9DA3-4BD4-938E-9A74F09E1090}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B920857E-9DA3-4BD4-938E-9A74F09E1090}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0F9DA104-90AA-46F1-9BD7-0751BD33F4A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F9DA104-90AA-46F1-9BD7-0751BD33F4A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F9DA104-90AA-46F1-9BD7-0751BD33F4A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F9DA104-90AA-46F1-9BD7-0751BD33F4A0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C88D3F8B-F12A-4BDB-A55A-B7B2F1414A30}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C88D3F8B-F12A-4BDB-A55A-B7B2F1414A30}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C88D3F8B-F12A-4BDB-A55A-B7B2F1414A30}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C88D3F8B-F12A-4BDB-A55A-B7B2F1414A30}.Release|Any CPU.Build.0 = Release|Any CPU
 		{7C36CB08-06B5-4C6C-B087-49A98AB6DBAD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7C36CB08-06B5-4C6C-B087-49A98AB6DBAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C36CB08-06B5-4C6C-B087-49A98AB6DBAD}.Release|Any CPU.ActiveCfg = Release|Any CPU

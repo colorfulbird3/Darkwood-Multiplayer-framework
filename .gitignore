@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+artifacts-local/
+.vs/
+*.user
+*.suo
+BepInEx/LogOutput.log
+*.sav
+*.save
+*.dmp

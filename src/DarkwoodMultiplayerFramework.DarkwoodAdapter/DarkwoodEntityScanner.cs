@@ -21,6 +21,8 @@ public sealed class DarkwoodEntityScanner
             {
                 if (!(component is Character || component is Door || component is Window || component is Item || component is Inventory))
                     continue;
+                if (component is Character && component.GetComponentInParent<Player>() != null)
+                    continue;
                 if (component is Inventory && component.GetComponentInParent<Player>() != null)
                     continue;
                 if (seen.Add(component.GetInstanceID()))
