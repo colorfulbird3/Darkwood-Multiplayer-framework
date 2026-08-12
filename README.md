@@ -6,6 +6,8 @@
 >
 > Release details: [`RELEASE-NOTES-0.8.6-alpha.1.md`](RELEASE-NOTES-0.8.6-alpha.1.md). Runtime Entity, Scene Transition, Reconnect, Drop, Door and Combat remain future work.
 
+安装包下载：[`Darkwood-Multiplayer-Framework-v0.8.6-alpha.1.zip`](Releases/0.8.6-alpha.1/Darkwood-Multiplayer-Framework-v0.8.6-alpha.1.zip)
+
 这是正在开发中的 Darkwood 主机权威联机框架与游戏适配层。`0.8.6-alpha.1` 已实现独立 Telepathy Host/Client、Protocol Envelope/Handshake、实时存档分块收发、隔离存档加载、Entity Registry 校验、独立 WorldSnapshot、实体/容器增量同步、双向玩家姿态广播，以及第一条主机权威 Pickup Action 链路。
 
 当前仍是需要双端游戏验证的 alpha，不应视为完整可玩版本。场景切换权威流程和客户端容器 Action Request/Host 原子事务仍在开发。
