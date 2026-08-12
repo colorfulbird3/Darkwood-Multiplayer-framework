@@ -1,0 +1,14 @@
+<Project>
+  <ItemGroup Condition="'$(DMFDarkwoodDir)' != ''">
+    <Reference Update="Assembly-CSharp" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\Assembly-CSharp.dll" />
+    <Reference Update="UnityEngine" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.dll" />
+    <Reference Update="UnityEngine.CoreModule" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.CoreModule.dll" />
+    <Reference Update="UnityEngine.InputLegacyModule" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.InputLegacyModule.dll" />
+    <Reference Update="UnityEngine.PhysicsModule" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.PhysicsModule.dll" />
+    <Reference Update="UnityEngine.AudioModule" HintPath="$(DMFDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.AudioModule.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(DMFDependencyDir)' != ''">
+    <Reference Update="BepInEx" HintPath="$(DMFDependencyDir)\core\BepInEx.dll" />
+    <Reference Update="0Harmony" HintPath="$(DMFDependencyDir)\core\0Harmony.dll" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,203 @@
+using System;
+using System.IO;
+using System.Text;
+
+namespace DarkwoodMultiplayerFramework.Protocol;
+
+public readonly struct SaveTransferRequest
+{
+    public SaveTransferRequest(Guid requestId) { RequestId = requestId; }
+    public Guid RequestId { get; }
+}
+
+public readonly struct SaveTransferManifest
+{
+    public SaveTransferManifest(Guid transferId, int profileId, long totalBytes, int chunkCount, byte[] sha256, string description)
+    { TransferId=transferId; ProfileId=profileId; TotalBytes=totalBytes; ChunkCount=chunkCount; Sha256=sha256 ?? Array.Empty<byte>(); Description=description ?? string.Empty; }
+    public Guid TransferId { get; }
+    public int ProfileId { get; }
+    public long TotalBytes { get; }
+    public int ChunkCount { get; }
+    public byte[] Sha256 { get; }
+    public string Description { get; }
+}
+
+public readonly struct SaveTransferChunk
+{
+    public SaveTransferChunk(Guid transferId, int index, int total, byte[] data, byte[] hash)
+    { TransferId=transferId; Index=index; Total=total; Data=data ?? Array.Empty<byte>(); Hash=hash ?? Array.Empty<byte>(); }
+    public Guid TransferId { get; }
+    public int Index { get; }
+    public int Total { get; }
+    public byte[] Data { get; }
+    public byte[] Hash { get; }
+}
+
+public readonly struct SaveTransferApplied
+{
+    public SaveTransferApplied(Guid transferId, int profileId, string saveDirectory)
+    { TransferId=transferId; ProfileId=profileId; SaveDirectory=saveDirectory??string.Empty; }
+    public Guid TransferId { get; } public int ProfileId { get; } public string SaveDirectory { get; }
+}
+
+
+public readonly struct WorldSnapshotManifest
+{
+    public WorldSnapshotManifest(Guid snapshotId, long totalBytes, int chunkCount, byte[] sha256, string scene, string registryDigest, long serverTick)
+    { SnapshotId=snapshotId; TotalBytes=totalBytes; ChunkCount=chunkCount; Sha256=sha256 ?? Array.Empty<byte>(); Scene=scene ?? string.Empty; RegistryDigest=registryDigest ?? string.Empty; ServerTick=serverTick; }
+    public Guid SnapshotId { get; }
+    public long TotalBytes { get; }
+    public int ChunkCount { get; }
+    public byte[] Sha256 { get; }
+    public string Scene { get; }
+    public string RegistryDigest { get; }
+    public long ServerTick { get; }
+}
+
+public readonly struct WorldSnapshotChunk
+{
+    public WorldSnapshotChunk(Guid snapshotId, int index, int total, byte[] data, byte[] hash)
+    { SnapshotId=snapshotId; Index=index; Total=total; Data=data ?? Array.Empty<byte>(); Hash=hash ?? Array.Empty<byte>(); }
+    public Guid SnapshotId { get; }
+    public int Index { get; }
+    public int Total { get; }
+    public byte[] Data { get; }
+    public byte[] Hash { get; }
+}
+
+public readonly struct WorldSnapshotApplied
+{
+    public WorldSnapshotApplied(Guid snapshotId, string scene, string registryDigest, long serverTick, int entityCount)
+    { SnapshotId=snapshotId; Scene=scene??string.Empty; RegistryDigest=registryDigest??string.Empty; ServerTick=serverTick; EntityCount=entityCount; }
+    public Guid SnapshotId { get; } public string Scene { get; } public string RegistryDigest { get; } public long ServerTick { get; } public int EntityCount { get; }
+}
+
+public readonly struct EntityStateWire
+{
+    public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision)
+    { Value=value; Persistent=persistent; Kind=kind; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; Health=health; StateA=stateA; StateB=stateB; Flags=flags; Animation=animation ?? string.Empty; Frame=frame; Revision=revision; }
+    public ulong Value { get; } public bool Persistent { get; } public byte Kind { get; }
+    public float X { get; } public float Y { get; } public float Z { get; }
+    public float Qx { get; } public float Qy { get; } public float Qz { get; } public float Qw { get; }
+    public float Health { get; } public int StateA { get; } public int StateB { get; } public byte Flags { get; }
+    public string Animation { get; } public int Frame { get; } public ulong Revision { get; }
+}
+
+public readonly struct EntityDeltaMessage
+{
+    public EntityDeltaMessage(string scene, long serverTick, EntityStateWire[] entities, EntityStateWire[] despawns)
+    { Scene=scene ?? string.Empty; ServerTick=serverTick; Entities=entities ?? Array.Empty<EntityStateWire>(); Despawns=despawns ?? Array.Empty<EntityStateWire>(); }
+    public string Scene { get; } public long ServerTick { get; } public EntityStateWire[] Entities { get; } public EntityStateWire[] Despawns { get; }
+}
+
+public readonly struct ReadyMessage
+{
+    public ReadyMessage(string scene,string registryDigest){Scene=scene??string.Empty;RegistryDigest=registryDigest??string.Empty;}
+    public string Scene {get;} public string RegistryDigest {get;}
+}
+
+public readonly struct ProtocolErrorMessage
+{
+    public ProtocolErrorMessage(string code,string detail){Code=code??string.Empty;Detail=detail??string.Empty;}
+    public string Code {get;} public string Detail {get;}
+}
+
+public readonly struct InventorySlotWire
+{
+    public InventorySlotWire(string type,int amount,float durability,int quality,bool recipe){Type=type??string.Empty;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;}
+    public string Type {get;} public int Amount {get;} public float Durability {get;} public int Quality {get;} public bool Recipe {get;}
+}
+
+public readonly struct InventoryStateMessage
+{
+    public InventoryStateMessage(ulong value,bool persistent,ulong revision,InventorySlotWire[] slots){Value=value;Persistent=persistent;Revision=revision;Slots=slots??Array.Empty<InventorySlotWire>();}
+    public ulong Value {get;} public bool Persistent {get;} public ulong Revision {get;} public InventorySlotWire[] Slots {get;}
+}
+
+public readonly struct PlayerPoseMessage
+{
+    public PlayerPoseMessage(int playerId,uint sequence,string scene,float x,float y,float z,float qx,float qy,float qz,float qw,byte flags,string torsoClip,int torsoFrame,string legsClip,int legsFrame)
+    { PlayerId=playerId;Sequence=sequence;Scene=scene??string.Empty;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;Flags=flags;TorsoClip=torsoClip??string.Empty;TorsoFrame=torsoFrame;LegsClip=legsClip??string.Empty;LegsFrame=legsFrame; }
+    public int PlayerId {get;} public uint Sequence {get;} public string Scene {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public byte Flags {get;} public string TorsoClip {get;} public int TorsoFrame {get;} public string LegsClip {get;} public int LegsFrame {get;}
+}
+
+public enum ActionKindWire : byte { Pickup = 1 }
+
+public readonly struct ActionRequestMessage
+{
+    public ActionRequestMessage(Guid requestId,int playerId,ActionKindWire kind,ulong targetValue,bool targetPersistent,ulong expectedRevision,byte[] payload)
+    {RequestId=requestId;PlayerId=playerId;Kind=kind;TargetValue=targetValue;TargetPersistent=targetPersistent;ExpectedRevision=expectedRevision;Payload=payload??Array.Empty<byte>();}
+    public Guid RequestId{get;} public int PlayerId{get;} public ActionKindWire Kind{get;} public ulong TargetValue{get;} public bool TargetPersistent{get;} public ulong ExpectedRevision{get;} public byte[] Payload{get;}
+}
+
+public readonly struct ActionResultMessage
+{
+    public ActionResultMessage(Guid requestId,ActionKindWire kind,ulong targetValue,bool targetPersistent,ulong revision,byte[] payload)
+    {RequestId=requestId;Kind=kind;TargetValue=targetValue;TargetPersistent=targetPersistent;Revision=revision;Payload=payload??Array.Empty<byte>();}
+    public Guid RequestId{get;} public ActionKindWire Kind{get;} public ulong TargetValue{get;} public bool TargetPersistent{get;} public ulong Revision{get;} public byte[] Payload{get;}
+}
+
+public readonly struct ActionRejectedMessage
+{
+    public ActionRejectedMessage(Guid requestId,ActionKindWire kind,ulong targetValue,bool targetPersistent,ulong currentRevision,string errorCode)
+    {RequestId=requestId;Kind=kind;TargetValue=targetValue;TargetPersistent=targetPersistent;CurrentRevision=currentRevision;ErrorCode=errorCode??string.Empty;}
+    public Guid RequestId{get;} public ActionKindWire Kind{get;} public ulong TargetValue{get;} public bool TargetPersistent{get;} public ulong CurrentRevision{get;} public string ErrorCode{get;}
+}
+
+public readonly struct PickupResultPayload
+{
+    public PickupResultPayload(string itemType,int amount,float durability,int quality,bool recipe)
+    {ItemType=itemType??string.Empty;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;}
+    public string ItemType{get;} public int Amount{get;} public float Durability{get;} public int Quality{get;} public bool Recipe{get;}
+}
+
+public static class ReplicationProtocolCodec
+{
+    private const int MaxChunks = 4096, MaxEntities = 4096, MaxString = 4096, MaxHash = 64;
+    public static byte[] Encode(SaveTransferRequest m) => Write(w => w.Write(m.RequestId.ToByteArray()));
+    public static SaveTransferRequest DecodeSaveTransferRequest(byte[] p) => Read(p, r => new SaveTransferRequest(new Guid(ReadExact(r,16))));
+    public static byte[] Encode(SaveTransferManifest m) => Write(w => { w.Write(m.TransferId.ToByteArray()); w.Write(m.ProfileId); w.Write(m.TotalBytes); w.Write(m.ChunkCount); WriteBytes(w,m.Sha256,MaxHash); WriteString(w,m.Description); });
+    public static SaveTransferManifest DecodeSaveTransferManifest(byte[] p) => Read(p,r => new SaveTransferManifest(new Guid(ReadExact(r,16)),r.ReadInt32(),r.ReadInt64(),ReadCount(r,MaxChunks),ReadBytes(r,MaxHash),ReadString(r)));
+    public static byte[] Encode(SaveTransferChunk m) => Write(w => { w.Write(m.TransferId.ToByteArray()); w.Write(m.Index); w.Write(m.Total); WriteBytes(w,m.Hash,MaxHash); WriteBytes(w,m.Data,SnapshotMax); });
+    public static SaveTransferChunk DecodeSaveTransferChunk(byte[] p) => Read(p,r => { var id=new Guid(ReadExact(r,16));var index=r.ReadInt32();var total=ReadCount(r,MaxChunks);var hash=ReadBytes(r,MaxHash);var data=ReadBytes(r,SnapshotMax);return new SaveTransferChunk(id,index,total,data,hash); });
+    public static byte[] Encode(SaveTransferApplied m) => Write(w=>{w.Write(m.TransferId.ToByteArray());w.Write(m.ProfileId);WriteString(w,m.SaveDirectory);});
+    public static SaveTransferApplied DecodeSaveTransferApplied(byte[] p)=>Read(p,r=>new SaveTransferApplied(new Guid(ReadExact(r,16)),r.ReadInt32(),ReadString(r)));
+    public static byte[] Encode(WorldSnapshotManifest m) => Write(w => { w.Write(m.SnapshotId.ToByteArray()); w.Write(m.TotalBytes); w.Write(m.ChunkCount); WriteBytes(w,m.Sha256,MaxHash); WriteString(w,m.Scene); WriteString(w,m.RegistryDigest); w.Write(m.ServerTick); });
+    public static WorldSnapshotManifest DecodeWorldSnapshotManifest(byte[] p) => Read(p,r => new WorldSnapshotManifest(new Guid(ReadExact(r,16)),r.ReadInt64(),ReadCount(r,MaxChunks),ReadBytes(r,MaxHash),ReadString(r),ReadString(r),r.ReadInt64()));
+    public static byte[] Encode(WorldSnapshotChunk m) => Write(w => { w.Write(m.SnapshotId.ToByteArray()); w.Write(m.Index); w.Write(m.Total); WriteBytes(w,m.Hash,MaxHash); WriteBytes(w,m.Data,SnapshotMax); });
+    public static WorldSnapshotChunk DecodeWorldSnapshotChunk(byte[] p) => Read(p,r => { var id=new Guid(ReadExact(r,16));var index=r.ReadInt32();var total=ReadCount(r,MaxChunks);var hash=ReadBytes(r,MaxHash);var data=ReadBytes(r,SnapshotMax);return new WorldSnapshotChunk(id,index,total,data,hash); });
+    public static byte[] Encode(WorldSnapshotApplied m)=>Write(w=>{w.Write(m.SnapshotId.ToByteArray());WriteString(w,m.Scene);WriteString(w,m.RegistryDigest);w.Write(m.ServerTick);w.Write(m.EntityCount);});
+    public static WorldSnapshotApplied DecodeWorldSnapshotApplied(byte[] p)=>Read(p,r=>new WorldSnapshotApplied(new Guid(ReadExact(r,16)),ReadString(r),ReadString(r),r.ReadInt64(),r.ReadInt32()));
+    public static byte[] Encode(EntityDeltaMessage m) => Write(w => { WriteString(w,m.Scene); w.Write(m.ServerTick); WriteEntities(w,m.Entities); WriteEntities(w,m.Despawns); });
+    public static EntityDeltaMessage DecodeEntityDelta(byte[] p) => Read(p,r => new EntityDeltaMessage(ReadString(r),r.ReadInt64(),ReadEntities(r),ReadEntities(r)));
+    public static byte[] Encode(ReadyMessage m) => Write(w=>{WriteString(w,m.Scene);WriteString(w,m.RegistryDigest);});
+    public static ReadyMessage DecodeReady(byte[] p) => Read(p,r=>new ReadyMessage(ReadString(r),ReadString(r)));
+    public static byte[] Encode(ProtocolErrorMessage m) => Write(w=>{WriteString(w,m.Code);WriteString(w,m.Detail);});
+    public static ProtocolErrorMessage DecodeError(byte[] p) => Read(p,r=>new ProtocolErrorMessage(ReadString(r),ReadString(r)));
+    public static byte[] Encode(InventoryStateMessage m)=>Write(w=>{w.Write(m.Value);w.Write(m.Persistent);w.Write(m.Revision);if(m.Slots.Length>256)throw new InvalidOperationException("Too many inventory slots.");w.Write(m.Slots.Length);foreach(var s in m.Slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}});
+    public static InventoryStateMessage DecodeInventoryState(byte[] p)=>Read(p,r=>{var value=r.ReadUInt64();var persistent=r.ReadBoolean();var revision=r.ReadUInt64();var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return new InventoryStateMessage(value,persistent,revision,slots);});
+    public static byte[] Encode(PlayerPoseMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Sequence);WriteString(w,m.Scene);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write(m.Flags);WriteString(w,m.TorsoClip);w.Write(m.TorsoFrame);WriteString(w,m.LegsClip);w.Write(m.LegsFrame);});
+    public static PlayerPoseMessage DecodePlayerPose(byte[] p)=>Read(p,r=>new PlayerPoseMessage(r.ReadInt32(),r.ReadUInt32(),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadByte(),ReadString(r),r.ReadInt32(),ReadString(r),r.ReadInt32()));
+    public static byte[] Encode(ActionRequestMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write(m.PlayerId);w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.ExpectedRevision);WriteBytes(w,m.Payload,ActionPayloadMax);});
+    public static ActionRequestMessage DecodeActionRequest(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var player=r.ReadInt32();var kind=ReadActionKind(r);return new ActionRequestMessage(id,player,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadBytes(r,ActionPayloadMax));});
+    public static byte[] Encode(ActionResultMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.Revision);WriteBytes(w,m.Payload,ActionPayloadMax);});
+    public static ActionResultMessage DecodeActionResult(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var kind=ReadActionKind(r);return new ActionResultMessage(id,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadBytes(r,ActionPayloadMax));});
+    public static byte[] Encode(ActionRejectedMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.CurrentRevision);WriteString(w,m.ErrorCode);});
+    public static ActionRejectedMessage DecodeActionRejected(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var kind=ReadActionKind(r);return new ActionRejectedMessage(id,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadString(r));});
+    public static byte[] Encode(PickupResultPayload m)=>Write(w=>{WriteString(w,m.ItemType);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);});
+    public static PickupResultPayload DecodePickupResult(byte[] p)=>Read(p,r=>new PickupResultPayload(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
+    private const int SnapshotMax = 256*1024;
+    private const int ActionPayloadMax = 64*1024;
+    private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);} }
+    private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++) a[i]=new EntityStateWire(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadByte(),ReadString(r),r.ReadInt32(),r.ReadUInt64()); return a; }
+    private static byte[] Write(Action<BinaryWriter> a){using var s=new MemoryStream();using var w=new BinaryWriter(s,Encoding.UTF8);a(w);return s.ToArray();}
+    private static T Read<T>(byte[] p,Func<BinaryReader,T> a){using var s=new MemoryStream(p??Array.Empty<byte>());using var r=new BinaryReader(s,Encoding.UTF8);var v=a(r);if(s.Position!=s.Length)throw new InvalidDataException("Trailing protocol payload.");return v;}
+    private static void WriteString(BinaryWriter w,string s){var b=Encoding.UTF8.GetBytes(s??string.Empty);if(b.Length>MaxString)throw new InvalidOperationException("String too long.");w.Write(b.Length);w.Write(b);}
+    private static string ReadString(BinaryReader r){var n=ReadCount(r,MaxString);return Encoding.UTF8.GetString(ReadExact(r,n));}
+    private static void WriteBytes(BinaryWriter w,byte[] b,int max){if(b.Length>max)throw new InvalidOperationException("Byte field too large.");w.Write(b.Length);w.Write(b);}
+    private static byte[] ReadBytes(BinaryReader r,int max){var n=ReadCount(r,max);return ReadExact(r,n);}
+    private static int ReadCount(BinaryReader r,int max){var n=r.ReadInt32();if(n<0||n>max)throw new InvalidDataException("Count exceeds limit.");return n;}
+    private static byte[] ReadExact(BinaryReader r,int n){var b=r.ReadBytes(n);if(b.Length!=n)throw new EndOfStreamException();return b;}
+    private static ActionKindWire ReadActionKind(BinaryReader r){var kind=(ActionKindWire)r.ReadByte();if(!Enum.IsDefined(typeof(ActionKindWire),kind))throw new InvalidDataException("Unknown action kind.");return kind;}
+    private static void RequireActionId(Guid id){if(id==Guid.Empty)throw new InvalidDataException("Action request id must not be empty.");}
+}

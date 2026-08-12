@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <DMFDarkwoodDir Condition="'$(DMFDarkwoodDir)' == ''">$(DMF_DARKWOOD_DIR)</DMFDarkwoodDir>
+    <DMFDependencyDir Condition="'$(DMFDependencyDir)' == ''">$(DMF_DEPENDENCY_DIR)</DMFDependencyDir>
+  </PropertyGroup>
+</Project>
