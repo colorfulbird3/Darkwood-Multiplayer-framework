@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DarkwoodMultiplayerFramework.DarkwoodAdapter</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DarkwoodMultiplayerFramework.Core\DarkwoodMultiplayerFramework.Core.csproj" />
+    <ProjectReference Include="..\DarkwoodMultiplayerFramework.Entities\DarkwoodMultiplayerFramework.Entities.csproj" />
+    <Reference Include="Assembly-CSharp"><HintPath>$(DmfDarkwoodDir)\Darkwood_Data\Managed\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(DmfDependencyDir)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(DmfDependencyDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mirror"><HintPath>$(DmfDependencyDir)\BepInEx\plugins\Mirror.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(DmfDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(DmfDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
