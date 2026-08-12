@@ -1,0 +1,10 @@
+<Project>
+  <ItemGroup>
+    <Reference Update="BepInEx" HintPath="$(DmfDependencyDir)\BepInEx\core\BepInEx.dll" />
+    <Reference Update="0Harmony" HintPath="$(DmfDependencyDir)\BepInEx\core\0Harmony.dll" />
+    <Reference Update="Assembly-CSharp" HintPath="$(DmfDarkwoodDir)\Darkwood_Data\Managed\Assembly-CSharp.dll" />
+    <Reference Update="UnityEngine" HintPath="$(DmfDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.dll" />
+    <Reference Update="UnityEngine.CoreModule" HintPath="$(DmfDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.CoreModule.dll" />
+    <Reference Update="UnityEngine.InputLegacyModule" HintPath="$(DmfDarkwoodDir)\Darkwood_Data\Managed\UnityEngine.InputLegacyModule.dll" />
+  </ItemGroup>
+</Project>

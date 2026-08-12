@@ -5,6 +5,8 @@ using DarkwoodMultiplayerFramework.Core;
 
 namespace DarkwoodMultiplayerFramework.Network;
 
+public enum DeliveryMode { Reliable, UnreliableSequenced }
+
 public interface ITransport : IDisposable
 {
     bool IsConnected { get; }
@@ -12,7 +14,7 @@ public interface ITransport : IDisposable
     event Action<ArraySegment<byte>>? DataReceived;
     event Action? Disconnected;
     void Connect(string address, ushort port);
-    void Send(ArraySegment<byte> payload);
+    void Send(ArraySegment<byte> payload, DeliveryMode mode = DeliveryMode.Reliable);
     void Tick(int processLimit = 100);
     void Stop();
 }
@@ -37,7 +39,7 @@ public sealed class TelepathyClientTransport : ITransport
     public event Action<ArraySegment<byte>>? DataReceived;
     public event Action? Disconnected;
     public void Connect(string address, ushort port) => Invoke("Connect", address, (int)port);
-    public void Send(ArraySegment<byte> payload)
+    public void Send(ArraySegment<byte> payload, DeliveryMode mode = DeliveryMode.Reliable)
     {
         var bytes = new byte[payload.Count];
         Array.Copy(payload.Array!, payload.Offset, bytes, 0, payload.Count);

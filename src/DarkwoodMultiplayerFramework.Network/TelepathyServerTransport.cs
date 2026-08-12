@@ -21,7 +21,11 @@ public sealed class TelepathyServerTransport : IDisposable
     public event Action<int>? Connected;
     public event Action<int, ArraySegment<byte>>? DataReceived;
     public event Action<int>? Disconnected;
-    public void Start(ushort port) => serverType.GetMethod("Start")!.Invoke(server, new object[] { (int)port });
+    public void Start(ushort port)
+    {
+        var result = serverType.GetMethod("Start")!.Invoke(server, new object[] { (int)port });
+        if (result is bool started && !started) throw new InvalidOperationException("Telepathy server is already active.");
+    }
     public void Send(int connectionId, ArraySegment<byte> payload)
     {
         var bytes = new byte[payload.Count]; Array.Copy(payload.Array!, payload.Offset, bytes, 0, payload.Count);
@@ -42,5 +46,6 @@ public sealed class TelepathyServerTransport : IDisposable
         }
     }
     public void Stop() => serverType.GetMethod("Stop")!.Invoke(server, Array.Empty<object>());
+    public void Disconnect(int connectionId) => serverType.GetMethod("Disconnect")!.Invoke(server, new object[] { connectionId });
     public void Dispose() => Stop();
 }

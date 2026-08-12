@@ -1,0 +1,155 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using DarkwoodMultiplayerFramework.Core;
+using DarkwoodMultiplayerFramework.Entities;
+using DarkwoodMultiplayerFramework.Network;
+using DarkwoodMultiplayerFramework.Protocol;
+using DarkwoodMultiplayerFramework.Snapshots;
+
+var tests = new (string Name, Action Run)[]
+{
+    ("compatible handshake", CompatibleHandshake),
+    ("protocol mismatch", ProtocolMismatch),
+    ("protocol envelope roundtrip", EnvelopeRoundtrip),
+    ("protocol envelope bad magic", EnvelopeBadMagic),
+    ("protocol envelope truncated", EnvelopeTruncated),
+    ("client hello roundtrip", ClientHelloRoundtrip),
+    ("save protocol roundtrip", SaveProtocolRoundtrip),
+    ("chunk transfer reorder", ChunkTransferReorder),
+    ("chunk transfer corrupt", ChunkTransferCorrupt),
+    ("entity delta roundtrip", EntityDeltaRoundtrip),
+    ("inventory state roundtrip", InventoryStateRoundtrip),
+    ("player pose roundtrip", PlayerPoseRoundtrip),
+    ("save applied roundtrip", SaveAppliedRoundtrip),
+    ("snapshot applied roundtrip", SnapshotAppliedRoundtrip),
+    ("world snapshot wire roundtrip", WorldSnapshotWireRoundtrip),
+    ("world snapshot wire corruption", WorldSnapshotWireCorruption),
+    ("telepathy loopback handshake", TelepathyLoopbackHandshake),
+    ("telepathy loopback rejection", TelepathyLoopbackRejection),
+    ("registry digest", RegistryDigest),
+    ("snapshot reorder", SnapshotReorder),
+    ("snapshot phase mismatch", SnapshotPhaseMismatch),
+    ("snapshot hash mismatch", SnapshotHashMismatch)
+};
+var failed = 0;
+foreach (var test in tests)
+{
+    try { test.Run(); Console.WriteLine("PASS " + test.Name); }
+    catch (Exception error) { failed++; Console.WriteLine("FAIL " + test.Name + ": " + error.Message); }
+}
+return failed == 0 ? 0 : 1;
+
+static ProtocolIdentity Identity(int protocol=1) => new(protocol, "0.8.0-alpha.5", "darkwood-build", 1, 1);
+static void CompatibleHandshake() => Require(HandshakeValidator.Validate(Identity(), Identity()).Accepted);
+static void ProtocolMismatch() { var result=HandshakeValidator.Validate(Identity(), Identity(2)); Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_PROTOCOL"); }
+static void EnvelopeRoundtrip()
+{
+    var sessionId=Guid.NewGuid(); var payload=Encoding.UTF8.GetBytes("hello");
+    var decoded=ProtocolEnvelopeCodec.Decode(new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(new ProtocolEnvelope(1,ProtocolMessageType.ClientHello,ProtocolFlags.Reliable,7,sessionId,payload))));
+    Require(decoded.ProtocolVersion==1 && decoded.MessageType==ProtocolMessageType.ClientHello && decoded.Flags==ProtocolFlags.Reliable && decoded.Sequence==7 && decoded.SessionId==sessionId && Encoding.UTF8.GetString(decoded.Payload)=="hello");
+}
+static void EnvelopeBadMagic()
+{
+    var packet=ProtocolEnvelopeCodec.Encode(new ProtocolEnvelope(1,ProtocolMessageType.ClientHello,ProtocolFlags.Reliable,1,Guid.NewGuid(),Array.Empty<byte>())); packet[0]^=0xff;
+    ExpectFailure(()=>ProtocolEnvelopeCodec.Decode(new ArraySegment<byte>(packet)));
+}
+static void EnvelopeTruncated()
+{
+    var packet=ProtocolEnvelopeCodec.Encode(new ProtocolEnvelope(1,ProtocolMessageType.ClientHello,ProtocolFlags.Reliable,1,Guid.NewGuid(),new byte[]{1,2,3}));
+    ExpectFailure(()=>ProtocolEnvelopeCodec.Decode(new ArraySegment<byte>(packet,0,ProtocolEnvelope.HeaderSize-1)));
+}
+static void ClientHelloRoundtrip()
+{
+    var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity())));
+    Require(decoded.Identity.ProtocolVersion==1 && decoded.Identity.FrameworkVersion=="0.8.0-alpha.5" && decoded.Identity.GameVersion=="darkwood-build" && decoded.Identity.SaveSchemaVersion==1 && decoded.Identity.SnapshotSchemaVersion==1);
+}
+static void SaveProtocolRoundtrip()
+{
+    var id=Guid.NewGuid();var hash=new byte[32];hash[0]=9;var manifest=ReplicationProtocolCodec.DecodeSaveTransferManifest(ReplicationProtocolCodec.Encode(new SaveTransferManifest(id,2,1234,3,hash,"day 4")));Require(manifest.TransferId==id&&manifest.ProfileId==2&&manifest.TotalBytes==1234&&manifest.ChunkCount==3&&manifest.Sha256[0]==9&&manifest.Description=="day 4");var data=new byte[]{3,4,5};var chunk=ReplicationProtocolCodec.DecodeSaveTransferChunk(ReplicationProtocolCodec.Encode(new SaveTransferChunk(id,1,3,data,ChunkTransferAssembler.Hash(data))));Require(chunk.Index==1&&chunk.Total==3&&chunk.Data[0]==3&&chunk.Hash.Length==32);
+}
+static void ChunkTransferReorder()
+{
+    var data=Encoding.UTF8.GetBytes(new string('x',300000)+"done");var chunks=ChunkTransferAssembler.Split(data);var id=Guid.NewGuid();var assembler=new ChunkTransferAssembler(id,data.Length,chunks.Length,ChunkTransferAssembler.Hash(data));for(var i=chunks.Length-1;i>=0;i--)assembler.Add(id,i,chunks.Length,chunks[i],ChunkTransferAssembler.Hash(chunks[i]));Require(Encoding.UTF8.GetString(assembler.Build()).EndsWith("done"));
+}
+static void ChunkTransferCorrupt()
+{
+    var data=Encoding.UTF8.GetBytes("save");var id=Guid.NewGuid();var assembler=new ChunkTransferAssembler(id,data.Length,1,ChunkTransferAssembler.Hash(data));ExpectFailure(()=>assembler.Add(id,0,1,data,new byte[32]));
+}
+static void EntityDeltaRoundtrip()
+{
+    var entity=new EntityStateWire(77,true,2,1,2,3,0,0,0,1,50,4,5,3,"open",7,9);var decoded=ReplicationProtocolCodec.DecodeEntityDelta(ReplicationProtocolCodec.Encode(new EntityDeltaMessage("scene",42,new[]{entity},Array.Empty<EntityStateWire>())));Require(decoded.Scene=="scene"&&decoded.ServerTick==42&&decoded.Entities.Length==1&&decoded.Entities[0].Value==77&&decoded.Entities[0].Revision==9);
+}
+static void InventoryStateRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeInventoryState(ReplicationProtocolCodec.Encode(new InventoryStateMessage(8,true,4,new[]{new InventorySlotWire("Wood",3,.5f,2,false)})));Require(decoded.Value==8&&decoded.Persistent&&decoded.Revision==4&&decoded.Slots.Length==1&&decoded.Slots[0].Type=="Wood"&&decoded.Slots[0].Amount==3&&Math.Abs(decoded.Slots[0].Durability-.5f)<.001f);
+}
+static void PlayerPoseRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodePlayerPose(ReplicationProtocolCodec.Encode(new PlayerPoseMessage(3,9,"forest",1,2,3,0,0,0,1,5,"walk",4,"legs",2)));Require(decoded.PlayerId==3&&decoded.Sequence==9&&decoded.Scene=="forest"&&decoded.X==1&&decoded.Flags==5&&decoded.TorsoClip=="walk"&&decoded.LegsFrame==2);
+}
+static void SaveAppliedRoundtrip()
+{
+    var id=Guid.NewGuid();var decoded=ReplicationProtocolCodec.DecodeSaveTransferApplied(ReplicationProtocolCodec.Encode(new SaveTransferApplied(id,2,"isolated")));Require(decoded.TransferId==id&&decoded.ProfileId==2&&decoded.SaveDirectory=="isolated");
+}
+static void SnapshotAppliedRoundtrip()
+{
+    var id=Guid.NewGuid();var decoded=ReplicationProtocolCodec.DecodeWorldSnapshotApplied(ReplicationProtocolCodec.Encode(new WorldSnapshotApplied(id,"forest","ABC",55,123)));Require(decoded.SnapshotId==id&&decoded.Scene=="forest"&&decoded.RegistryDigest=="ABC"&&decoded.ServerTick==55&&decoded.EntityCount==123);
+}
+static void WorldSnapshotWireRoundtrip()
+{
+    var bytes=WorldSnapshotWireCodec.Encode(new WorldSnapshotWire("forest","DIGEST",42,new[]{new byte[]{1,2}},new[]{new byte[]{3,4,5}}));
+    var decoded=WorldSnapshotWireCodec.Decode(bytes);
+    Require(decoded.Scene=="forest"&&decoded.RegistryDigest=="DIGEST"&&decoded.ServerTick==42&&decoded.EntityRecords.Length==1&&decoded.EntityRecords[0][1]==2&&decoded.InventoryRecords.Length==1&&decoded.InventoryRecords[0][2]==5);
+}
+static void WorldSnapshotWireCorruption()
+{
+    var bytes=WorldSnapshotWireCodec.Encode(new WorldSnapshotWire("forest","DIGEST",1,Array.Empty<byte[]>(),Array.Empty<byte[]>()));bytes[0]^=0xff;ExpectFailure(()=>WorldSnapshotWireCodec.Decode(bytes));
+}
+static void TelepathyLoopbackHandshake() => RunTelepathyLoopback(true);
+static void TelepathyLoopbackRejection() => RunTelepathyLoopback(false);
+static void RunTelepathyLoopback(bool compatible)
+{
+    var telepathy=FindTelepathy(); var port=FindFreePort(); var accepted=false; var rejected=string.Empty;
+    using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
+    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),compatible ? Identity() : Identity(2));
+    host.PeerAccepted += _ => accepted=true; host.PeerRejected += (_,error) => rejected=error;
+    host.Start(port); client.Connect("127.0.0.1",port);
+    var timeout=Stopwatch.StartNew();
+    while(timeout.Elapsed < TimeSpan.FromSeconds(5))
+    {
+        host.Tick(); client.Tick();
+        if(compatible && client.HandshakeComplete && host.ReadyPeerCount==1) break;
+        if(!compatible && client.Session.Lifecycle.State==ConnectionState.Failed && rejected.Length>0) break;
+        Thread.Sleep(1);
+    }
+    if(compatible) Require(accepted && client.HandshakeComplete && client.PeerId>=0 && client.HostSessionId==host.SessionId && client.Session.Lifecycle.State==ConnectionState.SaveTransfer && host.ReadyPeerCount==1);
+    else Require(!accepted && rejected=="INCOMPATIBLE_PROTOCOL" && client.LastError=="INCOMPATIBLE_PROTOCOL" && client.Session.Lifecycle.State==ConnectionState.Failed && host.ReadyPeerCount==0);
+}
+static string FindTelepathy()
+{
+    var configured=Environment.GetEnvironmentVariable("DMF_TELEPATHY_PATH"); if(!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
+    var local=Path.Combine(AppContext.BaseDirectory,"Telepathy.dll"); if(File.Exists(local)) return local;
+    var directory=new DirectoryInfo(Directory.GetCurrentDirectory());
+    while(directory!=null)
+    {
+        var candidates=new[]{Path.Combine(directory.FullName,"Payload","BepInEx","plugins","Telepathy.dll"),Path.Combine(directory.FullName,"Darkwood Multiplayer framework","Payload","BepInEx","plugins","Telepathy.dll")};
+        foreach(var candidate in candidates) if(File.Exists(candidate)) return candidate;
+        directory=directory.Parent;
+    }
+    throw new FileNotFoundException("Set DMF_TELEPATHY_PATH to run TCP loopback tests.");
+}
+static ushort FindFreePort()
+{
+    var listener=new TcpListener(IPAddress.Loopback,0); listener.Start(); var port=(ushort)((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop(); return port;
+}
+static void RegistryDigest() { var a=new EntityRegistry<object>(); var b=new EntityRegistry<object>(); a.Register(new EntityId(7,true),new object()); b.Register(new EntityId(7,true),new object()); Require(a.ComputeDigest()==b.ComputeDigest()); }
+static void SnapshotReorder() { var id=Guid.NewGuid(); var a=Encoding.UTF8.GetBytes("hello "); var b=Encoding.UTF8.GetBytes("world"); var x=new SnapshotAssembler(); x.Add(new SnapshotChunk(id,SnapshotPhase.World,1,2,b)); x.Add(new SnapshotChunk(id,SnapshotPhase.World,0,2,a)); Require(Encoding.UTF8.GetString(x.Build())=="hello world"); }
+static void SnapshotPhaseMismatch() { var id=Guid.NewGuid(); var x=new SnapshotAssembler(); x.Add(new SnapshotChunk(id,SnapshotPhase.World,0,2,new byte[]{1})); ExpectFailure(()=>x.Add(new SnapshotChunk(id,SnapshotPhase.Entities,1,2,new byte[]{2}))); }
+static void SnapshotHashMismatch() { var x=new SnapshotAssembler(); ExpectFailure(()=>x.Add(new SnapshotChunk(Guid.NewGuid(),SnapshotPhase.World,0,1,new byte[]{1},new byte[32]))); }
+static void Require(bool value) { if(!value) throw new InvalidOperationException("assertion failed"); }
+static void ExpectFailure(Action action) { try { action(); } catch(Exception error) when(error is InvalidOperationException || error is InvalidDataException || error is EndOfStreamException) { return; } throw new InvalidOperationException("expected failure"); }
