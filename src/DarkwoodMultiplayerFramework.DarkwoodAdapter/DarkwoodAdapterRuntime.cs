@@ -150,6 +150,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private bool clientSnapshotReady;
     private bool clientRegistryRequestSent;
     private bool clientSnapshotManifestReceived;
+    private bool clientRegistryStabilized;
     private float nextRegistryRequestRetry;
     private WorldSnapshotApplied? lastSnapshotApplied;
     private float nextSnapshotAckRetry;
@@ -256,7 +257,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
+        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; clientRegistryStabilized=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
         SetState(ConnectionState.Disconnected);
     }
 
@@ -314,6 +315,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private void TrySendClientRegistryReady()
     {
         if (clientSnapshotReady || clientSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
+        if (!clientRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
         var lifecycle = clientSession.Session.Lifecycle;
         if (lifecycle.State == ConnectionState.LoadingSave) lifecycle.MoveTo(ConnectionState.BuildingRegistry);
         if (lifecycle.State != ConnectionState.BuildingRegistry && lifecycle.State != ConnectionState.ApplyingSnapshot) return;
@@ -542,7 +544,40 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private IEnumerator WaitForRegistryThenReady()
     {
-        var deadline=Time.realtimeSinceStartup+60f;while((registryDirty||Player.Instance==null||registry==null)&&Time.realtimeSinceStartup<deadline)yield return null;try{if(registryDirty||Player.Instance==null||registry==null)throw new InvalidOperationException("实体注册表在 60 秒内未就绪。");TrySendClientRegistryReady();}catch(Exception error){FailClient("REGISTRY_BUILD_FAILED",error);}
+        var deadline=Time.realtimeSinceStartup+90f;
+        // 世界在存档加载后仍可能流式生成：Player.Instance 出现得很早，但场景对象
+        // 会继续分帧实例化。反复强制重建注册表，直到实体数连续 3 次稳定，
+        // 确保客户端注册表覆盖主机世界的完整对象集（否则快照库存无法绑定）。
+        var previousCount=-1;
+        var stableChecks=0;
+        while(Time.realtimeSinceStartup<deadline)
+        {
+            if(Player.Instance==null){yield return null;continue;}
+            registryDirty=true;
+            yield return null;
+            if(registry==null){yield return null;continue;}
+            var count=registry.Count;
+            if(count==previousCount)
+            {
+                stableChecks++;
+                if(stableChecks>=3)break;
+            }
+            else
+            {
+                stableChecks=0;
+                previousCount=count;
+            }
+            yield return new WaitForSeconds(1f);
+        }
+        try
+        {
+            if(Player.Instance==null||registry==null)throw new InvalidOperationException("实体注册表在 90 秒内未就绪。");
+            if(stableChecks<3)log?.LogWarning($"注册表在超时前未能稳定（最后实体数 {registry.Count}），继续尝试就绪。");
+            log?.LogInfo($"客户端注册表已稳定：{registry.Count} 个实体，摘要 {RegistryDigest}。");
+            clientRegistryStabilized=true;
+            TrySendClientRegistryReady();
+        }
+        catch(Exception error){FailClient("REGISTRY_BUILD_FAILED",error);}
     }
 
     private void PrepareSnapshot(int peer,ReadyMessage ready)
@@ -629,7 +664,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private void ReceiveSnapshotChunk(WorldSnapshotChunk chunk)
     {
-        if(incomingSnapshot==null)throw new InvalidDataException("World snapshot chunk arrived before manifest.");incomingSnapshot.Add(chunk.SnapshotId,chunk.Index,chunk.Total,chunk.Data,chunk.Hash);TransferProgress=$"正在接收世界快照：{incomingSnapshot.ReceivedChunks}/{incomingSnapshot.ChunkCount}（{(int)(incomingSnapshot.ReceivedChunks*100f/incomingSnapshot.ChunkCount)}%）";if(!incomingSnapshot.IsComplete)return;var bytes=incomingSnapshot.Build();incomingSnapshot=null;var snapshot=DarkwoodWorldSnapshotCodec.Decode(bytes);if(snapshot.Scene!=CurrentScene||snapshot.Scene!=incomingSnapshotManifest.Scene)throw new InvalidDataException("世界快照场景不一致。");if(snapshot.RegistryDigest!=incomingSnapshotManifest.RegistryDigest)throw new InvalidDataException($"快照摘要不一致：payload={snapshot.RegistryDigest}，manifest={incomingSnapshotManifest.RegistryDigest}。");if(snapshot.ServerTick!=incomingSnapshotManifest.ServerTick)throw new InvalidDataException("世界快照 tick 不一致。");replication.Apply(snapshot.Entities,true);var appliedInventories=0;var failedInventories=0;foreach(var inventory in snapshot.Inventories){if(replication.Apply(inventory))appliedInventories++;else{failedInventories++;log?.LogError($"共享容器快照无法绑定：ID={inventory.Value:X16}，名称={inventory.Name}，位置=({inventory.X:F1},{inventory.Y:F1},{inventory.Z:F1})，类型={inventory.InventoryType}。");}}if(failedInventories>0)throw new InvalidDataException($"有 {failedInventories} 个共享容器无法应用主机权威快照，已阻止客户端误进入就绪状态。");lastSnapshotApplied=new WorldSnapshotApplied(incomingSnapshotManifest.SnapshotId,snapshot.Scene,snapshot.RegistryDigest,snapshot.ServerTick,snapshot.Entities.Length);snapshotAckRetryCount=0;SendSnapshotAcknowledgement();log?.LogInfo($"世界快照应用完成：{snapshot.Entities.Length} 个实体，共享容器 {appliedInventories}/{snapshot.Inventories.Length}，tick {snapshot.ServerTick}；等待主机确认。");
+        if(incomingSnapshot==null)throw new InvalidDataException("World snapshot chunk arrived before manifest.");incomingSnapshot.Add(chunk.SnapshotId,chunk.Index,chunk.Total,chunk.Data,chunk.Hash);TransferProgress=$"正在接收世界快照：{incomingSnapshot.ReceivedChunks}/{incomingSnapshot.ChunkCount}（{(int)(incomingSnapshot.ReceivedChunks*100f/incomingSnapshot.ChunkCount)}%）";if(!incomingSnapshot.IsComplete)return;var bytes=incomingSnapshot.Build();incomingSnapshot=null;var snapshot=DarkwoodWorldSnapshotCodec.Decode(bytes);if(snapshot.Scene!=CurrentScene||snapshot.Scene!=incomingSnapshotManifest.Scene)throw new InvalidDataException("世界快照场景不一致。");if(snapshot.RegistryDigest!=incomingSnapshotManifest.RegistryDigest)throw new InvalidDataException($"快照摘要不一致：payload={snapshot.RegistryDigest}，manifest={incomingSnapshotManifest.RegistryDigest}。");if(snapshot.ServerTick!=incomingSnapshotManifest.ServerTick)throw new InvalidDataException("世界快照 tick 不一致。");replication.Apply(snapshot.Entities,true);var appliedInventories=0;var failedInventories=0;var loggedFailures=0;foreach(var inventory in snapshot.Inventories){if(replication.Apply(inventory))appliedInventories++;else{failedInventories++;if(loggedFailures<8){loggedFailures++;log?.LogError($"共享容器快照无法绑定：ID={inventory.Value:X16}，名称={inventory.Name}，位置=({inventory.X:F1},{inventory.Y:F1},{inventory.Z:F1})，类型={inventory.InventoryType}。客户端候选：{replication.DescribeNearestInventory(inventory)}");}}}if(failedInventories>0)throw new InvalidDataException($"有 {failedInventories} 个共享容器无法应用主机权威快照（客户端共享容器 {replication.SharedInventoryCount} 个），已阻止客户端误进入就绪状态。");lastSnapshotApplied=new WorldSnapshotApplied(incomingSnapshotManifest.SnapshotId,snapshot.Scene,snapshot.RegistryDigest,snapshot.ServerTick,snapshot.Entities.Length);snapshotAckRetryCount=0;SendSnapshotAcknowledgement();log?.LogInfo($"世界快照应用完成：{snapshot.Entities.Length} 个实体，共享容器 {appliedInventories}/{snapshot.Inventories.Length}，tick {snapshot.ServerTick}；等待主机确认。");
     }
 
     private void RetrySnapshotAcknowledgement()

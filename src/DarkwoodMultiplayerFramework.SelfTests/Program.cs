@@ -361,10 +361,15 @@ static void SessionCapacity()
     host.Start(port);
     using var first=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
     using var second=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
-    first.Connect("127.0.0.1",port);second.Connect("127.0.0.1",port);
+    // 顺序连接避免并发 Hello 竞态：第一个先完成握手占满容量。
+    first.Connect("127.0.0.1",port);
     var timeout=Stopwatch.StartNew();
-    while(timeout.Elapsed<TimeSpan.FromSeconds(5)){host.Tick();first.Tick();second.Tick();if(first.HandshakeComplete&&second.Session.Lifecycle.State==ConnectionState.Failed&&rejected=="SESSION_FULL")break;Thread.Sleep(1);}
-    Require(first.HandshakeComplete&&accepted==1&&rejected=="SESSION_FULL"&&second.LastError=="SESSION_FULL"&&host.ReadyPeerCount==1);
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&!first.HandshakeComplete){host.Tick();first.Tick();Thread.Sleep(1);}
+    Require(first.HandshakeComplete&&host.ReadyPeerCount==1);
+    second.Connect("127.0.0.1",port);
+    timeout.Restart();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&second.Session.Lifecycle.State!=ConnectionState.Failed){host.Tick();second.Tick();Thread.Sleep(1);}
+    Require(accepted==1&&rejected=="SESSION_FULL"&&second.LastError=="SESSION_FULL"&&second.Session.Lifecycle.State==ConnectionState.Failed&&host.ReadyPeerCount==1);
 }
 static void GuestKeyLoopback()
 {

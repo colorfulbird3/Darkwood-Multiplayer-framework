@@ -2,7 +2,7 @@
 
 Darkwood（Unity Mono 生存恐怖游戏）的多人联机插件框架。通过 BepInEx 5 + Harmony 注入游戏，使用自有二进制协议与 Telepathy TCP 在局域网 / Radmin VPN 中联机。
 
-当前版本：**0.8.7-alpha.13**
+当前版本：**0.8.7-alpha.14**
 
 ## 特性
 
@@ -33,7 +33,7 @@ dotnet run --project '.\src\DarkwoodMultiplayerFramework.SelfTests\DarkwoodMulti
 
 - `ARCHITECTURE-ROADMAP.zh-CN.md`：架构路线图。
 - `AGENTS.md`：开发工作规则。
-- `RELEASE-NOTES-0.8.7-alpha.13.md`：当前版本发布说明。
+- `RELEASE-NOTES-0.8.7-alpha.14.md`：当前版本发布说明。
 
 ## 许可证
 

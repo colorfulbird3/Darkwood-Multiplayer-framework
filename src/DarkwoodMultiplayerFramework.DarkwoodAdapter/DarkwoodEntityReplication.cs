@@ -55,10 +55,27 @@ public sealed class DarkwoodEntityReplication
             var p=candidate.transform.position;var dx=p.x-message.X;var dy=p.y-message.Y;var dz=p.z-message.Z;var distance=dx*dx+dy*dy+dz*dz;
             if(distance<best){best=distance;inventory=candidate;localId=pair.Key;}
         }
-        if(inventory==null||best>0.25f)return false;
+        if(inventory==null||best>1f)return false;
         if(!localId.Equals(authoritativeId)){entities.Remove(localId);last.Remove(localId);targets.Remove(localId);lastInventories.Remove(localId);entities[authoritativeId]=inventory;}
         return true;
     }
+    /// <summary>Diagnostic: describes the client's best matching candidates for a failed snapshot inventory binding.</summary>
+    public string DescribeNearestInventory(InventoryStateMessage message)
+    {
+        var shared=0;var sameType=0;var sameName=0;var bestType=float.MaxValue;var bestName=float.MaxValue;string? bestTypeName=null;string? bestNameName=null;
+        foreach(var pair in entities)
+        {
+            if(!(pair.Value is Inventory candidate)||!IsShared(candidate))continue;
+            shared++;
+            var p=candidate.transform.position;var dx=p.x-message.X;var dy=p.y-message.Y;var dz=p.z-message.Z;var distance=dx*dx+dy*dy+dz*dz;
+            if((int)candidate.invType==message.InventoryType){sameType++;if(distance<bestType){bestType=distance;bestTypeName=candidate.name;}}
+            if(message.Name.Length>0&&string.Equals(candidate.name,message.Name,StringComparison.Ordinal)){sameName++;if(distance<bestName){bestName=distance;bestNameName=candidate.name;}}
+        }
+        var typeInfo=sameType>0?$"（最近 {bestTypeName??"-"} {Mathf.Sqrt(bestType):F1}m）":"（无）";
+        var nameInfo=sameName>0?$"（最近 {bestNameName??"-"} {Mathf.Sqrt(bestName):F1}m）":"（无）";
+        return $"共享={shared}，同类型={sameType}{typeInfo}，同名={sameName}{nameInfo}";
+    }
+    public int SharedInventoryCount{get{var count=0;foreach(var pair in entities)if(pair.Value is Inventory inventory&&IsShared(inventory))count++;return count;}}
     private static bool IsShared(Inventory inventory)=>inventory.invType==Inventory.InvType.itemInv||inventory.invType==Inventory.InvType.deathDrop;
     private static bool SlotsEqual(InventorySlotWire[] a,InventorySlotWire[] b){if(a.Length!=b.Length)return false;for(var i=0;i<a.Length;i++)if(a[i].Type!=b[i].Type||a[i].Amount!=b[i].Amount||Math.Abs(a[i].Durability-b[i].Durability)>.001f||a[i].Quality!=b[i].Quality||a[i].Recipe!=b[i].Recipe)return false;return true;}
     private static EntityStateWire Capture(EntityId id,Component c,ulong rev){var p=c.transform.position;var q=c.transform.rotation;float h=0;int a=0,b=0;byte f=0;string anim="";int frame=0;byte kind=Kind(c);if(c is Character ch){h=ch.health;f=Flags(ch.alive,ch.gameObject.activeSelf,ch.attacking,ch.walking,ch.running);if(ch.animator!=null&&ch.animator.CurrentClip!=null){anim=ch.animator.CurrentClip.name;frame=ch.animator.CurrentFrame;}}else if(c is Door d){h=d.health;a=d.barricadeHealth;b=d.barricadeState;f=Flags(d.opened,d.barricaded,d.destroyed,d.blocked,d.gameObject.activeSelf);if(d.body!=null){p=d.body.position;q=d.body.rotation;}}else if(c is Window w){h=w.barricadeHealth;a=w.barricadeState;f=Flags(w.barricaded,w.blocked,w.gameObject.activeSelf,false);}else if(c is Item item){h=item.health;a=item.invItemAmount;f=Flags(item.destroyed,item.isOn,item.hasPower,item.searched,item.gameObject.activeSelf);}return new EntityStateWire(id.Value,id.IsPersistent,kind,p.x,p.y,p.z,q.x,q.y,q.z,q.w,h,a,b,f,anim,frame,rev);}
