@@ -11,6 +11,7 @@ using DarkwoodMultiplayerFramework.Core;
 using DarkwoodMultiplayerFramework.Entities;
 using DarkwoodMultiplayerFramework.Network;
 using DarkwoodMultiplayerFramework.Protocol;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -42,6 +43,18 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     public bool ApplyingAuthoritativeInventory => replication.ApplyingRemote;
     public string SessionError => sessionError.Length > 0 ? sessionError : LastNetworkError;
     public string TransferProgress { get; private set; } = string.Empty;
+    public bool IsMultiplayerActive => hostSession?.IsActive == true || clientSession?.HandshakeComplete == true;
+    public bool AllDowned => DarkwoodDownedPatch.AllDowned;
+    public RescueProgressMessage LastRescueProgress => lastRescueProgress;
+    public bool TryGetKnownPlayerPosition(int playerId, out Vector3 position)
+    {
+        var myId = IsHost ? 0 : (clientSession?.PeerId ?? -1);
+        if (playerId == myId) { var player = Player.Instance; if (player != null) { position = player.transform.position; return true; } position = Vector3.zero; return false; }
+        if (IsHost && remotePlayerPositions.TryGetValue(playerId, out position)) return true;
+        if (remotePlayers.TryGetPosition(playerId, out position)) return true;
+        position = Vector3.zero;
+        return false;
+    }
     public event Action<string>? SceneChanged;
     public event Action<ConnectionState>? StateChanged;
 
@@ -101,6 +114,36 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private ConfigEntry<int>? starterKitTier3DayConfig;
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
+    private readonly Dictionary<int,float> peerHealths = new Dictionary<int,float>();
+    private readonly Dictionary<int,float> peerMaxHealths = new Dictionary<int,float>();
+    private readonly Dictionary<int,bool> peerDowned = new Dictionary<int,bool>();
+    private readonly Dictionary<int,float> nextGuestHitAllowed = new Dictionary<int,float>();
+    private bool hostDownedLocal;
+    private bool allDownedHandled;
+    private float scheduledStopAt;
+    private float nextMonsterDamageScan;
+    private float nextHealthHeartbeat;
+    private float lastBroadcastHostHealth = float.MaxValue;
+    private float nextRescueBroadcast;
+    private float localInvulUntil;
+    private bool rescueLockedByMe;
+    private RescueSession? activeRescue;
+    private RescueProgressMessage lastRescueProgress;
+    private const float RescueDurationSeconds = 3f;
+    private const float RescueRange = 2.5f;
+    private const float ReviveHealthFraction = 0.1f;
+    private const float MonsterDamageScanInterval = 0.25f;
+    private const float MonsterHitCooldown = 0.5f;
+    private const float MonsterReach = 1.6f;
+    private const float ReviveInvulnerableSeconds = 3f;
+    private const float PostDownedEndingDelay = 2f;
+
+    private sealed class RescueSession
+    {
+        public int TargetId;
+        public int RescuerId;
+        public float StartedAt;
+    }
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -213,7 +256,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty;
+        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
         SetState(ConnectionState.Disconnected);
     }
 
@@ -262,6 +305,10 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendHostPose();}
         else if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())PersistGuestProfile(peer);}
+        PollRescueHotkey();
+        if(hostSession!=null){ScanMonsterDamage();SyncHostHealth();TickRescue();}
+        if(scheduledStopAt>0f&&Time.unscaledTime>=scheduledStopAt){scheduledStopAt=0f;StopNetwork();}
+        if(localInvulUntil>0f&&Time.unscaledTime>=localInvulUntil){localInvulUntil=0f;var player=Player.Instance;if(player!=null)player.invulnerable=false;}
     }
 
     private void TrySendClientRegistryReady()
@@ -392,7 +439,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private void OnPeerDisconnected(int connectionId)
     {
         PersistGuestProfile(connectionId);
-        outgoing.Remove(connectionId);readyPeers.Remove(connectionId);sentSaves.Remove(connectionId);sentSnapshots.Remove(connectionId);pendingSnapshotRequests.Remove(connectionId);remotePlayerPositions.Remove(connectionId);remoteInventories.Remove(connectionId);remotePlayers.Remove(connectionId);nextAttackAllowed.Remove(connectionId);peerGuestKeys.Remove(connectionId);peerGuestRecords.Remove(connectionId);if(remoteAttackAnchors.TryGetValue(connectionId,out var anchor)){if(anchor!=null)UnityEngine.Object.Destroy(anchor);remoteAttackAnchors.Remove(connectionId);}
+        if(activeRescue!=null&&(activeRescue.TargetId==connectionId||activeRescue.RescuerId==connectionId)){var rescueTarget=activeRescue.TargetId;var rescueRescuer=activeRescue.RescuerId;activeRescue=null;BroadcastRescueProgress(rescueTarget,rescueRescuer,0f,false);}
+        outgoing.Remove(connectionId);readyPeers.Remove(connectionId);sentSaves.Remove(connectionId);sentSnapshots.Remove(connectionId);pendingSnapshotRequests.Remove(connectionId);remotePlayerPositions.Remove(connectionId);remoteInventories.Remove(connectionId);remotePlayers.Remove(connectionId);nextAttackAllowed.Remove(connectionId);peerGuestKeys.Remove(connectionId);peerGuestRecords.Remove(connectionId);peerHealths.Remove(connectionId);peerMaxHealths.Remove(connectionId);peerDowned.Remove(connectionId);nextGuestHitAllowed.Remove(connectionId);if(remoteAttackAnchors.TryGetValue(connectionId,out var anchor)){if(anchor!=null)UnityEngine.Object.Destroy(anchor);remoteAttackAnchors.Remove(connectionId);}
+        CheckAllDowned();
     }
 
     private void OnHostMessage(int peer,ProtocolEnvelope envelope)
@@ -420,7 +469,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
                     if(record.JoinCount==1)shadow.AddStarterKit(guestProfiles?.KitForDay(day),message=>log?.LogWarning(message));
                     remoteInventories[peer]=shadow;
                     peerGuestRecords[peer]=record;
-                    Queue(peer,ProtocolMessageType.GuestProfile,ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(),spawn.x,spawn.y,spawn.z,record.Day,record.JoinCount)));
+                    var hostMaxHealth=Player.Instance!=null?Player.Instance.maxHealth:100f;
+                    peerHealths[peer]=hostMaxHealth;peerMaxHealths[peer]=hostMaxHealth;peerDowned[peer]=false;
+                    Queue(peer,ProtocolMessageType.GuestProfile,ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(),spawn.x,spawn.y,spawn.z,record.Day,record.JoinCount,hostMaxHealth,hostMaxHealth,false)));
                     PersistGuestProfile(peer);
                     log?.LogInfo($"Peer {peer} guest profile resolved: {key}, day {record.Day}, join {record.JoinCount}, spawn ({spawn.x:F1},{spawn.y:F1},{spawn.z:F1}).");
                 }
@@ -428,8 +479,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
                 SendHostPose(peer);
                 log?.LogInfo(firstReady?$"Peer {peer} READY after applying snapshot {applied.SnapshotId}, {applied.EntityCount} entities.":$"Peer {peer} repeated snapshot acknowledgement {applied.SnapshotId}; Ready confirmation resent.");
             }
-            else if(envelope.MessageType==ProtocolMessageType.PlayerPose){var pose=ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload);if(!readyPeers.Contains(peer)||pose.Scene!=CurrentScene)return;pose=new PlayerPoseMessage(peer,pose.Sequence,CurrentScene,pose.X,pose.Y,pose.Z,pose.Qx,pose.Qy,pose.Qz,pose.Qw,pose.Flags,pose.TorsoClip,pose.TorsoFrame,pose.LegsClip,pose.LegsFrame);remotePlayerPositions[peer]=new Vector3(pose.X,pose.Y,pose.Z);remotePlayers.Apply(pose,0);var payload=ReplicationProtocolCodec.Encode(pose);foreach(var readyPeer in readyPeers.ToArray())if(readyPeer!=peer)Queue(readyPeer,ProtocolMessageType.PlayerPose,payload);}
+            else if(envelope.MessageType==ProtocolMessageType.PlayerPose){var pose=ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload);if(!readyPeers.Contains(peer)||pose.Scene!=CurrentScene)return;peerMaxHealths[peer]=pose.MaxHealth;pose=new PlayerPoseMessage(peer,pose.Sequence,CurrentScene,pose.X,pose.Y,pose.Z,pose.Qx,pose.Qy,pose.Qz,pose.Qw,pose.MaxHealth,pose.Flags,pose.TorsoClip,pose.TorsoFrame,pose.LegsClip,pose.LegsFrame);remotePlayerPositions[peer]=new Vector3(pose.X,pose.Y,pose.Z);remotePlayers.Apply(pose,0);var payload=ReplicationProtocolCodec.Encode(pose);foreach(var readyPeer in readyPeers.ToArray())if(readyPeer!=peer)Queue(readyPeer,ProtocolMessageType.PlayerPose,payload);}
             else if(envelope.MessageType==ProtocolMessageType.ActionRequest)HandleActionRequest(peer,ReplicationProtocolCodec.DecodeActionRequest(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.RescueRequest){var rescue=ReplicationProtocolCodec.DecodeRescueRequest(envelope.Payload);if(rescue.PlayerId!=peer)throw new InvalidDataException("Rescue request player id mismatch.");HandleRescueIntent(peer,rescue.Cancel);}
         }
         catch(Exception error){log?.LogError($"Host protocol handler failed for peer {peer}: {error}");Queue(peer,ProtocolMessageType.Error,ReplicationProtocolCodec.Encode(new ProtocolErrorMessage("HOST_HANDLER_FAILED",error.Message)));}
     }
@@ -447,6 +499,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose)remotePlayers.Apply(ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload),clientSession?.PeerId??-1);
             else if(envelope.MessageType==ProtocolMessageType.ActionResult)HandleActionResult(ReplicationProtocolCodec.DecodeActionResult(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.ActionRejected)HandleActionRejected(ReplicationProtocolCodec.DecodeActionRejected(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.PlayerHealth)ApplyIncomingPlayerHealth(ReplicationProtocolCodec.DecodePlayerHealth(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.RescueProgress)HandleRescueProgress(ReplicationProtocolCodec.DecodeRescueProgress(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.AllDowned)HandleAllDowned();
             else if(envelope.MessageType==ProtocolMessageType.GuestProfile)
             {
                 var profile=ReplicationProtocolCodec.DecodeGuestProfile(envelope.Payload);
@@ -1109,6 +1164,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         player.transform.position=new Vector3(profile.X,profile.Y,profile.Z);
         foreach(var body in player.GetComponentsInChildren<Rigidbody>(true)){body.velocity=Vector3.zero;body.angularVelocity=Vector3.zero;}
         ApplyPlayerInventory(profile.Inventory);
+        if(!profile.Downed&&profile.Health>0f)player.setHealth(profile.Health);
         log?.LogInfo($"已应用访客档案：出生点 ({profile.X:F1},{profile.Y:F1},{profile.Z:F1})，第 {profile.Day} 天，第 {profile.JoinCount} 次加入。");
     }
 
@@ -1142,6 +1198,316 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     }
 
     public string ConfiguredPlayerName => playerNameConfig?.Value ?? string.Empty;
+
+    // ---------- 倒地 / 营救（DOWNED-001） ----------
+
+    /// <summary>Called by DarkwoodDownedPatch when the LOCAL player dies while other players are alive.</summary>
+    public void OnLocalPlayerDowned()
+    {
+        if (DarkwoodDownedPatch.LocalDowned) return;
+        DarkwoodDownedPatch.EnterLocalDowned();
+        log?.LogWarning("本地玩家倒地！等待队友营救……");
+        if (IsHost)
+        {
+            hostDownedLocal = true;
+            var player = Player.Instance;
+            BroadcastHealth(0, player != null ? player.health : 0f, player != null ? player.maxHealth : 100f, true);
+            CheckAllDowned();
+        }
+    }
+
+    private void ApplyIncomingPlayerHealth(PlayerHealthMessage health)
+    {
+        var myId = clientSession?.PeerId ?? -1;
+        if (health.PlayerId != myId || clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
+        var player = Player.Instance;
+        if (player == null) return;
+        if (health.Downed || health.Health <= 0f)
+        {
+            if (!DarkwoodDownedPatch.LocalDowned)
+            {
+                try { player.die(); } catch { DarkwoodDownedPatch.EnterLocalDowned(); }
+            }
+        }
+        else
+        {
+            if (DarkwoodDownedPatch.LocalDowned) ReviveLocal(health.Health);
+            else player.setHealth(health.Health);
+        }
+    }
+
+    private void ReviveLocal(float health)
+    {
+        var player = Player.Instance;
+        if (player == null) return;
+        DarkwoodDownedPatch.ReviveLocalPlayer(health, player.maxStamina);
+        player.invulnerable = true;
+        localInvulUntil = Time.unscaledTime + ReviveInvulnerableSeconds;
+        if (IsHost) hostDownedLocal = false;
+        log?.LogInfo($"已复活：生命 {health:F0}，体力回满，{ReviveInvulnerableSeconds:F0} 秒保护。");
+    }
+
+    private void HandleRescueProgress(RescueProgressMessage progress)
+    {
+        lastRescueProgress = progress;
+        var myId = clientSession?.PeerId ?? -1;
+        if (progress.RescuerId != myId) return;
+        if (progress.Active && !rescueLockedByMe)
+        {
+            rescueLockedByMe = true;
+            global::Core.forbidInputs = true;
+        }
+        else if (!progress.Active && rescueLockedByMe)
+        {
+            rescueLockedByMe = false;
+            if (!DarkwoodDownedPatch.LocalDowned) global::Core.forbidInputs = false;
+        }
+    }
+
+    private void HandleAllDowned()
+    {
+        if (DarkwoodDownedPatch.AllDowned) return;
+        DarkwoodDownedPatch.AllDowned = true;
+        log?.LogWarning("全员倒地——触发原版结局并结束联机会话。");
+        RunLocalVanillaEnding();
+        scheduledStopAt = Time.unscaledTime + PostDownedEndingDelay;
+    }
+
+    private void RunLocalVanillaEnding()
+    {
+        var player = Player.Instance;
+        if (player == null) return;
+        DarkwoodDownedPatch.AllDowned = true;
+        try
+        {
+            player.die();
+            var method = AccessTools.Method(typeof(Player), "onDeath");
+            if (method != null)
+            {
+                var enumerator = method.Invoke(player, null) as System.Collections.IEnumerator;
+                if (enumerator != null) player.StartCoroutine(enumerator);
+            }
+        }
+        catch (Exception error) { log?.LogWarning("原版结局触发失败：" + error.Message); }
+    }
+
+    private void CheckAllDowned()
+    {
+        if (hostSession == null || allDownedHandled) return;
+        if (!hostDownedLocal) return;
+        foreach (var peer in readyPeers.ToArray())
+        {
+            if (!peerDowned.TryGetValue(peer, out var downed) || !downed) return;
+        }
+        allDownedHandled = true;
+        DarkwoodDownedPatch.AllDowned = true;
+        log?.LogWarning("全员倒地——触发原版结局并结束联机会话。");
+        var payload = ReplicationProtocolCodec.Encode(new AllDownedMessage());
+        foreach (var readyPeer in readyPeers.ToArray()) Queue(readyPeer, ProtocolMessageType.AllDowned, payload);
+        RunLocalVanillaEnding();
+        scheduledStopAt = Time.unscaledTime + PostDownedEndingDelay;
+    }
+
+    private void PollRescueHotkey()
+    {
+        if (!IsMultiplayerActive || DarkwoodDownedPatch.AllDowned) return;
+        if (DarkwoodDownedPatch.LocalDowned) return;
+        if (!Input.GetKeyDown(KeyCode.F4)) return;
+        if (IsHost) HandleRescueIntent(0, IsRescuing(0));
+        else if (clientSession != null) clientSession.Send(ProtocolMessageType.RescueRequest, ReplicationProtocolCodec.Encode(new RescueRequestMessage(clientSession.PeerId, IsRescuing(clientSession.PeerId))));
+    }
+
+    private bool IsRescuing(int playerId) => activeRescue != null && activeRescue.RescuerId == playerId;
+
+    private void HandleRescueIntent(int rescuerId, bool cancel)
+    {
+        if (hostSession == null) return;
+        if (cancel)
+        {
+            if (activeRescue != null && activeRescue.RescuerId == rescuerId) CancelRescue();
+            return;
+        }
+        if (activeRescue != null) return; // 同一时间只允许一个营救
+        if (rescuerId == 0)
+        {
+            if (hostDownedLocal) return;
+        }
+        else
+        {
+            if (!readyPeers.Contains(rescuerId)) return;
+            if (peerDowned.TryGetValue(rescuerId, out var rescuerDowned) && rescuerDowned) return;
+        }
+        var rescuerPosition = GetPlayerPosition(rescuerId);
+        var bestTarget = -1;
+        var bestSq = RescueRange * RescueRange;
+        if (hostDownedLocal && rescuerId != 0)
+        {
+            var sq = SqrDistance(rescuerPosition, GetPlayerPosition(0));
+            if (sq <= bestSq) { bestSq = sq; bestTarget = 0; }
+        }
+        foreach (var peer in readyPeers.ToArray())
+        {
+            if (peer == rescuerId) continue;
+            if (!peerDowned.TryGetValue(peer, out var downed) || !downed) continue;
+            if (!remotePlayerPositions.TryGetValue(peer, out var position)) continue;
+            var sq = SqrDistance(rescuerPosition, position);
+            if (sq <= bestSq) { bestSq = sq; bestTarget = peer; }
+        }
+        if (bestTarget < 0)
+        {
+            log?.LogInfo($"营救请求被拒绝：玩家 {rescuerId} 附近没有倒地的队友。");
+            Queue(rescuerId, ProtocolMessageType.RescueProgress, ReplicationProtocolCodec.Encode(new RescueProgressMessage(rescuerId, rescuerId, 0f, false)));
+            return;
+        }
+        activeRescue = new RescueSession { TargetId = bestTarget, RescuerId = rescuerId, StartedAt = Time.unscaledTime };
+        nextRescueBroadcast = 0f;
+        if (rescuerId == 0 && !DarkwoodDownedPatch.LocalDowned) { rescueLockedByMe = true; global::Core.forbidInputs = true; }
+        BroadcastRescueProgress(bestTarget, rescuerId, 0f, true);
+        log?.LogInfo($"营救开始：玩家 {rescuerId} → 倒地玩家 {bestTarget}（{RescueDurationSeconds:F0} 秒）。");
+    }
+
+    private void TickRescue()
+    {
+        if (activeRescue == null) return;
+        if (ShouldCancelRescue()) { CancelRescue(); return; }
+        var progress = Mathf.Clamp01((Time.unscaledTime - activeRescue.StartedAt) / RescueDurationSeconds);
+        if (progress >= 1f) { CompleteRescue(); return; }
+        if (Time.unscaledTime >= nextRescueBroadcast)
+        {
+            nextRescueBroadcast = Time.unscaledTime + 0.1f;
+            BroadcastRescueProgress(activeRescue.TargetId, activeRescue.RescuerId, progress, true);
+        }
+    }
+
+    private bool ShouldCancelRescue()
+    {
+        if (activeRescue == null) return true;
+        var rescuer = activeRescue.RescuerId;
+        var target = activeRescue.TargetId;
+        if (rescuer == 0)
+        {
+            if (hostDownedLocal) return true;
+        }
+        else
+        {
+            if (!readyPeers.Contains(rescuer)) return true;
+            if (peerDowned.TryGetValue(rescuer, out var rescuerDowned) && rescuerDowned) return true;
+        }
+        if (target == 0)
+        {
+            if (!hostDownedLocal) return true;
+        }
+        else if (!(peerDowned.TryGetValue(target, out var targetDowned) && targetDowned)) return true;
+        if (SqrDistance(GetPlayerPosition(rescuer), GetPlayerPosition(target)) > RescueRange * RescueRange) return true;
+        return false;
+    }
+
+    private void CancelRescue()
+    {
+        if (activeRescue == null) return;
+        var target = activeRescue.TargetId;
+        var rescuer = activeRescue.RescuerId;
+        activeRescue = null;
+        if (rescuer == 0) { rescueLockedByMe = false; if (!DarkwoodDownedPatch.LocalDowned) global::Core.forbidInputs = false; }
+        BroadcastRescueProgress(target, rescuer, 0f, false);
+        log?.LogInfo("营救取消（进度归零，双方解锁）。");
+    }
+
+    private void CompleteRescue()
+    {
+        if (activeRescue == null) return;
+        var target = activeRescue.TargetId;
+        var rescuer = activeRescue.RescuerId;
+        activeRescue = null;
+        if (rescuer == 0) { rescueLockedByMe = false; if (!DarkwoodDownedPatch.LocalDowned) global::Core.forbidInputs = false; }
+        if (target == 0)
+        {
+            var player = Player.Instance;
+            var maxHealth = player != null ? player.maxHealth : 100f;
+            var health = maxHealth * ReviveHealthFraction;
+            if (player != null) ReviveLocal(health);
+            BroadcastHealth(0, health, maxHealth, false);
+        }
+        else
+        {
+            var maxHealth = peerMaxHealths.TryGetValue(target, out var mh) && mh > 0f ? mh : 100f;
+            var health = maxHealth * ReviveHealthFraction;
+            peerHealths[target] = health;
+            peerDowned[target] = false;
+            BroadcastHealth(target, health, maxHealth, false);
+        }
+        BroadcastRescueProgress(target, rescuer, 1f, false);
+        log?.LogInfo($"营救完成：玩家 {target} 复活（生命上限的 10%，体力回满）。");
+    }
+
+    private void BroadcastRescueProgress(int targetId, int rescuerId, float progress, bool active)
+    {
+        var message = new RescueProgressMessage(targetId, rescuerId, progress, active);
+        var payload = ReplicationProtocolCodec.Encode(message);
+        foreach (var readyPeer in readyPeers.ToArray()) Queue(readyPeer, ProtocolMessageType.RescueProgress, payload);
+        if (IsHost && active) lastRescueProgress = message;
+    }
+
+    private void BroadcastHealth(int playerId, float health, float maxHealth, bool downed)
+    {
+        if (hostSession == null) return;
+        var payload = ReplicationProtocolCodec.Encode(new PlayerHealthMessage(playerId, health, maxHealth, downed));
+        foreach (var readyPeer in readyPeers.ToArray()) Queue(readyPeer, ProtocolMessageType.PlayerHealth, payload);
+    }
+
+    private Vector3 GetPlayerPosition(int playerId)
+    {
+        if (playerId == 0) { var player = Player.Instance; return player != null ? player.transform.position : Vector3.zero; }
+        if (remotePlayerPositions.TryGetValue(playerId, out var position)) return position;
+        return Vector3.zero;
+    }
+
+    private static float SqrDistance(Vector3 a, Vector3 b) { var dx = a.x - b.x; var dy = a.y - b.y; var dz = a.z - b.z; return dx * dx + dy * dy + dz * dz; }
+
+    private void ScanMonsterDamage()
+    {
+        if (hostSession == null || readyPeers.Count == 0 || registry == null || Time.unscaledTime < nextMonsterDamageScan) return;
+        nextMonsterDamageScan = Time.unscaledTime + MonsterDamageScanInterval;
+        foreach (var pair in replication.AllEntities)
+        {
+            var monster = pair.Value as Character;
+            if (monster == null || !monster.alive || !monster.gameObject.activeSelf || monster.aggressiveness == Aggressiveness.neutral) continue;
+            var monsterPosition = monster.transform.position;
+            foreach (var peer in readyPeers.ToArray())
+            {
+                if (peerDowned.TryGetValue(peer, out var downed) && downed) continue;
+                if (!remotePlayerPositions.TryGetValue(peer, out var guestPosition)) continue;
+                if (SqrDistance(monsterPosition, guestPosition) > MonsterReach * MonsterReach) continue;
+                if (Time.unscaledTime < (nextGuestHitAllowed.TryGetValue(peer, out var allowed) ? allowed : 0f)) continue;
+                nextGuestHitAllowed[peer] = Time.unscaledTime + MonsterHitCooldown;
+                var monsterDamage = monster.sensorTypes != null && monster.sensorTypes.Count > 0 ? Mathf.Max(1, monster.sensorTypes[0].damage) : 5;
+                var health = Mathf.Max(0f, peerHealths.TryGetValue(peer, out var current) ? current : 100f) - monsterDamage;
+                peerHealths[peer] = health;
+                var maxHealth = peerMaxHealths.TryGetValue(peer, out var mh) && mh > 0f ? mh : 100f;
+                if (health <= 0f)
+                {
+                    peerDowned[peer] = true;
+                    BroadcastHealth(peer, 0f, maxHealth, true);
+                    log?.LogWarning($"玩家 {peer} 被怪物击倒。");
+                    CheckAllDowned();
+                }
+                else BroadcastHealth(peer, health, maxHealth, false);
+            }
+        }
+    }
+
+    private void SyncHostHealth()
+    {
+        if (hostSession == null || readyPeers.Count == 0) return;
+        var player = Player.Instance;
+        if (player == null) return;
+        if (Mathf.Abs(lastBroadcastHostHealth - player.health) > 0.01f || Time.unscaledTime >= nextHealthHeartbeat)
+        {
+            lastBroadcastHostHealth = player.health;
+            nextHealthHeartbeat = Time.unscaledTime + 1f;
+            BroadcastHealth(0, player.health, player.maxHealth, hostDownedLocal);
+        }
+    }
 
     private static DarkwoodInventorySlot[] ToDarkwoodSlots(InventorySlotWire[] slots)
     {
@@ -1185,8 +1551,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             if(queue.Count==0){outgoing.Remove(peer);log?.LogInfo($"已完成向玩家 {peer} 发送排队数据。");}
         }
     }
-    private void SendLocalPose(){if(!DarkwoodPlayerAdapter.TryCapture(out var p)||clientSession==null)return;clientSession.Send(ProtocolMessageType.PlayerPose,ReplicationProtocolCodec.Encode(new PlayerPoseMessage(clientSession.PeerId,++poseSequence,p.Scene,p.Position.x,p.Position.y,p.Position.z,p.Rotation.x,p.Rotation.y,p.Rotation.z,p.Rotation.w,p.Flags,p.TorsoClip,p.TorsoFrame,p.LegsClip,p.LegsFrame)));}
-    private void SendHostPose(int peer){if(!DarkwoodPlayerAdapter.TryCapture(out var p))return;Queue(peer,ProtocolMessageType.PlayerPose,ReplicationProtocolCodec.Encode(new PlayerPoseMessage(0,++poseSequence,p.Scene,p.Position.x,p.Position.y,p.Position.z,p.Rotation.x,p.Rotation.y,p.Rotation.z,p.Rotation.w,p.Flags,p.TorsoClip,p.TorsoFrame,p.LegsClip,p.LegsFrame)));}
+    private void SendLocalPose(){if(!DarkwoodPlayerAdapter.TryCapture(out var p)||clientSession==null)return;var player=Player.Instance;var maxHealth=player!=null?player.maxHealth:100f;var flags=p.Flags;if(DarkwoodDownedPatch.LocalDowned)flags|=PlayerPoseFlags.Downed;clientSession.Send(ProtocolMessageType.PlayerPose,ReplicationProtocolCodec.Encode(new PlayerPoseMessage(clientSession.PeerId,++poseSequence,p.Scene,p.Position.x,p.Position.y,p.Position.z,p.Rotation.x,p.Rotation.y,p.Rotation.z,p.Rotation.w,maxHealth,flags,p.TorsoClip,p.TorsoFrame,p.LegsClip,p.LegsFrame)));}
+    private void SendHostPose(int peer){if(!DarkwoodPlayerAdapter.TryCapture(out var p))return;var player=Player.Instance;var maxHealth=player!=null?player.maxHealth:100f;var flags=p.Flags;if(DarkwoodDownedPatch.LocalDowned)flags|=PlayerPoseFlags.Downed;Queue(peer,ProtocolMessageType.PlayerPose,ReplicationProtocolCodec.Encode(new PlayerPoseMessage(0,++poseSequence,p.Scene,p.Position.x,p.Position.y,p.Position.z,p.Rotation.x,p.Rotation.y,p.Rotation.z,p.Rotation.w,maxHealth,flags,p.TorsoClip,p.TorsoFrame,p.LegsClip,p.LegsFrame)));}
     private void SendHostPose(){foreach(var peer in readyPeers.ToArray())SendHostPose(peer);}
     private void FailClient(string code,Exception error){if(sessionError.Length>0)return;sessionError=code+": "+error.Message;log?.LogError($"Standalone DMF session failed [{code}]: {error}");try{clientSession?.Fail(sessionError);}catch{}SetState(ConnectionState.Failed);}
     private string HostKey(){using var sha=System.Security.Cryptography.SHA256.Create();var value=(addressConfig?.Value??"host")+":"+Port;return BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(value)),0,8).Replace("-","");}

@@ -118,9 +118,21 @@ public readonly struct InventoryStateMessage
 
 public readonly struct PlayerPoseMessage
 {
-    public PlayerPoseMessage(int playerId,uint sequence,string scene,float x,float y,float z,float qx,float qy,float qz,float qw,byte flags,string torsoClip,int torsoFrame,string legsClip,int legsFrame)
-    { PlayerId=playerId;Sequence=sequence;Scene=scene??string.Empty;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;Flags=flags;TorsoClip=torsoClip??string.Empty;TorsoFrame=torsoFrame;LegsClip=legsClip??string.Empty;LegsFrame=legsFrame; }
-    public int PlayerId {get;} public uint Sequence {get;} public string Scene {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public byte Flags {get;} public string TorsoClip {get;} public int TorsoFrame {get;} public string LegsClip {get;} public int LegsFrame {get;}
+    public PlayerPoseMessage(int playerId,uint sequence,string scene,float x,float y,float z,float qx,float qy,float qz,float qw,float maxHealth,byte flags,string torsoClip,int torsoFrame,string legsClip,int legsFrame)
+    { PlayerId=playerId;Sequence=sequence;Scene=scene??string.Empty;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;MaxHealth=maxHealth;Flags=flags;TorsoClip=torsoClip??string.Empty;TorsoFrame=torsoFrame;LegsClip=legsClip??string.Empty;LegsFrame=legsFrame; }
+    public int PlayerId {get;} public uint Sequence {get;} public string Scene {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;}
+    /// <summary>Sender's maximum health, used by the host for revive scaling (downed flag is bit 4 of Flags).</summary>
+    public float MaxHealth {get;} public byte Flags {get;} public string TorsoClip {get;} public int TorsoFrame {get;} public string LegsClip {get;} public int LegsFrame {get;}
+}
+
+/// <summary>Player flags carried in PlayerPoseMessage.</summary>
+public static class PlayerPoseFlags
+{
+    public const byte Walking = 1;
+    public const byte Running = 2;
+    public const byte Aiming = 4;
+    public const byte Attacking = 8;
+    public const byte Downed = 16;
 }
 
 public enum ActionKindWire : byte
@@ -196,11 +208,40 @@ public readonly struct PlayerInventoryStatePayload
 /// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>
 public readonly struct GuestProfileMessage
 {
-    public GuestProfileMessage(PlayerInventoryStatePayload inventory, float x, float y, float z, int day, int joinCount)
-    { Inventory=inventory; X=x; Y=y; Z=z; Day=day; JoinCount=joinCount; }
+    public GuestProfileMessage(PlayerInventoryStatePayload inventory, float x, float y, float z, int day, int joinCount, float health, float maxHealth, bool downed)
+    { Inventory=inventory; X=x; Y=y; Z=z; Day=day; JoinCount=joinCount; Health=health; MaxHealth=maxHealth; Downed=downed; }
     public PlayerInventoryStatePayload Inventory {get;}
     public float X {get;} public float Y {get;} public float Z {get;}
     public int Day {get;} public int JoinCount {get;}
+    public float Health {get;} public float MaxHealth {get;} public bool Downed {get;}
+}
+
+/// <summary>Host-authoritative per-player health state. Clients apply it only for their own player id.</summary>
+public readonly struct PlayerHealthMessage
+{
+    public PlayerHealthMessage(int playerId, float health, float maxHealth, bool downed)
+    { PlayerId=playerId; Health=health; MaxHealth=maxHealth; Downed=downed; }
+    public int PlayerId {get;} public float Health {get;} public float MaxHealth {get;} public bool Downed {get;}
+}
+
+/// <summary>Rescue intent from a living player. The host picks the nearest downed player within range.</summary>
+public readonly struct RescueRequestMessage
+{
+    public RescueRequestMessage(int playerId, bool cancel) { PlayerId=playerId; Cancel=cancel; }
+    public int PlayerId {get;} public bool Cancel {get;}
+}
+
+/// <summary>Host-authoritative rescue progress (0..1). Active=false is the terminal state after completion or cancellation.</summary>
+public readonly struct RescueProgressMessage
+{
+    public RescueProgressMessage(int targetId, int rescuerId, float progress, bool active)
+    { TargetId=targetId; RescuerId=rescuerId; Progress=progress; Active=active; }
+    public int TargetId {get;} public int RescuerId {get;} public float Progress {get;} public bool Active {get;}
+}
+
+/// <summary>Broadcast when every player is downed: each machine then runs the vanilla death ending locally.</summary>
+public readonly struct AllDownedMessage
+{
 }
 
 /// <summary>Persistent hot-join guest identity record stored by the host beside the save. Binary, format-versioned.</summary>
@@ -249,7 +290,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.7-alpha.12";
+    public const string Framework = "0.8.7-alpha.13";
 }
 
 public static class ReplicationProtocolCodec
@@ -277,8 +318,16 @@ public static class ReplicationProtocolCodec
     public static ProtocolErrorMessage DecodeError(byte[] p) => Read(p,r=>new ProtocolErrorMessage(ReadString(r),ReadString(r)));
     public static byte[] Encode(InventoryStateMessage m)=>Write(w=>{w.Write(m.Value);w.Write(m.Persistent);w.Write(m.Revision);WriteString(w,m.Name);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.InventoryType);if(m.Slots.Length>256)throw new InvalidOperationException("Too many inventory slots.");w.Write(m.Slots.Length);foreach(var s in m.Slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}});
     public static InventoryStateMessage DecodeInventoryState(byte[] p)=>Read(p,r=>{var value=r.ReadUInt64();var persistent=r.ReadBoolean();var revision=r.ReadUInt64();var name=ReadString(r);var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var inventoryType=r.ReadInt32();var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return new InventoryStateMessage(value,persistent,revision,name,x,y,z,inventoryType,slots);});
-    public static byte[] Encode(PlayerPoseMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Sequence);WriteString(w,m.Scene);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write(m.Flags);WriteString(w,m.TorsoClip);w.Write(m.TorsoFrame);WriteString(w,m.LegsClip);w.Write(m.LegsFrame);});
-    public static PlayerPoseMessage DecodePlayerPose(byte[] p)=>Read(p,r=>new PlayerPoseMessage(r.ReadInt32(),r.ReadUInt32(),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadByte(),ReadString(r),r.ReadInt32(),ReadString(r),r.ReadInt32()));
+    public static byte[] Encode(PlayerPoseMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Sequence);WriteString(w,m.Scene);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write(m.MaxHealth);w.Write(m.Flags);WriteString(w,m.TorsoClip);w.Write(m.TorsoFrame);WriteString(w,m.LegsClip);w.Write(m.LegsFrame);});
+    public static PlayerPoseMessage DecodePlayerPose(byte[] p)=>Read(p,r=>new PlayerPoseMessage(r.ReadInt32(),r.ReadUInt32(),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadByte(),ReadString(r),r.ReadInt32(),ReadString(r),r.ReadInt32()));
+    public static byte[] Encode(PlayerHealthMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Health);w.Write(m.MaxHealth);w.Write(m.Downed);});
+    public static PlayerHealthMessage DecodePlayerHealth(byte[] p)=>Read(p,r=>new PlayerHealthMessage(r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadBoolean()));
+    public static byte[] Encode(RescueRequestMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Cancel);});
+    public static RescueRequestMessage DecodeRescueRequest(byte[] p)=>Read(p,r=>new RescueRequestMessage(r.ReadInt32(),r.ReadBoolean()));
+    public static byte[] Encode(RescueProgressMessage m)=>Write(w=>{w.Write(m.TargetId);w.Write(m.RescuerId);w.Write(m.Progress);w.Write(m.Active);});
+    public static RescueProgressMessage DecodeRescueProgress(byte[] p)=>Read(p,r=>new RescueProgressMessage(r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadBoolean()));
+    public static byte[] Encode(AllDownedMessage m)=>Array.Empty<byte>();
+    public static AllDownedMessage DecodeAllDowned(byte[] p)=>Read(p,r=>new AllDownedMessage());
     public static byte[] Encode(ActionRequestMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write(m.PlayerId);w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.ExpectedRevision);WriteBytes(w,m.Payload,ActionPayloadMax);});
     public static ActionRequestMessage DecodeActionRequest(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var player=r.ReadInt32();var kind=ReadActionKind(r);return new ActionRequestMessage(id,player,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadBytes(r,ActionPayloadMax));});
     public static byte[] Encode(ActionResultMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.Revision);WriteBytes(w,m.Payload,ActionPayloadMax);});
@@ -293,8 +342,8 @@ public static class ReplicationProtocolCodec
     public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});
     public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r)));
-    public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);});
-    public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32());});
+    public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.Health);w.Write(m.MaxHealth);w.Write(m.Downed);});
+    public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadBoolean());});
     public static byte[] Encode(GuestProfileRecord m)=>Write(w=>{w.Write((byte)GuestProfileFormatVersion);WriteString(w,m.GuestKey);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.LastSeenUtcTicks);});
     public static GuestProfileRecord DecodeGuestProfileRecord(byte[] p)=>Read(p,r=>{var version=r.ReadByte();if(version!=GuestProfileFormatVersion)throw new InvalidDataException("Unsupported guest profile format version.");var key=ReadString(r);var day=r.ReadInt32();var joins=r.ReadInt32();var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var backpack=ReadInventorySlots(r);var hotbar=ReadInventorySlots(r);var seen=r.ReadInt64();return new GuestProfileRecord(key,day,joins,x,y,z,backpack,hotbar,seen);});
     public static byte[] Encode(AttackPayload m)=>Write(w=>{w.Write(m.AttackKind);w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.DirX);w.Write(m.DirZ);w.Write(m.PosX);w.Write(m.PosZ);});

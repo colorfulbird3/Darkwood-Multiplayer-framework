@@ -63,7 +63,11 @@ var tests = new (string Name, Action Run)[]
     ("guest profile record version", GuestProfileRecordVersion),
     ("session full rejection", SessionFullRejection),
     ("session capacity", SessionCapacity),
-    ("guest key loopback", GuestKeyLoopback)
+    ("guest key loopback", GuestKeyLoopback),
+    ("player health roundtrip", PlayerHealthRoundtrip),
+    ("rescue request roundtrip", RescueRequestRoundtrip),
+    ("rescue progress roundtrip", RescueProgressRoundtrip),
+    ("all downed roundtrip", AllDownedRoundtrip)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -125,7 +129,7 @@ static void InventoryStateRoundtrip()
 }
 static void PlayerPoseRoundtrip()
 {
-    var decoded=ReplicationProtocolCodec.DecodePlayerPose(ReplicationProtocolCodec.Encode(new PlayerPoseMessage(3,9,"forest",1,2,3,0,0,0,1,5,"walk",4,"legs",2)));Require(decoded.PlayerId==3&&decoded.Sequence==9&&decoded.Scene=="forest"&&decoded.X==1&&decoded.Flags==5&&decoded.TorsoClip=="walk"&&decoded.LegsFrame==2);
+    var decoded=ReplicationProtocolCodec.DecodePlayerPose(ReplicationProtocolCodec.Encode(new PlayerPoseMessage(3,9,"forest",1,2,3,0,0,0,1,125f,21,"walk",4,"legs",2)));Require(decoded.PlayerId==3&&decoded.Sequence==9&&decoded.Scene=="forest"&&decoded.X==1&&Math.Abs(decoded.MaxHealth-125f)<.001f&&decoded.Flags==21&&(decoded.Flags&PlayerPoseFlags.Downed)!=0&&decoded.TorsoClip=="walk"&&decoded.LegsFrame==2);
 }
 static void ActionRequestRoundtrip()
 {
@@ -294,8 +298,34 @@ static void FrameworkVersionMismatch()
 static void GuestProfileMessageRoundtrip()
 {
     var inventory=new PlayerInventoryStatePayload(new[]{new InventorySlotWire("Wood",2,.8f,1,false)},new[]{new InventorySlotWire("Knife",1,.4f,2,false)});
-    var decoded=ReplicationProtocolCodec.DecodeGuestProfile(ReplicationProtocolCodec.Encode(new GuestProfileMessage(inventory,12.5f,3.25f,-8.5f,4,2)));
-    Require(decoded.Inventory.Backpack.Length==1&&decoded.Inventory.Backpack[0].Type=="Wood"&&decoded.Inventory.Hotbar[0].Type=="Knife"&&Math.Abs(decoded.X-12.5f)<.001f&&Math.Abs(decoded.Y-3.25f)<.001f&&Math.Abs(decoded.Z+8.5f)<.001f&&decoded.Day==4&&decoded.JoinCount==2);
+    var decoded=ReplicationProtocolCodec.DecodeGuestProfile(ReplicationProtocolCodec.Encode(new GuestProfileMessage(inventory,12.5f,3.25f,-8.5f,4,2,80f,100f,false)));
+    Require(decoded.Inventory.Backpack.Length==1&&decoded.Inventory.Backpack[0].Type=="Wood"&&decoded.Inventory.Hotbar[0].Type=="Knife"&&Math.Abs(decoded.X-12.5f)<.001f&&Math.Abs(decoded.Y-3.25f)<.001f&&Math.Abs(decoded.Z+8.5f)<.001f&&decoded.Day==4&&decoded.JoinCount==2&&Math.Abs(decoded.Health-80f)<.001f&&Math.Abs(decoded.MaxHealth-100f)<.001f&&!decoded.Downed);
+}
+static void PlayerHealthRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodePlayerHealth(ReplicationProtocolCodec.Encode(new PlayerHealthMessage(7,42.5f,125f,false)));
+    Require(decoded.PlayerId==7&&Math.Abs(decoded.Health-42.5f)<.001f&&Math.Abs(decoded.MaxHealth-125f)<.001f&&!decoded.Downed);
+    var downed=ReplicationProtocolCodec.DecodePlayerHealth(ReplicationProtocolCodec.Encode(new PlayerHealthMessage(7,0f,125f,true)));
+    Require(downed.Health==0f&&downed.Downed);
+}
+static void RescueRequestRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeRescueRequest(ReplicationProtocolCodec.Encode(new RescueRequestMessage(3,true)));
+    Require(decoded.PlayerId==3&&decoded.Cancel);
+    var start=ReplicationProtocolCodec.DecodeRescueRequest(ReplicationProtocolCodec.Encode(new RescueRequestMessage(4,false)));
+    Require(start.PlayerId==4&&!start.Cancel);
+}
+static void RescueProgressRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeRescueProgress(ReplicationProtocolCodec.Encode(new RescueProgressMessage(5,2,0.66f,true)));
+    Require(decoded.TargetId==5&&decoded.RescuerId==2&&Math.Abs(decoded.Progress-0.66f)<.001f&&decoded.Active);
+    var done=ReplicationProtocolCodec.DecodeRescueProgress(ReplicationProtocolCodec.Encode(new RescueProgressMessage(5,2,1f,false)));
+    Require(Math.Abs(done.Progress-1f)<.001f&&!done.Active);
+}
+static void AllDownedRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeAllDowned(ReplicationProtocolCodec.Encode(new AllDownedMessage()));
+    Require(decoded.GetType()==typeof(AllDownedMessage));
 }
 static void GuestProfileRecordRoundtrip()
 {

@@ -15,7 +15,12 @@ public sealed class DarkwoodRemotePlayers
     public Action<string>? Logger {get;set;}
     public void Apply(PlayerPoseMessage pose,int localId)
     {
-        if(pose.PlayerId==localId||pose.Scene!=UnityEngine.SceneManagement.SceneManager.GetActiveScene().name)return;var player=Player.Instance;if(player==null)return;if(!avatars.TryGetValue(pose.PlayerId,out var avatar)){avatar=Create(pose.PlayerId,player);avatars[pose.PlayerId]=avatar;}if(pose.Sequence<=avatar.Sequence)return;avatar.Sequence=pose.Sequence;avatar.Target=new Vector3(pose.X,pose.Y,pose.Z);avatar.Rotation=new Quaternion(pose.Qx,pose.Qy,pose.Qz,pose.Qw);avatar.LastSeen=Time.unscaledTime;avatar.Root.SetActive(true);ApplyClip(avatar.Torso,pose.TorsoClip,pose.TorsoFrame);ApplyClip(avatar.Legs,pose.LegsClip,(pose.Flags&3)==0?0:pose.LegsFrame);
+        if(pose.PlayerId==localId||pose.Scene!=UnityEngine.SceneManagement.SceneManager.GetActiveScene().name)return;var player=Player.Instance;if(player==null)return;if(!avatars.TryGetValue(pose.PlayerId,out var avatar)){avatar=Create(pose.PlayerId,player);avatars[pose.PlayerId]=avatar;}if(pose.Sequence<=avatar.Sequence)return;avatar.Sequence=pose.Sequence;avatar.Target=new Vector3(pose.X,pose.Y,pose.Z);avatar.Rotation=new Quaternion(pose.Qx,pose.Qy,pose.Qz,pose.Qw);avatar.LastSeen=Time.unscaledTime;avatar.Root.SetActive(true);if((pose.Flags&PlayerPoseFlags.Downed)==0){ApplyClip(avatar.Torso,pose.TorsoClip,pose.TorsoFrame);ApplyClip(avatar.Legs,pose.LegsClip,(pose.Flags&3)==0?0:pose.LegsFrame);}
+    }
+    public bool TryGetPosition(int playerId,out Vector3 position)
+    {
+        if(avatars.TryGetValue(playerId,out var avatar)){position=avatar.Root.transform.position;return true;}
+        position=Vector3.zero;return false;
     }
     public void Tick(){var remove=new List<int>();foreach(var pair in avatars){var a=pair.Value;var t=1f-Mathf.Exp(-14f*Time.unscaledDeltaTime);a.Root.transform.position=Vector3.Lerp(a.Root.transform.position,a.Target,t);a.Root.transform.rotation=Quaternion.Slerp(a.Root.transform.rotation,a.Rotation,t);if(Time.unscaledTime-a.LastSeen>10f)remove.Add(pair.Key);}foreach(var id in remove){UnityEngine.Object.Destroy(avatars[id].Root);avatars.Remove(id);}}
     public void Clear(){foreach(var a in avatars.Values)if(a.Root!=null)UnityEngine.Object.Destroy(a.Root);avatars.Clear();}
