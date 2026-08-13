@@ -7,7 +7,7 @@
 - 本目录是后续开发的 canonical 本地源码树：`src/`。
 - 游戏运行时仍使用 BepInEx 5 + Harmony + Unity Mono + Telepathy TCP。
 - Hermes 是开发 Agent；DS V4 Pro 是可选的开发模型。除非用户提供真实 SDK、协议文档和许可证，不得把它们写成 Unity 运行时依赖。
-- 当前基线是 `0.8.7-alpha.10`，协议版本为 3，快照 Schema 为 3。
+- 当前基线是 `0.8.7-alpha.11`；无向下兼容，握手只比较框架版本与游戏版本。
 
 ## 不变量
 
@@ -17,7 +17,7 @@
 4. Host 的容器和玩家库存 shadow 必须在一个事务中更新；拒绝、超时、断线都要能回传完整状态并回滚客户端预测。
 5. Persistent EntityId 不能依赖 `GetInstanceID()`、名称或 Instantiate 顺序。
 6. 快照/注册表/共享容器未完整校验时，Client 不得进入 READY。
-7. 修改 wire schema 必须增加协议或 Schema 版本，并补 roundtrip、负例和兼容性测试。
+7. 无向下兼容：框架版本是唯一 wire 门槛（PROTO-001 已定）；改动 wire schema 只递增框架版本并补 roundtrip、负例和版本不一致拒绝测试，不保留兼容路径。
 
 ## 修改前检查
 

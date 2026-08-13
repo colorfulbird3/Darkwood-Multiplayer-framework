@@ -92,7 +92,7 @@ public sealed class ClientHandshakeSession : IDisposable
     }
     private void Send(ProtocolMessageType type, Guid sessionId, byte[] payload)
     {
-        var envelope = new ProtocolEnvelope(Session.Identity.ProtocolVersion, type, ProtocolFlags.Reliable, ++sequence, sessionId, payload);
+        var envelope = new ProtocolEnvelope(ProtocolVersions.EnvelopeProtocol, type, ProtocolFlags.Reliable, ++sequence, sessionId, payload);
         transport.Send(new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)), DeliveryMode.Reliable);
     }
     public void Send(ProtocolMessageType type, byte[] payload)
@@ -102,7 +102,7 @@ public sealed class ClientHandshakeSession : IDisposable
     }
     private static void RequireMatchingEnvelope(ProtocolEnvelope envelope, ProtocolIdentity identity)
     {
-        if (envelope.ProtocolVersion != identity.ProtocolVersion) throw new InvalidDataException("Envelope and identity protocol versions differ.");
+        if (envelope.ProtocolVersion != ProtocolVersions.EnvelopeProtocol) throw new InvalidDataException("Envelope protocol version differs from the framework constant.");
     }
     public void Fail(string error)
     {
@@ -165,7 +165,7 @@ public sealed class HostHandshakeSession : IDisposable
             if (envelope.Sequence <= peer.LastSequence) throw new InvalidDataException("Handshake sequence is stale.");
             peer.LastSequence = envelope.Sequence;
             var hello = HandshakeProtocolCodec.DecodeClientHello(envelope.Payload);
-            if (envelope.ProtocolVersion != hello.Identity.ProtocolVersion) throw new InvalidDataException("Envelope and identity protocol versions differ.");
+            if (envelope.ProtocolVersion != ProtocolVersions.EnvelopeProtocol) throw new InvalidDataException("Envelope protocol version differs from the framework constant.");
             var result = HandshakeValidator.Validate(Identity, hello.Identity);
             if (!result.Accepted) { Reject(connectionId, result.ErrorCode); return; }
             peer.Identity = hello.Identity; peer.Ready = true;
@@ -182,7 +182,7 @@ public sealed class HostHandshakeSession : IDisposable
     private void OnDisconnected(int connectionId) { peers.Remove(connectionId); PeerDisconnected?.Invoke(connectionId); }
     private void Send(int connectionId, ProtocolMessageType type, byte[] payload)
     {
-        var envelope = new ProtocolEnvelope(Identity.ProtocolVersion, type, ProtocolFlags.Reliable, ++sequence, SessionId, payload);
+        var envelope = new ProtocolEnvelope(ProtocolVersions.EnvelopeProtocol, type, ProtocolFlags.Reliable, ++sequence, SessionId, payload);
         transport.Send(connectionId, new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)));
     }
     public void SendMessage(int connectionId, ProtocolMessageType type, byte[] payload)

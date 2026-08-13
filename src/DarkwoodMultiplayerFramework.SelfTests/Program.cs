@@ -15,7 +15,7 @@ using DarkwoodMultiplayerFramework.Snapshots;
 var tests = new (string Name, Action Run)[]
 {
     ("compatible handshake", CompatibleHandshake),
-    ("protocol mismatch", ProtocolMismatch),
+    ("game version mismatch", GameVersionMismatch),
     ("protocol envelope roundtrip", EnvelopeRoundtrip),
     ("protocol envelope bad magic", EnvelopeBadMagic),
     ("protocol envelope truncated", EnvelopeTruncated),
@@ -66,9 +66,9 @@ foreach (var test in tests)
 }
 return failed == 0 ? 0 : 1;
 
-static ProtocolIdentity Identity(int protocol = ProtocolVersions.Protocol) => new(protocol, ProtocolVersions.Framework, "darkwood-build", ProtocolVersions.SaveSchema, ProtocolVersions.SnapshotSchema);
+static ProtocolIdentity Identity() => new(ProtocolVersions.Framework, "darkwood-build");
 static void CompatibleHandshake() => Require(HandshakeValidator.Validate(Identity(), Identity()).Accepted);
-static void ProtocolMismatch() { var result=HandshakeValidator.Validate(Identity(), Identity(2)); Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_PROTOCOL"); }
+static void GameVersionMismatch() { var result=HandshakeValidator.Validate(Identity(), new ProtocolIdentity(ProtocolVersions.Framework, "other-build")); Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_GAME_BUILD"); }
 static void EnvelopeRoundtrip()
 {
     var sessionId=Guid.NewGuid(); var payload=Encoding.UTF8.GetBytes("hello");
@@ -88,7 +88,7 @@ static void EnvelopeTruncated()
 static void ClientHelloRoundtrip()
 {
     var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity())));
-    Require(decoded.Identity.ProtocolVersion==ProtocolVersions.Protocol && decoded.Identity.FrameworkVersion==ProtocolVersions.Framework && decoded.Identity.GameVersion=="darkwood-build" && decoded.Identity.SaveSchemaVersion==ProtocolVersions.SaveSchema && decoded.Identity.SnapshotSchemaVersion==ProtocolVersions.SnapshotSchema);
+    Require(decoded.Identity.FrameworkVersion==ProtocolVersions.Framework && decoded.Identity.GameVersion=="darkwood-build");
 }
 static void SaveProtocolRoundtrip()
 {
@@ -196,7 +196,7 @@ static void RunTelepathyLoopback(bool compatible)
 {
     var telepathy=FindTelepathy(); var port=FindFreePort(); var accepted=false; var rejected=string.Empty;
     using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
-    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),compatible ? Identity() : Identity(2));
+    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),compatible ? Identity() : new ProtocolIdentity("0.8.7-alpha.9","darkwood-build"));
     host.PeerAccepted += _ => accepted=true; host.PeerRejected += (_,error) => rejected=error;
     host.Start(port); client.Connect("127.0.0.1",port);
     var timeout=Stopwatch.StartNew();
@@ -208,7 +208,7 @@ static void RunTelepathyLoopback(bool compatible)
         Thread.Sleep(1);
     }
     if(compatible) Require(accepted && client.HandshakeComplete && client.PeerId>=0 && client.HostSessionId==host.SessionId && client.Session.Lifecycle.State==ConnectionState.SaveTransfer && host.ReadyPeerCount==1);
-    else Require(!accepted && rejected=="INCOMPATIBLE_PROTOCOL" && client.LastError=="INCOMPATIBLE_PROTOCOL" && client.Session.Lifecycle.State==ConnectionState.Failed && host.ReadyPeerCount==0);
+    else Require(!accepted && rejected=="INCOMPATIBLE_FRAMEWORK_VERSION" && client.LastError=="INCOMPATIBLE_FRAMEWORK_VERSION" && client.Session.Lifecycle.State==ConnectionState.Failed && host.ReadyPeerCount==0);
 }
 static string FindTelepathy()
 {
@@ -274,7 +274,7 @@ static void ItemActivateActionRoundtrip()
 static void FrameworkVersionMismatch()
 {
     var host=Identity();
-    var client=new ProtocolIdentity(ProtocolVersions.Protocol,"0.8.7-alpha.9","darkwood-build",ProtocolVersions.SaveSchema,ProtocolVersions.SnapshotSchema);
+    var client=new ProtocolIdentity("0.8.7-alpha.9","darkwood-build");
     var result=HandshakeValidator.Validate(host,client);
     Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_FRAMEWORK_VERSION");
 }

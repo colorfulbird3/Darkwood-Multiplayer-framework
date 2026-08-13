@@ -2,7 +2,7 @@
 ## Hermes + DS V4 Pro 项目文档
 
 > 文档用途：作为 Hermes 的项目级上下文，说明项目背景、运行时架构、核心流程、数据契约、当前状态和后续开发边界。  
-> 文档基线：`0.8.7-alpha.10`（2026-08-13）  
+> 文档基线：`0.8.7-alpha.11`（2026-08-13）  
 > 重要边界：Hermes 是开发 Agent，DS V4 Pro 是开发模型；二者目前不是 Darkwood 的游戏运行时网络 SDK。
 
 ---
@@ -40,25 +40,24 @@ src\
 游戏目录：F:\SteamLibrary\steamapps\common\Darkwood
 插件目录：F:\SteamLibrary\steamapps\common\Darkwood\BepInEx\plugins
 Payload：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework\Payload
-安装包：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.10
-ZIP：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.10.zip
+安装包：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.11
+ZIP：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.11.zip
 ```
 
 当前发布基线：
 
 ```text
-Framework       0.8.7-alpha.10
-Protocol        3
-Handshake Save  1（待与实际 SaveBundle wire schema 对齐）
-Handshake Snap  3（待与实际 WorldSnapshot wire schema 对齐）
-SaveBundle wire 3
-Snapshot wire    2
+Framework       0.8.7-alpha.11
+Envelope        3（信封头常量）
+握手门槛        FrameworkVersion + GameVersion（无向下兼容，PROTO-001 已定）
+SaveBundle wire 3（实现细节，随框架版本绑定）
+Snapshot wire   2（实现细节，随框架版本绑定）
 ```
 
-alpha.10 ZIP 当前 SHA256：
+alpha.11 ZIP 当前 SHA256：
 
 ```text
-4536DF53A6A47EF840F4E4AC4CB65CFC818A932AC28E31FF5EBFFBA966CA1624
+369CD0DEEA56159ACC0C4B843231DD55D332401AEA1E31318529414E6E966851
 ```
 
 `Darkwood Multiplayer framework-GitHub` 是 GitHub 工作副本（remote 为 https://github.com/colorfulbird3/Darkwood-Multiplayer-framework），与本地 canonical 树按每轮发布同步：canonical 树为开发主树，发布时把源码以普通提交推送到该仓库（Payload、第三方二进制与安装包不进仓库）。禁止在两棵树之间混改。

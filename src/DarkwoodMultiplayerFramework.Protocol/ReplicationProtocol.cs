@@ -216,18 +216,18 @@ public readonly struct InteractPayload
     public int ValueA {get;}
 }
 
-/// <summary>Single source of truth for the wire identity fields.</summary>
+/// <summary>Single source of truth for the wire identity.</summary>
 /// <remarks>
-/// PROTO-001 still owns the decision of how these handshake fields relate to the
-/// internal DarkwoodSaveBundle (wire 3) and WorldSnapshotWireCodec (schema 2)
-/// headers; those two internal versions are intentionally NOT aliased here yet.
+/// The framework does NOT support backward compatibility: FrameworkVersion is the
+/// single version gate (PROTO-001 resolution). The internal SaveBundle wire (3) and
+/// WorldSnapshotWire schema (2) headers are implementation details implied by the
+/// framework version and are not negotiated separately.
 /// </remarks>
 public static class ProtocolVersions
 {
-    public const int Protocol = 3;
-    public const string Framework = "0.8.7-alpha.10";
-    public const int SaveSchema = 1;
-    public const int SnapshotSchema = 3;
+    /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
+    public const int EnvelopeProtocol = 3;
+    public const string Framework = "0.8.7-alpha.11";
 }
 
 public static class ReplicationProtocolCodec

@@ -118,7 +118,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         public bool IsBulk => ChunkIndex >= 0 && ChunkCount > 0;
     }
 
-    private ProtocolIdentity Identity => new ProtocolIdentity(ProtocolVersions.Protocol, Plugin.Version, Application.version, ProtocolVersions.SaveSchema, ProtocolVersions.SnapshotSchema);
+    private ProtocolIdentity Identity => new ProtocolIdentity(ProtocolVersions.Framework, Application.version);
 
     public void Initialize(ManualLogSource logger)
     {
