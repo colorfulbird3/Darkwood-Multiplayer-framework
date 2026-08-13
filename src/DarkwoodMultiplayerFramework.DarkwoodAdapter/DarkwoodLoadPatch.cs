@@ -39,3 +39,18 @@ public static class DarkwoodJoinPathsPatch
         return false;
     }
 }
+
+/// <summary>FIX-005：客户端跳过 AstarData.DeserializeGraphs——主机打包已剥离导航图
+/// （savs.dat 的 graph 字段为空），客户端世界恢复无需路径图；跳过可防止空图反序列化
+/// 在 A* 内部抛异常或阻塞。</summary>
+[HarmonyPatch(typeof(Pathfinding.AstarData), "DeserializeGraphs", new[]{ typeof(byte[]) })]
+public static class DarkwoodGraphDeserializePatch
+{
+    public static bool Prefix()
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || !runtime.IsClient || !runtime.ClientSaveLoadPending) return true;
+        DarkwoodAdapterRuntime.LogMessage("客户端已跳过 AstarData.DeserializeGraphs（导航图已由主机剥离）。");
+        return false;
+    }
+}
