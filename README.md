@@ -1,37 +1,30 @@
 # Darkwood Multiplayer Framework
 
-> Current development version: `0.8.6-alpha.1` (Action Core)
->
-> This version adds the first host-authoritative action pipeline for Pickup: the client sends intent, the Host validates READY state, player identity, EntityId, revision, distance and inventory capacity, applies the mutation once, then broadcasts the result and despawn. Duplicate RequestIds replay the cached response without duplicating items.
->
-> Release details: [`RELEASE-NOTES-0.8.6-alpha.1.md`](RELEASE-NOTES-0.8.6-alpha.1.md). Runtime Entity, Scene Transition, Reconnect, Drop, Door and Combat remain future work.
+Darkwood（Unity Mono 生存恐怖游戏）的多人联机插件框架。通过 BepInEx 5 + Harmony 注入游戏，使用自有二进制协议与 Telepathy TCP 在局域网 / Radmin VPN 中联机。
 
-安装包下载：[`Darkwood-Multiplayer-Framework-v0.8.6-alpha.1.zip`](Releases/0.8.6-alpha.1/Darkwood-Multiplayer-Framework-v0.8.6-alpha.1.zip)
+当前版本：**0.8.7-alpha.10**（协议版本 3）
 
-这是正在开发中的 Darkwood 主机权威联机框架与游戏适配层。`0.8.6-alpha.1` 已实现独立 Telepathy Host/Client、Protocol Envelope/Handshake、实时存档分块收发、隔离存档加载、Entity Registry 校验、独立 WorldSnapshot、实体/容器增量同步、双向玩家姿态广播，以及第一条主机权威 Pickup Action 链路。
+## 架构
 
-当前仍是需要双端游戏验证的 alpha，不应视为完整可玩版本。场景切换权威流程和客户端容器 Action Request/Host 原子事务仍在开发。
+- Host 是世界、实体和共享容器的唯一权威；Client 只提交意图（ActionRequest）。
+- 主机权威：共享柜子物品事务（拿/放/拖/叠/换）、近战攻击、开关门/封窗/物品开关、怪物死亡与尸体掉落。
+- 世界快照 + 实体增量（15 Hz）同步怪物/门窗/物品状态；远端怪物 AI 冻结，远端玩家模型插值。
 
-开源中的网络同步架构与 Darkwood 适配层实验工程。
+详见 `IDEA.md`（项目事实单一入口）、`AGENTS.md`（Agent 工作规则）和 `.hermes/`（上下文与任务）。
 
-## 构建
+## 构建与自测
 
-Darkwood 的游戏程序集、BepInEx、Mirror、Telepathy 和 Harmony 不随仓库分发。请先安装 Darkwood 与 BepInEx，并设置环境变量：
+构建需要本机提供合法的 Darkwood `Darkwood_Data/Managed` 游戏程序集（不随仓库分发），以及 BepInEx/Harmony 核心 DLL（本地 `Payload/`，不随仓库分发）。
 
 ```powershell
-$env:DMF_DARKWOOD_DIR = 'C:\path\to\Darkwood'
-$env:DMF_DEPENDENCY_DIR = 'C:\path\to\Darkwood\BepInEx'
-dotnet build .\src\DarkwoodMultiplayerFramework.sln -c Release
+dotnet build '.\src\DarkwoodMultiplayerFramework.sln' -c Release --no-restore -m:1 -p:MSBuildEnableWorkloadResolver=false
+dotnet run --project '.\src\DarkwoodMultiplayerFramework.SelfTests\DarkwoodMultiplayerFramework.SelfTests.csproj' -c Release --no-build -p:MSBuildEnableWorkloadResolver=false
 ```
 
-仅公开仓库中自己的源码；第三方组件请遵循各自许可证。
+## 安装包
 
-## 目录
-
-- `src/`：公开源码。
-- `ARCHITECTURE-ROADMAP.zh-CN.md`：架构路线图。
-- `THIRD-PARTY-NOTICES.md`：第三方依赖说明。
+安装包与 ZIP 只在本机发布流程中生成，不进仓库。见 `RELEASE-NOTES-*.md`。
 
 ## 许可证
 
-见 `LICENSE`。Darkwood 游戏本体及其程序集不属于本项目。
+本项目源码见 `LICENSE`；第三方组件声明见 `THIRD-PARTY-NOTICES.md`。

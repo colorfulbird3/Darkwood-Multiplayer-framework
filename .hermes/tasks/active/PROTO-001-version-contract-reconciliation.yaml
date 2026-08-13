@@ -1,0 +1,38 @@
+schema_version: 1
+id: PROTO-001
+title: 对齐 alpha.9 握手、存档和世界快照版本契约
+priority: P0
+status: planned
+tags: [protocol, handshake, schema, selftests]
+depends_on: []
+owner_role: architect
+scope: >-
+  只读审计并随后以最小改动统一 ProtocolEnvelope、Handshake、SaveBundle 和 WorldSnapshot wire 的版本语义，
+  将 SelfTests 从旧 alpha.1 fixture 更新到当前 alpha.9 基线。
+out_of_scope:
+  - 不替换 Telepathy
+  - 不修改 Darkwood 游戏玩法
+  - 不覆盖正式 DLL、安装包或 ZIP
+files:
+  - src/DarkwoodMultiplayerFramework.Protocol/HandshakeProtocol.cs
+  - src/DarkwoodMultiplayerFramework.Protocol/ProtocolEnvelope.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodSaveBundle.cs
+  - src/DarkwoodMultiplayerFramework.Snapshots/DarkwoodWorldSnapshotWire.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodAdapterRuntime.cs
+  - src/DarkwoodMultiplayerFramework.SelfTests/Program.cs
+  - src/DarkwoodMultiplayerFramework.Core
+invariants:
+  - wire_version_is_explicit
+  - incompatible_schema_is_rejected
+  - selftests_cover_current_release_identity
+acceptance:
+  - 决定并记录 Envelope protocol、SaveBundle wire、WorldSnapshot wire 是否独立版本
+  - 运行时身份和 codec 使用单一可追踪常量，不再散落硬编码
+  - 增加当前 alpha.9 roundtrip、截断、错误版本和旧 alpha.8/alpha.1 拒绝测试
+  - 握手字段真实反映客户端将实际读取的 schema，或文档明确其兼容映射
+verification:
+  - dotnet build 0 warning / 0 error
+  - SelfTests 全部通过且输出包含 alpha.9 identity
+  - 保存协议和快照 wire 的旧版本 negative test 通过
+risk: high
+rollback: 保留 alpha.9 原始 DLL、安装包、ZIP 和 SHA256 manifest；协议变更未实机验证前不发布。

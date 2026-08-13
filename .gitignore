@@ -8,3 +8,9 @@ BepInEx/LogOutput.log
 *.sav
 *.save
 *.dmp
+# Local-only build/release artifacts (never pushed)
+Payload/
+.tools/
+*.zip
+install-*.ps1
+Darkwood*安装包-*/

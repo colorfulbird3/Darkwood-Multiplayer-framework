@@ -15,6 +15,7 @@ public sealed class TelepathyServerTransport : IDisposable
         serverType = assembly.GetType("Telepathy.Server", true)!;
         messageType = assembly.GetType("Telepathy.Message", true)!;
         server = Activator.CreateInstance(serverType)!;
+        TelepathyConfiguration.Apply(server, serverType);
         getNextMessage = serverType.GetMethod("GetNextMessage")!;
     }
     public bool IsActive => (bool)(serverType.GetProperty("Active")?.GetValue(server) ?? false);

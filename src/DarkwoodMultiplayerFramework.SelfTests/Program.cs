@@ -30,6 +30,9 @@ var tests = new (string Name, Action Run)[]
     ("action result roundtrip", ActionResultRoundtrip),
     ("action rejected roundtrip", ActionRejectedRoundtrip),
     ("pickup result roundtrip", PickupResultRoundtrip),
+    ("container take roundtrip", ContainerTakeRoundtrip),
+    ("container put roundtrip", ContainerPutRoundtrip),
+    ("player inventory state roundtrip", PlayerInventoryStateRoundtrip),
     ("action empty request id", ActionEmptyRequestId),
     ("action unknown kind", ActionUnknownKind),
     ("action idempotency", ActionIdempotency),
@@ -40,11 +43,20 @@ var tests = new (string Name, Action Run)[]
     ("world snapshot wire roundtrip", WorldSnapshotWireRoundtrip),
     ("world snapshot wire corruption", WorldSnapshotWireCorruption),
     ("telepathy loopback handshake", TelepathyLoopbackHandshake),
+    ("telepathy 128 KiB payload", TelepathyLargePayload),
     ("telepathy loopback rejection", TelepathyLoopbackRejection),
     ("registry digest", RegistryDigest),
     ("snapshot reorder", SnapshotReorder),
     ("snapshot phase mismatch", SnapshotPhaseMismatch),
-    ("snapshot hash mismatch", SnapshotHashMismatch)
+    ("snapshot hash mismatch", SnapshotHashMismatch),
+    ("attack payload roundtrip", AttackPayloadRoundtrip),
+    ("attack kind invalid", AttackKindInvalid),
+    ("attack slot index invalid", AttackSlotInvalid),
+    ("interact payload roundtrip", InteractPayloadRoundtrip),
+    ("attack action roundtrip", AttackActionRoundtrip),
+    ("door interact action roundtrip", DoorInteractActionRoundtrip),
+    ("item activate action roundtrip", ItemActivateActionRoundtrip),
+    ("framework version mismatch", FrameworkVersionMismatch)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -54,7 +66,7 @@ foreach (var test in tests)
 }
 return failed == 0 ? 0 : 1;
 
-static ProtocolIdentity Identity(int protocol=1) => new(protocol, "0.8.6-alpha.1", "darkwood-build", 1, 1);
+static ProtocolIdentity Identity(int protocol = ProtocolVersions.Protocol) => new(protocol, ProtocolVersions.Framework, "darkwood-build", ProtocolVersions.SaveSchema, ProtocolVersions.SnapshotSchema);
 static void CompatibleHandshake() => Require(HandshakeValidator.Validate(Identity(), Identity()).Accepted);
 static void ProtocolMismatch() { var result=HandshakeValidator.Validate(Identity(), Identity(2)); Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_PROTOCOL"); }
 static void EnvelopeRoundtrip()
@@ -76,7 +88,7 @@ static void EnvelopeTruncated()
 static void ClientHelloRoundtrip()
 {
     var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity())));
-    Require(decoded.Identity.ProtocolVersion==1 && decoded.Identity.FrameworkVersion=="0.8.6-alpha.1" && decoded.Identity.GameVersion=="darkwood-build" && decoded.Identity.SaveSchemaVersion==1 && decoded.Identity.SnapshotSchemaVersion==1);
+    Require(decoded.Identity.ProtocolVersion==ProtocolVersions.Protocol && decoded.Identity.FrameworkVersion==ProtocolVersions.Framework && decoded.Identity.GameVersion=="darkwood-build" && decoded.Identity.SaveSchemaVersion==ProtocolVersions.SaveSchema && decoded.Identity.SnapshotSchemaVersion==ProtocolVersions.SnapshotSchema);
 }
 static void SaveProtocolRoundtrip()
 {
@@ -96,7 +108,7 @@ static void EntityDeltaRoundtrip()
 }
 static void InventoryStateRoundtrip()
 {
-    var decoded=ReplicationProtocolCodec.DecodeInventoryState(ReplicationProtocolCodec.Encode(new InventoryStateMessage(8,true,4,new[]{new InventorySlotWire("Wood",3,.5f,2,false)})));Require(decoded.Value==8&&decoded.Persistent&&decoded.Revision==4&&decoded.Slots.Length==1&&decoded.Slots[0].Type=="Wood"&&decoded.Slots[0].Amount==3&&Math.Abs(decoded.Slots[0].Durability-.5f)<.001f);
+    var decoded=ReplicationProtocolCodec.DecodeInventoryState(ReplicationProtocolCodec.Encode(new InventoryStateMessage(8,true,4,"Wardrobe",1.5f,2.5f,3.5f,7,new[]{new InventorySlotWire("Wood",3,.5f,2,false)})));Require(decoded.Value==8&&decoded.Persistent&&decoded.Revision==4&&decoded.Name=="Wardrobe"&&Math.Abs(decoded.X-1.5f)<.001f&&Math.Abs(decoded.Y-2.5f)<.001f&&Math.Abs(decoded.Z-3.5f)<.001f&&decoded.InventoryType==7&&decoded.Slots.Length==1&&decoded.Slots[0].Type=="Wood"&&decoded.Slots[0].Amount==3&&Math.Abs(decoded.Slots[0].Durability-.5f)<.001f);
 }
 static void PlayerPoseRoundtrip()
 {
@@ -117,6 +129,21 @@ static void ActionRejectedRoundtrip()
 static void PickupResultRoundtrip()
 {
     var decoded=ReplicationProtocolCodec.DecodePickupResult(ReplicationProtocolCodec.Encode(new PickupResultPayload("Wood",2,.75f,3,true)));Require(decoded.ItemType=="Wood"&&decoded.Amount==2&&Math.Abs(decoded.Durability-.75f)<.001f&&decoded.Quality==3&&decoded.Recipe);
+}
+static void ContainerTakeRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeContainerTake(ReplicationProtocolCodec.Encode(new ContainerTakePayload(7,-1)));Require(decoded.SlotIndex==7&&decoded.Amount==-1);
+    var request=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(Guid.NewGuid(),2,ActionKindWire.ContainerTake,99,true,4,ReplicationProtocolCodec.Encode(new ContainerTakePayload(3,1)))));Require(request.Kind==ActionKindWire.ContainerTake&&ReplicationProtocolCodec.DecodeContainerTake(request.Payload).SlotIndex==3);
+}
+static void ContainerPutRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeContainerPut(ReplicationProtocolCodec.Encode(new ContainerPutPayload(true,4,9,-1)));Require(decoded.Hotbar&&decoded.SlotIndex==4&&decoded.DestinationSlotIndex==9&&decoded.Amount==-1);
+    var request=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(Guid.NewGuid(),2,ActionKindWire.ContainerPut,101,true,6,ReplicationProtocolCodec.Encode(new ContainerPutPayload(false,2,5,1)))));var put=ReplicationProtocolCodec.DecodeContainerPut(request.Payload);Require(request.Kind==ActionKindWire.ContainerPut&&!put.Hotbar&&put.SlotIndex==2&&put.DestinationSlotIndex==5&&put.Amount==1);
+}
+static void PlayerInventoryStateRoundtrip()
+{
+    var payload=new PlayerInventoryStatePayload(new[]{new InventorySlotWire("Wood",2,.8f,1,false)},new[]{new InventorySlotWire("Knife",1,.4f,2,false)});
+    var decoded=ReplicationProtocolCodec.DecodePlayerInventoryState(ReplicationProtocolCodec.Encode(payload));Require(decoded.Backpack.Length==1&&decoded.Backpack[0].Type=="Wood"&&decoded.Backpack[0].Amount==2&&decoded.Hotbar.Length==1&&decoded.Hotbar[0].Type=="Knife"&&Math.Abs(decoded.Hotbar[0].Durability-.4f)<.001f);
 }
 static void ActionEmptyRequestId()=>ExpectFailure(()=>ReplicationProtocolCodec.Encode(new ActionRequestMessage(Guid.Empty,1,ActionKindWire.Pickup,1,true,0,Array.Empty<byte>())));
 static void ActionUnknownKind()
@@ -148,6 +175,22 @@ static void WorldSnapshotWireCorruption()
     var bytes=WorldSnapshotWireCodec.Encode(new WorldSnapshotWire("forest","DIGEST",1,Array.Empty<byte[]>(),Array.Empty<byte[]>()));bytes[0]^=0xff;ExpectFailure(()=>WorldSnapshotWireCodec.Decode(bytes));
 }
 static void TelepathyLoopbackHandshake() => RunTelepathyLoopback(true);
+static void TelepathyLargePayload()
+{
+    var telepathy=FindTelepathy();var port=FindFreePort();var peer=-1;var received=0;
+    using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
+    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
+    host.PeerAccepted += id => peer=id;
+    host.MessageReceived += (_,message) => received=message.Payload.Length;
+    host.Start(port);client.Connect("127.0.0.1",port);
+    var timeout=Stopwatch.StartNew();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&(!client.HandshakeComplete||peer<0)){host.Tick();client.Tick();Thread.Sleep(1);}
+    Require(client.HandshakeComplete&&peer>=0);
+    client.Send(ProtocolMessageType.SaveTransferChunk,new byte[128*1024+256]);
+    timeout.Restart();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&received==0){host.Tick();client.Tick();Thread.Sleep(1);}
+    Require(received==128*1024+256);
+}
 static void TelepathyLoopbackRejection() => RunTelepathyLoopback(false);
 static void RunTelepathyLoopback(bool compatible)
 {
@@ -188,5 +231,52 @@ static void RegistryDigest() { var a=new EntityRegistry<object>(); var b=new Ent
 static void SnapshotReorder() { var id=Guid.NewGuid(); var a=Encoding.UTF8.GetBytes("hello "); var b=Encoding.UTF8.GetBytes("world"); var x=new SnapshotAssembler(); x.Add(new SnapshotChunk(id,SnapshotPhase.World,1,2,b)); x.Add(new SnapshotChunk(id,SnapshotPhase.World,0,2,a)); Require(Encoding.UTF8.GetString(x.Build())=="hello world"); }
 static void SnapshotPhaseMismatch() { var id=Guid.NewGuid(); var x=new SnapshotAssembler(); x.Add(new SnapshotChunk(id,SnapshotPhase.World,0,2,new byte[]{1})); ExpectFailure(()=>x.Add(new SnapshotChunk(id,SnapshotPhase.Entities,1,2,new byte[]{2}))); }
 static void SnapshotHashMismatch() { var x=new SnapshotAssembler(); ExpectFailure(()=>x.Add(new SnapshotChunk(Guid.NewGuid(),SnapshotPhase.World,0,1,new byte[]{1},new byte[32]))); }
+static void AttackPayloadRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeAttack(ReplicationProtocolCodec.Encode(new AttackPayload(2,true,4,0.6f,-0.8f,12.5f,3.25f)));
+    Require(decoded.AttackKind==2&&decoded.FromHotbar&&decoded.SlotIndex==4&&Math.Abs(decoded.DirX-0.6f)<.001f&&Math.Abs(decoded.DirZ+0.8f)<.001f&&Math.Abs(decoded.PosX-12.5f)<.001f&&Math.Abs(decoded.PosZ-3.25f)<.001f);
+}
+static void AttackKindInvalid()
+{
+    var bytes=ReplicationProtocolCodec.Encode(new AttackPayload(1,false,0,0,1,0,0));bytes[0]=9;ExpectFailure(()=>ReplicationProtocolCodec.DecodeAttack(bytes));
+}
+static void AttackSlotInvalid()
+{
+    var patched=ReplicationProtocolCodec.Encode(new AttackPayload(1,false,0,0,1,0,0));
+    // Payload layout: kind(1) + fromHotbar(1) + slotIndex(4, little-endian). Overwrite the slot index with 256.
+    patched[2]=0; patched[3]=1; patched[4]=0; patched[5]=0;
+    ExpectFailure(()=>ReplicationProtocolCodec.DecodeAttack(patched));
+}
+static void InteractPayloadRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeInteract(ReplicationProtocolCodec.Encode(new InteractPayload(250)));
+    Require(decoded.ValueA==250);
+}
+static void AttackActionRoundtrip()
+{
+    var id=Guid.NewGuid();
+    var decoded=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(id,3,ActionKindWire.Attack,0,false,0,ReplicationProtocolCodec.Encode(new AttackPayload(1,true,2,0,1,4,5)))));
+    Require(decoded.Kind==ActionKindWire.Attack&&decoded.RequestId==id&&decoded.PlayerId==3&&decoded.TargetValue==0&&!decoded.TargetPersistent&&decoded.ExpectedRevision==0);
+    var attack=ReplicationProtocolCodec.DecodeAttack(decoded.Payload);Require(attack.AttackKind==1&&attack.FromHotbar&&attack.SlotIndex==2);
+}
+static void DoorInteractActionRoundtrip()
+{
+    var id=Guid.NewGuid();
+    var decoded=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(id,2,ActionKindWire.DoorInteract,77,true,9,ReplicationProtocolCodec.Encode(new InteractPayload(0)))));
+    Require(decoded.Kind==ActionKindWire.DoorInteract&&decoded.TargetValue==77&&decoded.TargetPersistent&&decoded.ExpectedRevision==9);
+}
+static void ItemActivateActionRoundtrip()
+{
+    var id=Guid.NewGuid();
+    var decoded=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(id,1,ActionKindWire.ItemActivate,55,true,0,Array.Empty<byte>())));
+    Require(decoded.Kind==ActionKindWire.ItemActivate&&decoded.TargetValue==55&&decoded.TargetPersistent);
+}
+static void FrameworkVersionMismatch()
+{
+    var host=Identity();
+    var client=new ProtocolIdentity(ProtocolVersions.Protocol,"0.8.7-alpha.9","darkwood-build",ProtocolVersions.SaveSchema,ProtocolVersions.SnapshotSchema);
+    var result=HandshakeValidator.Validate(host,client);
+    Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_FRAMEWORK_VERSION");
+}
 static void Require(bool value) { if(!value) throw new InvalidOperationException("assertion failed"); }
 static void ExpectFailure(Action action) { try { action(); } catch(Exception error) when(error is InvalidOperationException || error is InvalidDataException || error is EndOfStreamException) { return; } throw new InvalidOperationException("expected failure"); }

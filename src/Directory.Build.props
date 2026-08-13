@@ -1,6 +1,8 @@
 <Project>
   <PropertyGroup>
-    <DMFDarkwoodDir Condition="'$(DMFDarkwoodDir)' == ''">$(DMF_DARKWOOD_DIR)</DMFDarkwoodDir>
-    <DMFDependencyDir Condition="'$(DMFDependencyDir)' == ''">$(DMF_DEPENDENCY_DIR)</DMFDependencyDir>
+    <LocalBuildRoot>F:\Private Blog\DMF Local Build</LocalBuildRoot>
+    <BaseIntermediateOutputPath>$(LocalBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(LocalBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;src-staging\**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

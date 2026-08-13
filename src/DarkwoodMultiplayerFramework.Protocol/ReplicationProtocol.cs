@@ -110,8 +110,10 @@ public readonly struct InventorySlotWire
 
 public readonly struct InventoryStateMessage
 {
-    public InventoryStateMessage(ulong value,bool persistent,ulong revision,InventorySlotWire[] slots){Value=value;Persistent=persistent;Revision=revision;Slots=slots??Array.Empty<InventorySlotWire>();}
-    public ulong Value {get;} public bool Persistent {get;} public ulong Revision {get;} public InventorySlotWire[] Slots {get;}
+    public InventoryStateMessage(ulong value,bool persistent,ulong revision,InventorySlotWire[] slots)
+        : this(value,persistent,revision,string.Empty,0,0,0,-1,slots){}
+    public InventoryStateMessage(ulong value,bool persistent,ulong revision,string name,float x,float y,float z,int inventoryType,InventorySlotWire[] slots){Value=value;Persistent=persistent;Revision=revision;Name=name??string.Empty;X=x;Y=y;Z=z;InventoryType=inventoryType;Slots=slots??Array.Empty<InventorySlotWire>();}
+    public ulong Value {get;} public bool Persistent {get;} public ulong Revision {get;} public string Name {get;} public float X {get;} public float Y {get;} public float Z {get;} public int InventoryType {get;} public InventorySlotWire[] Slots {get;}
 }
 
 public readonly struct PlayerPoseMessage
@@ -121,7 +123,16 @@ public readonly struct PlayerPoseMessage
     public int PlayerId {get;} public uint Sequence {get;} public string Scene {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public byte Flags {get;} public string TorsoClip {get;} public int TorsoFrame {get;} public string LegsClip {get;} public int LegsFrame {get;}
 }
 
-public enum ActionKindWire : byte { Pickup = 1 }
+public enum ActionKindWire : byte
+{
+    Pickup = 1,
+    ContainerTake = 2,
+    ContainerPut = 3,
+    Attack = 4,
+    DoorInteract = 5,
+    WindowInteract = 6,
+    ItemActivate = 7
+}
 
 public readonly struct ActionRequestMessage
 {
@@ -151,6 +162,74 @@ public readonly struct PickupResultPayload
     public string ItemType{get;} public int Amount{get;} public float Durability{get;} public int Quality{get;} public bool Recipe{get;}
 }
 
+public readonly struct ContainerTakePayload
+{
+    public ContainerTakePayload(int slotIndex, int amount)
+    { SlotIndex=slotIndex; Amount=amount; }
+    public int SlotIndex {get;}
+    /// <summary>Requested amount. A negative value means the complete stack.</summary>
+    public int Amount {get;}
+}
+
+public readonly struct ContainerPutPayload
+{
+    public ContainerPutPayload(bool hotbar, int slotIndex, int amount) : this(hotbar,slotIndex,-1,amount){}
+    public ContainerPutPayload(bool hotbar, int slotIndex, int destinationSlotIndex, int amount)
+    { Hotbar=hotbar; SlotIndex=slotIndex; DestinationSlotIndex=destinationSlotIndex; Amount=amount; }
+    public bool Hotbar {get;}
+    public int SlotIndex {get;}
+    /// <summary>Exact destination slot for drag/drop. A negative value means quick-transfer to any suitable slot.</summary>
+    public int DestinationSlotIndex {get;}
+    /// <summary>Requested amount. A negative value means the complete stack.</summary>
+    public int Amount {get;}
+}
+
+/// <summary>The complete host-owned inventory state for the requesting player.</summary>
+public readonly struct PlayerInventoryStatePayload
+{
+    public PlayerInventoryStatePayload(InventorySlotWire[] backpack, InventorySlotWire[] hotbar)
+    { Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); }
+    public InventorySlotWire[] Backpack {get;}
+    public InventorySlotWire[] Hotbar {get;}
+}
+
+/// <summary>Client melee attack intent. The host derives damage from its own shadow inventory; the client never sends damage values.</summary>
+public readonly struct AttackPayload
+{
+    public AttackPayload(byte attackKind, bool fromHotbar, int slotIndex, float dirX, float dirZ, float posX, float posZ)
+    { AttackKind=attackKind; FromHotbar=fromHotbar; SlotIndex=slotIndex; DirX=dirX; DirZ=dirZ; PosX=posX; PosZ=posZ; }
+    /// <summary>1 = melee, 2 = special melee.</summary>
+    public byte AttackKind {get;}
+    public bool FromHotbar {get;}
+    public int SlotIndex {get;}
+    /// <summary>Horizontal aim direction (Darkwood uses transform.up as the attack vector; x/z only).</summary>
+    public float DirX {get;} public float DirZ {get;}
+    /// <summary>Client player position at swing time; the host sanity-checks it against the tracked remote pose.</summary>
+    public float PosX {get;} public float PosZ {get;}
+}
+
+/// <summary>Generic world-interaction payload. ValueA semantics depend on the action kind.</summary>
+public readonly struct InteractPayload
+{
+    public InteractPayload(int valueA) { ValueA = valueA; }
+    /// <summary>For WindowInteract: the requested destination barricade health passed to Window.barricade.</summary>
+    public int ValueA {get;}
+}
+
+/// <summary>Single source of truth for the wire identity fields.</summary>
+/// <remarks>
+/// PROTO-001 still owns the decision of how these handshake fields relate to the
+/// internal DarkwoodSaveBundle (wire 3) and WorldSnapshotWireCodec (schema 2)
+/// headers; those two internal versions are intentionally NOT aliased here yet.
+/// </remarks>
+public static class ProtocolVersions
+{
+    public const int Protocol = 3;
+    public const string Framework = "0.8.7-alpha.10";
+    public const int SaveSchema = 1;
+    public const int SnapshotSchema = 3;
+}
+
 public static class ReplicationProtocolCodec
 {
     private const int MaxChunks = 4096, MaxEntities = 4096, MaxString = 4096, MaxHash = 64;
@@ -174,8 +253,8 @@ public static class ReplicationProtocolCodec
     public static ReadyMessage DecodeReady(byte[] p) => Read(p,r=>new ReadyMessage(ReadString(r),ReadString(r)));
     public static byte[] Encode(ProtocolErrorMessage m) => Write(w=>{WriteString(w,m.Code);WriteString(w,m.Detail);});
     public static ProtocolErrorMessage DecodeError(byte[] p) => Read(p,r=>new ProtocolErrorMessage(ReadString(r),ReadString(r)));
-    public static byte[] Encode(InventoryStateMessage m)=>Write(w=>{w.Write(m.Value);w.Write(m.Persistent);w.Write(m.Revision);if(m.Slots.Length>256)throw new InvalidOperationException("Too many inventory slots.");w.Write(m.Slots.Length);foreach(var s in m.Slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}});
-    public static InventoryStateMessage DecodeInventoryState(byte[] p)=>Read(p,r=>{var value=r.ReadUInt64();var persistent=r.ReadBoolean();var revision=r.ReadUInt64();var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return new InventoryStateMessage(value,persistent,revision,slots);});
+    public static byte[] Encode(InventoryStateMessage m)=>Write(w=>{w.Write(m.Value);w.Write(m.Persistent);w.Write(m.Revision);WriteString(w,m.Name);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.InventoryType);if(m.Slots.Length>256)throw new InvalidOperationException("Too many inventory slots.");w.Write(m.Slots.Length);foreach(var s in m.Slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}});
+    public static InventoryStateMessage DecodeInventoryState(byte[] p)=>Read(p,r=>{var value=r.ReadUInt64();var persistent=r.ReadBoolean();var revision=r.ReadUInt64();var name=ReadString(r);var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var inventoryType=r.ReadInt32();var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return new InventoryStateMessage(value,persistent,revision,name,x,y,z,inventoryType,slots);});
     public static byte[] Encode(PlayerPoseMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Sequence);WriteString(w,m.Scene);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write(m.Flags);WriteString(w,m.TorsoClip);w.Write(m.TorsoFrame);WriteString(w,m.LegsClip);w.Write(m.LegsFrame);});
     public static PlayerPoseMessage DecodePlayerPose(byte[] p)=>Read(p,r=>new PlayerPoseMessage(r.ReadInt32(),r.ReadUInt32(),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadByte(),ReadString(r),r.ReadInt32(),ReadString(r),r.ReadInt32()));
     public static byte[] Encode(ActionRequestMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write(m.PlayerId);w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.ExpectedRevision);WriteBytes(w,m.Payload,ActionPayloadMax);});
@@ -186,8 +265,20 @@ public static class ReplicationProtocolCodec
     public static ActionRejectedMessage DecodeActionRejected(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var kind=ReadActionKind(r);return new ActionRejectedMessage(id,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadString(r));});
     public static byte[] Encode(PickupResultPayload m)=>Write(w=>{WriteString(w,m.ItemType);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);});
     public static PickupResultPayload DecodePickupResult(byte[] p)=>Read(p,r=>new PickupResultPayload(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
+    public static byte[] Encode(ContainerTakePayload m)=>Write(w=>{w.Write(m.SlotIndex);w.Write(m.Amount);});
+    public static ContainerTakePayload DecodeContainerTake(byte[] p)=>Read(p,r=>new ContainerTakePayload(r.ReadInt32(),r.ReadInt32()));
+    public static byte[] Encode(ContainerPutPayload m)=>Write(w=>{w.Write(m.Hotbar);w.Write(m.SlotIndex);w.Write(m.DestinationSlotIndex);w.Write(m.Amount);});
+    public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
+    public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});
+    public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r)));
+    public static byte[] Encode(AttackPayload m)=>Write(w=>{w.Write(m.AttackKind);w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.DirX);w.Write(m.DirZ);w.Write(m.PosX);w.Write(m.PosZ);});
+    public static AttackPayload DecodeAttack(byte[] p)=>Read(p,r=>{var kind=r.ReadByte();if(kind!=1&&kind!=2)throw new InvalidDataException("Unknown melee attack kind.");var fromHotbar=r.ReadBoolean();var slot=r.ReadInt32();if(slot<0||slot>255)throw new InvalidDataException("Attack slot index exceeds limit.");return new AttackPayload(kind,fromHotbar,slot,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle());});
+    public static byte[] Encode(InteractPayload m)=>Write(w=>w.Write(m.ValueA));
+    public static InteractPayload DecodeInteract(byte[] p)=>Read(p,r=>new InteractPayload(r.ReadInt32()));
     private const int SnapshotMax = 256*1024;
     private const int ActionPayloadMax = 64*1024;
+    private static void WriteInventorySlots(BinaryWriter w,InventorySlotWire[] slots){if(slots.Length>256)throw new InvalidOperationException("Too many player inventory slots.");w.Write(slots.Length);foreach(var s in slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}}
+    private static InventorySlotWire[] ReadInventorySlots(BinaryReader r){var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return slots;}
     private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);} }
     private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++) a[i]=new EntityStateWire(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadByte(),ReadString(r),r.ReadInt32(),r.ReadUInt64()); return a; }
     private static byte[] Write(Action<BinaryWriter> a){using var s=new MemoryStream();using var w=new BinaryWriter(s,Encoding.UTF8);a(w);return s.ToArray();}

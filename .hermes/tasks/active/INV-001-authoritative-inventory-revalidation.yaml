@@ -1,0 +1,50 @@
+schema_version: 1
+id: INV-001
+title: 审计并复验共享容器所有权威写入链路
+priority: P0
+status: planned
+tags: [inventory, adapter, authority, regression]
+depends_on: []
+owner_role: architect
+scope: >-
+  建立 InvSlot/Inventory 写入口矩阵，证明拿取、放置、鼠标/手柄拖放、堆叠、交换均被转换为 Host Action；
+  修复完整状态回滚和远端玩家库存 shadow 来源，并进行双端复验。
+out_of_scope:
+  - 不新增网络传输供应商
+  - 不实现怪物或剧情事件同步
+  - 不发布 GitHub Release
+files:
+  - src/DarkwoodMultiplayerFramework.Protocol/ReplicationProtocol.cs
+  - src/DarkwoodMultiplayerFramework.Actions
+  - src/DarkwoodMultiplayerFramework.Inventory
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodContainerTakePatch.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodAdapterRuntime.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodPlayerInventoryShadow.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodInventoryAdapter.cs
+  - src/DarkwoodMultiplayerFramework.SelfTests/Program.cs
+context:
+  - .hermes/context/protocol-contract.md
+  - .hermes/context/inventory-authority.md
+invariants:
+  - client_never_commits_shared_container_state
+  - action_key_is_session_peer_request
+  - host_applies_each_request_at_most_once
+  - container_and_player_shadow_update_atomically
+  - rejection_returns_complete_authoritative_state
+acceptance:
+  - 输出写入口矩阵，覆盖快捷转移、grab/controller、place/controller、addToItem 两个重载和 swapItems
+  - 对每个入口记录准确签名、Prefix/Postfix 阻断行为、Host handler 和旁路风险
+  - alpha.9 identity/schema 测试不再使用 0.8.6 fixture
+  - 两端同时取最后一件时只允许一个请求成功
+  - 拒绝、超时、断线后双方容器/玩家库存一致且无 cursor item
+verification:
+  - 构建 solution，要求 0 warning / 0 error
+  - 运行全部 SelfTests
+  - 双端真实 Darkwood 测试拿取/放置/拖放/堆叠/交换/并发/重连矩阵
+evidence_required:
+  - 修改文件与行号
+  - 编译和 SelfTests 命令、退出码
+  - Host/Client 日志与 DLL SHA256
+  - 未验证项和回滚方法
+risk: high
+rollback: 保留 0.8.7-alpha.9 DLL、安装包、ZIP 和 manifest；未完成实机测试时状态只能是 implemented_unverified。

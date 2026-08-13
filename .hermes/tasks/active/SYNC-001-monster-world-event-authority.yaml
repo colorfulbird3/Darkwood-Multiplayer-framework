@@ -1,0 +1,58 @@
+schema_version: 1
+id: SYNC-001
+title: 怪物与门窗/物品交互的主机权威同步闭环（近战、死亡镜像、门/窗/物品开关）
+priority: P1
+status: implemented_unverified
+tags: [combat, world-events, authority, replication, actions, death]
+depends_on: []
+owner_role: implementer
+scope: >-
+  将客户端近战攻击、开关门、封窗和物品开关从本地变更转换为 ActionRequest，
+  由 Host 校验后调用游戏原生 API 应用并广播权威结果；客户端镜像怪物死亡并
+  以 Host 广播的 deathDrop 容器状态为准。同时让容器拒绝路径回传权威容器状态。
+out_of_scope:
+  - 火器/投掷物（子弹与投掷物理对象同步）
+  - 陷阱放置、发电机专属逻辑、剧情/任务事件
+  - RuntimeEntityId 动态生成实体的 Spawn/Destroy 同步（P2）
+  - PROTO-001 的 SaveBundle/WorldSnapshot 内部 wire 版本统一
+files:
+  - src/DarkwoodMultiplayerFramework.Protocol/ReplicationProtocol.cs
+  - src/DarkwoodMultiplayerFramework.SelfTests/Program.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodAdapterRuntime.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodEntityReplication.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodPlayerInventoryShadow.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/DarkwoodInteractionPatches.cs
+  - src/DarkwoodMultiplayerFramework.DarkwoodAdapter/Plugin.cs
+context:
+  - .hermes/context/protocol-contract.md
+  - .hermes/context/inventory-authority.md
+  - .hermes/context/entity-snapshot.md
+invariants:
+  - host_applies_each_request_at_most_once
+  - client_never_commits_shared_container_state
+  - action_key_is_session_peer_request
+  - wire_version_is_explicit
+  - selftests_cover_current_release_identity
+acceptance:
+  - ActionKindWire 扩展 Attack/DoorInteract/WindowInteract/ItemActivate，AttackPayload/InteractPayload 有 roundtrip 与负例测试
+  - 近战攻击由 Host 从影子库存推导武器与伤害，客户端不发送任何伤害数值
+  - 攻击命中按 MeleeSensor 近似弧（半径 1.6m、朝向半锥）解析，并应用游戏原生 getHit
+  - 攻击成功后 Host 扣减影子武器耐久并回传完整玩家库存状态；武器打坏时同步移除
+  - 客户端收到 alive 1→0 时以 die2() 镜像尸体（不触发 onDeath 剧情事件），deathDrop 容器内容以 Host 广播为准
+  - 开关门/封窗/物品开关带 ExpectedRevision CAS，旧版本拒绝并回传最新实体状态
+  - 容器拒绝路径（SLOT_NOT_FOUND/ITEM_EMPTY/PLAYER_SLOT_EMPTY/CONTAINER_FULL/DESTINATION_OCCUPIED）回传权威容器状态
+  - SelfTests 使用当前 alpha.10-dev 身份常量，不再使用 0.8.6-alpha.1 fixture
+verification:
+  - dotnet build 0 warning / 0 error
+  - SelfTests 全部通过（43 项）且输出当前版本身份
+  - 双端真实 Darkwood 测试：客户端近战击杀怪物、尸体战利品两端一致、开关门/封窗/开关灯一致、攻击拒绝与重连后无残留
+evidence_required:
+  - 修改文件与行号
+  - 编译和 SelfTests 命令、退出码
+  - Host/Client 日志（attack/interact request、ActionResult/ActionRejected、delta）
+  - 未验证项与回滚方法
+risk: high
+rollback: >-
+  保留 0.8.7-alpha.9 DLL、安装包、ZIP 和 manifest；本次改动仅存在于 canonical 源码树，
+  未覆盖运行时 DLL、安装包或 ZIP。协议身份已升至 0.8.7-alpha.10-dev，双端必须同版本。
+  未完成双端实机前状态只能是 implemented_unverified。

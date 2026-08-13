@@ -19,6 +19,27 @@ public interface ITransport : IDisposable
     void Stop();
 }
 
+internal static class TelepathyConfiguration
+{
+    // The save stream uses 128 KiB application chunks. Leave enough room for
+    // the DMF envelope and Telepathy's own length prefix.
+    private const int MaximumMessageBytes = 256 * 1024;
+    private const int SocketTimeoutMilliseconds = 60 * 1000;
+
+    public static void Apply(object instance, Type type)
+    {
+        SetField(instance, type, "NoDelay", true);
+        SetField(instance, type, "MaxMessageSize", MaximumMessageBytes);
+        SetField(instance, type, "SendTimeout", SocketTimeoutMilliseconds);
+    }
+
+    private static void SetField(object instance, Type type, string name, object value)
+    {
+        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+        if (field != null) field.SetValue(instance, value);
+    }
+}
+
 // Loads the shipped Telepathy client without coupling protocol code to its concrete version.
 public sealed class TelepathyClientTransport : ITransport
 {
@@ -32,6 +53,7 @@ public sealed class TelepathyClientTransport : ITransport
         type = assembly.GetType("Telepathy.Client", true)!;
         messageType = assembly.GetType("Telepathy.Message", true)!;
         client = Activator.CreateInstance(type)!;
+        TelepathyConfiguration.Apply(client, type);
         getNextMessage = type.GetMethod("GetNextMessage") ?? throw new MissingMethodException(type.FullName, "GetNextMessage");
     }
     public bool IsConnected => (bool)(type.GetProperty("Connected")?.GetValue(client) ?? false);

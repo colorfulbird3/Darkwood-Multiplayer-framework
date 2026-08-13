@@ -7,12 +7,17 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 /// <summary>
 /// Standalone 0.8 entry point. F1 starts Host, F2 starts Client, F3 stops the session.
 /// </summary>
-[BepInPlugin(Guid, Name, Version)]
+[BepInPlugin(Guid, Name, PluginVersion)]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string Guid = "com.darkwood.multiplayer.framework.rebuilt.adapter";
     public const string Name = "Darkwood Multiplayer Framework - Darkwood Adapter";
-    public const string Version = "0.8.6-alpha.1";
+    // BepInEx 5 parses this value as System.Version while scanning plugins.
+    // A SemVer prerelease suffix (for example 0.8.7-alpha.1) makes the
+    // chainloader silently skip the assembly and report "0 plugins to load".
+    public const string PluginVersion = "0.8.7.10";
+    public const string DisplayVersion = "0.8.7-alpha.10";
+    public const string Version = DisplayVersion;
 
     private GameObject? runtimeObject;
     private Harmony? harmony;
@@ -26,7 +31,8 @@ public sealed class Plugin : BaseUnityPlugin
         var runtime = runtimeObject.AddComponent<DarkwoodAdapterRuntime>();
         runtime.Initialize(Logger);
         runtime.Configure(Config);
-        Logger.LogInfo("Darkwood adapter 0.8.6-alpha.1 loaded; host-authoritative Pickup actions are enabled (F1/F2/F3).");
+        runtimeObject.AddComponent<DarkwoodMultiplayerPanel>();
+        Logger.LogInfo("Darkwood adapter 0.8.7-alpha.10 loaded; authoritative shared-container transactions, melee combat and door/window/item interactions enabled.");
     }
 
     private void OnDestroy()
