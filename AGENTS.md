@@ -1,12 +1,12 @@
 # Darkwood Multiplayer Framework — Agent 工作规则
 
-本文件是本地源码树的通用 Agent 入口。它与 `.hermes.md` 配合使用；如果两者出现冲突，以用户当前请求和更严格的安全限制为准。
+本文件是本地源码树的通用开发入口。如果本文件与其他开发上下文文件冲突，以用户当前请求和更严格的安全限制为准。
 
 ## 项目边界
 
 - 本目录是后续开发的 canonical 本地源码树：`src/`。
 - 游戏运行时仍使用 BepInEx 5 + Harmony + Unity Mono + Telepathy TCP。
-- Hermes 是开发 Agent；DS V4 Pro 是可选的开发模型。除非用户提供真实 SDK、协议文档和许可证，不得把它们写成 Unity 运行时依赖。
+- 开发工具链（开发 Agent 与开发模型）不是游戏运行时依赖；除非用户提供真实 SDK、协议文档和许可证，不得把它们写成 Unity 运行时依赖。
 - 当前基线是 `0.8.7-alpha.12`；无向下兼容，握手只比较框架版本与游戏版本。
 
 ## 不变量
@@ -45,4 +45,4 @@ dotnet run --project '.\\src\\DarkwoodMultiplayerFramework.SelfTests\\DarkwoodMu
 
 ## 诚实报告
 
-报告必须列出修改文件、协议版本、自动测试结果、实机测试结果、DLL/ZIP 是否更新以及未验证项目。不能把“状态镜像”描述成“完整权威同步”，也不能声称已经接入不存在的 Hermes/DS V4 运行时 SDK。
+报告必须列出修改文件、协议版本、自动测试结果、实机测试结果、DLL/ZIP 是否更新以及未验证项目。不能把“状态镜像”描述成“完整权威同步”，也不能声称已经接入不存在的第三方运行时 SDK。

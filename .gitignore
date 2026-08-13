@@ -22,7 +22,7 @@ legacy-reference-first-pass/
 .hermes.md
 IDEA.md
 README-本地源码.md
-HERMES-DSV4-MIGRATION.zh-CN.md
+MIGRATION-NOTES.zh-CN.md
 RELEASE-NOTES-0.8.6-alpha.1.md
 RELEASE-NOTES-0.8.7-alpha.4.md
 RELEASE-NOTES-0.8.7-alpha.5.md
@@ -33,4 +33,4 @@ RELEASE-NOTES-0.8.7-alpha.9.md
 RELEASE-NOTES-0.8.7-alpha.10.md
 src/Directory.Build.props
 RELEASE-NOTES-0.8.7-alpha.11.md
-PROJECT-DOCUMENTATION-HERMES-DSV4.zh-CN.md
+PROJECT-DOCUMENTATION.zh-CN.md
