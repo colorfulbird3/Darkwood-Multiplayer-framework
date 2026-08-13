@@ -2,7 +2,7 @@
 ## Hermes + DS V4 Pro 项目文档
 
 > 文档用途：作为 Hermes 的项目级上下文，说明项目背景、运行时架构、核心流程、数据契约、当前状态和后续开发边界。  
-> 文档基线：`0.8.7-alpha.9`（2026-08-13）  
+> 文档基线：`0.8.7-alpha.11`（2026-08-13）  
 > 重要边界：Hermes 是开发 Agent，DS V4 Pro 是开发模型；二者目前不是 Darkwood 的游戏运行时网络 SDK。
 
 ---
@@ -24,44 +24,35 @@ Darkwood Multiplayer Framework（DMF）是一个运行在 Darkwood 上的多人�
 
 ### Canonical 本地源码
 
-```text
-F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework
-```
-
-源码位于：
-
-```text
-src\
-```
+本地 canonical 源码树的 `src\` 目录（路径不公开，避免把本机信息提交到仓库）。
 
 ### 运行时和发布目录
 
 ```text
-游戏目录：F:\SteamLibrary\steamapps\common\Darkwood
-插件目录：F:\SteamLibrary\steamapps\common\Darkwood\BepInEx\plugins
-Payload：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework\Payload
-安装包：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.9
-ZIP：F:\SteamLibrary\steamapps\common\Darkwood\Darkwood联机框架-安装包-v0.8.7-alpha.9.zip
+游戏目录：<Darkwood 安装目录>
+插件目录：<游戏目录>\BepInEx\plugins
+Payload：<canonical 树>\Payload
+安装包：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.11
+ZIP：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.11.zip
 ```
 
 当前发布基线：
 
 ```text
-Framework       0.8.7-alpha.9
-Protocol        3
-Handshake Save  1（待与实际 SaveBundle wire schema 对齐）
-Handshake Snap  3（待与实际 WorldSnapshot wire schema 对齐）
-SaveBundle wire 3
-Snapshot wire    2
+Framework       0.8.7-alpha.11
+Envelope        3（信封头常量）
+握手门槛        FrameworkVersion + GameVersion（无向下兼容，PROTO-001 已定）
+SaveBundle wire 3（实现细节，随框架版本绑定）
+Snapshot wire   2（实现细节，随框架版本绑定）
 ```
 
-alpha.9 ZIP 当前 SHA256：
+alpha.11 ZIP 当前 SHA256：
 
 ```text
-C6F4E8717861228AE46E1BD20E2167D68F846B6C34B9F8527A17DC05BFF6056E
+503C27E6DE135739FA27B529ECA7BD1AC2C96FC690D93F1C7731F66EFC4733B1
 ```
 
-`Darkwood Multiplayer framework-GitHub` 是历史 GitHub 工作副本，不能默认视为 alpha.9 源码。后续开发必须先确认唯一 Git canonical 副本，禁止在两棵树之间混改。
+GitHub 工作副本（remote 为 https://github.com/colorfulbird3/Darkwood-Multiplayer-framework）只保留当前版本的源码与文档；canonical 树为开发主树，发布时把源码以普通提交推送到仓库 main（第三方二进制、Payload、安装包与旧版本不进仓库）。禁止在两棵树之间混改。
 
 本地命令行若暂时找不到 `hermes`，先确认 Hermes 的实际安装 profile/PATH；这不影响使用本文档作为项目上下文。不要为了修复 PATH 而覆盖用户全局配置或在项目里保存 API key。
 
@@ -229,21 +220,21 @@ DS V4 Pro 负责：
 
 ### VERIFIED
 
-- alpha.9 solution 构建：0 warning、0 error。
-- SelfTests：35 项通过，包含 Envelope、握手、分块、Action、快照和 Telepathy loopback。
-- 已记录 alpha.9 ZIP SHA256：`C6F4E8717861228AE46E1BD20E2167D68F846B6C34B9F8527A17DC05BFF6056E`。
+- alpha.11 solution 构建：0 warning、0 error。
+- SelfTests：43 项通过，包含 Envelope、握手、分块、Action、快照、Telepathy loopback 以及攻击/交互 payload 负例。
+- 已记录 alpha.11 ZIP SHA256：`503C27E6DE135739FA27B529ECA7BD1AC2C96FC690D93F1C7731F66EFC4733B1`。
+- 版本契约：无向下兼容，握手只比较 FrameworkVersion + GameVersion（PROTO-001 已定）。
 
 ### IMPLEMENTED_UNVERIFIED
 
-- 物品主机权威 patch 已写入，但真实双端拿取/放置/拖放/堆叠/交换和并发抢取仍需验证。
-- 远端玩家、怪物、门窗和物品的部分状态镜像已存在，但不等于完整玩法权威同步。
+- 物品主机权威事务（拿取/放置/拖放/堆叠/交换）、近战攻击权威闭环、怪物死亡镜像、门窗/物品交互 Action 化——代码与自动测试完成，真实双端矩阵未验证。
 
 ### BUG_OPEN / 待处理
 
-1. SelfTests 握手 fixture 仍包含旧 `0.8.6-alpha.1 / protocol 1` 数据。
-2. 握手 Save Schema/Snapshot Schema 与内部 SaveBundle/WorldSnapshot wire 版本存在漂移。
-3. 远端玩家库存 shadow 的初始来源和拒绝回滚需要真实验证与修复。
-4. 怪物攻击、死亡掉落、门窗交互、陷阱、发电机和剧情事件尚未 Action 化。
+1. 远端玩家库存 shadow 的初始来源和拒绝回滚需要真实验证与修复（INV-001）。
+2. 火器/投掷物不同步；陷阱、发电机专属逻辑、剧情/任务事件尚未 Action 化。
+3. 运行时生成实体（夜间怪物/掉落物）的 Spawn/Destroy/Reconnect 同步缺失（P2）。
+4. 远端玩家攻击不计算技能加成；近战弧为近似值；封窗/物品开关拦截依赖启发式——需双端实机调参。
 5. 公开仓库和 Release 的第三方二进制/许可证声明需要核对。
 6. 部分 csproj 的 `HintPath` 依赖本机 `Darkwood_Data/Managed` 和 `Payload`；干净克隆环境需要由用户提供合法的 Darkwood 游戏引用或构建变量，不能把游戏程序集提交到仓库。
 
@@ -290,10 +281,10 @@ dotnet run --project '.\\src\\DarkwoodMultiplayerFramework.SelfTests\\DarkwoodMu
 ## 13. 安全和发布边界
 
 - 只有用户明确要求时才覆盖正式游戏 DLL、生成安装包/ZIP、启动游戏、上传 GitHub 或创建 Release。
-- 覆盖前确认 Darkwood 进程已关闭，并保留 alpha.9 回滚包。
+- 覆盖前确认 Darkwood 进程已关闭，并保留 alpha.11 回滚包。
 - 不公开 `Assembly-CSharp.dll`、反编译源码、个人存档、API key 或许可证不明的第三方二进制。
 - 发布 manifest 使用 UTF-8 读取，避免 PowerShell 编码造成假错误。
 
 ---
 
-这份文档是项目事实和开发约束的单一阅读入口；细化任务时可再读取同目录 `.hermes/` 上下文文件。
+这份文档是项目事实和开发约束的单一阅读入口；细化任务时可再读取本地 canonical 树的 `.hermes/` 上下文文件（不随仓库分发）。

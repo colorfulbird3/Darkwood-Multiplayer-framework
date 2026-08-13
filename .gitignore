@@ -14,3 +14,21 @@ Payload/
 *.zip
 install-*.ps1
 Darkwood*安装包-*/
+
+# Not published to the public repo (local-only / agent / legacy)
+legacy-reference/
+legacy-reference-first-pass/
+.hermes/
+.hermes.md
+IDEA.md
+README-本地源码.md
+HERMES-DSV4-MIGRATION.zh-CN.md
+RELEASE-NOTES-0.8.6-alpha.1.md
+RELEASE-NOTES-0.8.7-alpha.4.md
+RELEASE-NOTES-0.8.7-alpha.5.md
+RELEASE-NOTES-0.8.7-alpha.6.md
+RELEASE-NOTES-0.8.7-alpha.7.md
+RELEASE-NOTES-0.8.7-alpha.8.md
+RELEASE-NOTES-0.8.7-alpha.9.md
+RELEASE-NOTES-0.8.7-alpha.10.md
+src/Directory.Build.props
