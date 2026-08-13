@@ -550,7 +550,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private void OnDownloadedSaveFinished()
     {
-        ClientSaveLoadPending=false;var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
+        ClientSaveLoadPending=false;LogMessage($"存档加载完成回调已触发（用时 {(loadStartedAt>0f?Time.unscaledTime-loadStartedAt:0f):F1} 秒）。");
+        if(Time.timeScale<=0.01f){Time.timeScale=1f;LogMessage("已强制恢复 timeScale=1（加载期间曾被冻结）。");}
+        var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
     }
 
     private IEnumerator WaitForRegistryThenReady()

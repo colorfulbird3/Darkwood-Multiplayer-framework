@@ -22,3 +22,20 @@ public static class DarkwoodLoadPatch
         DarkwoodAdapterRuntime.LogMessage($"强制加载分支：WorldGenerator.Start 时 loadingGame 原值={before}，已强制置 true（客户端存档加载进行中）。");
     }
 }
+
+/// <summary>
+/// FIX-004：客户端联机存档加载跳过 joinPaths()（A* 每个 GridGraph 的 OnPostScan，
+/// 大世界在弱机上可能耗时数分钟——实测卡在 92% 且 onFinishedLoading 不触发）。
+/// 客户端是视觉镜像：怪物 AI 冻结、玩家移动不依赖寻路，跳过是安全的。
+/// </summary>
+[HarmonyPatch(typeof(WorldGenerator), nameof(WorldGenerator.joinPaths))]
+public static class DarkwoodJoinPathsPatch
+{
+    public static bool Prefix()
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || !runtime.IsClient || !runtime.ClientSaveLoadPending) return true;
+        DarkwoodAdapterRuntime.LogMessage("客户端已跳过 joinPaths()（联机视觉镜像无需本地寻路图连接，避免加载卡 92%）。");
+        return false;
+    }
+}
