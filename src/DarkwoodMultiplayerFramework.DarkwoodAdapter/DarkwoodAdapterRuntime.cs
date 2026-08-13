@@ -151,6 +151,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private bool clientRegistryRequestSent;
     private bool clientSnapshotManifestReceived;
     private bool clientRegistryStabilized;
+    private float loadStartedAt;
     private float nextRegistryRequestRetry;
     private WorldSnapshotApplied? lastSnapshotApplied;
     private float nextSnapshotAckRetry;
@@ -257,7 +258,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; clientRegistryStabilized=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
+        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; clientRegistryStabilized=false; loadStartedAt=0f; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
         SetState(ConnectionState.Disconnected);
     }
 
@@ -305,6 +306,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         }
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendHostPose();}
         else if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&loadStartedAt>0f&&Time.unscaledTime-loadStartedAt>180f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（180 秒未完成）。请检查主机存档是否损坏。"));
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())PersistGuestProfile(peer);}
         PollRescueHotkey();
         if(hostSession!=null){ScanMonsterDamage();SyncHostHealth();TickRescue();}
@@ -534,7 +536,13 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private IEnumerator LoadDownloadedSave(int profileId)
     {
-        yield return null;try{if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed)throw new InvalidOperationException("客户端连接已断开，取消存档加载。");if(!global::Core.mainMenu)throw new InvalidOperationException("客户端必须从主菜单加载主机存档。");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));manager.onFinishedLoading=(saveDelegate)Delegate.Combine(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));TransferProgress="正在加载存档";Singleton<UI>.Instance.StartCoroutine(Singleton<UI>.Instance.initLoadGame());}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
+        yield return null;try{if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed)throw new InvalidOperationException("客户端连接已断开，取消存档加载。");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));manager.onFinishedLoading=(saveDelegate)Delegate.Combine(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));TransferProgress="正在加载存档";loadStartedAt=Time.unscaledTime;
+        // FIX-002：initLoadGame() 内部先跑 initNewGame()，会把 Core.loadingGame 重置为 false，
+        // WorldGenerator.Start 因此走“生成新世界”分支（教学梦境，约 8 个实体），且
+        // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
+        // 正确路径：保持 loadingGame=true 直接加载章节场景，WorldGenerator.Start
+        // 会走 SaveManager.Load() 恢复主机存档世界，完成后回调 onFinishedLoading。
+        global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;UnityEngine.SceneManagement.SceneManager.LoadScene(profile.chapter>=2?"chapter2":"chapter1");global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
     }
 
     private void OnDownloadedSaveFinished()
