@@ -30,7 +30,6 @@ dotnet run --project '.\src\DarkwoodMultiplayerFramework.SelfTests\DarkwoodMulti
 
 ## 项目文档
 
-- `PROJECT-DOCUMENTATION-HERMES-DSV4.zh-CN.md`：项目定位、架构、数据契约与当前状态。
 - `ARCHITECTURE-ROADMAP.zh-CN.md`：架构路线图。
 - `AGENTS.md`：开发工作规则。
 - `RELEASE-NOTES-0.8.7-alpha.12.md`：当前版本发布说明。
