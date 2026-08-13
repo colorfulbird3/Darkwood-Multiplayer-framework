@@ -6,10 +6,9 @@ project:
   canonical_root: "F:/SteamLibrary/steamapps/common/Darkwood/Darkwood Multiplayer framework"
   source_root: "src"
   baseline:
-    release: "0.8.7-alpha.9"
-    protocol_version: 3
-    save_schema_version: 1
-    snapshot_schema_version: 3
+    release: "0.8.7-alpha.11"
+    envelope_protocol: 3
+    version_gate: "framework_version_only_no_backward_compat"
   runtime:
     game: Darkwood
     loader: BepInEx 5.4.23.5
@@ -26,8 +25,8 @@ paths:
   source: "src"
   runtime_plugins: "F:/SteamLibrary/steamapps/common/Darkwood/BepInEx/plugins"
   payload: "Payload"
-  release_directory: "F:/SteamLibrary/steamapps/common/Darkwood/Darkwood联机框架-安装包-v0.8.7-alpha.10"
-  release_zip: "F:/SteamLibrary/steamapps/common/Darkwood/Darkwood联机框架-安装包-v0.8.7-alpha.10.zip"
+  release_directory: "F:/SteamLibrary/steamapps/common/Darkwood/Darkwood联机框架-安装包-v0.8.7-alpha.11"
+  release_zip: "F:/SteamLibrary/steamapps/common/Darkwood/Darkwood联机框架-安装包-v0.8.7-alpha.11.zip"
   build_staging: "F:/Private Blog/DMF Local Build/bin"
 
 commands:
