@@ -53,6 +53,5 @@ evidence_required:
   - 未验证项与回滚方法
 risk: high
 rollback: >-
-  保留 0.8.7-alpha.9 DLL、安装包、ZIP 和 manifest；本次改动仅存在于 canonical 源码树，
-  未覆盖运行时 DLL、安装包或 ZIP。协议身份已升至 0.8.7-alpha.10-dev，双端必须同版本。
-  未完成双端实机前状态只能是 implemented_unverified。
+  保留 0.8.7-alpha.9 与 0.8.7-alpha.10 的 DLL、安装包、ZIP 和 manifest；协议身份为
+  0.8.7-alpha.10，双端必须同版本。未完成双端实机前状态只能是 implemented_unverified。
