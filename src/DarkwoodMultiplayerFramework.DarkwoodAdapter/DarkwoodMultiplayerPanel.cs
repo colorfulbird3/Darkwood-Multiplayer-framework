@@ -13,6 +13,7 @@ public sealed class DarkwoodMultiplayerPanel : MonoBehaviour
     private bool initialized;
     private string address = "127.0.0.1";
     private string port = "17777";
+    private string playerName = string.Empty;
     private string notice = string.Empty;
     private CursorLockMode previousLockMode;
     private bool previousCursorVisible;
@@ -34,7 +35,7 @@ public sealed class DarkwoodMultiplayerPanel : MonoBehaviour
         if (visible)
         {
             var runtime = DarkwoodAdapterRuntime.Instance;
-            if (runtime != null) { address = runtime.ConfiguredAddress; port = runtime.ConfiguredPort.ToString(); }
+            if (runtime != null) { address = runtime.ConfiguredAddress; port = runtime.ConfiguredPort.ToString(); playerName = runtime.ConfiguredPlayerName; }
             previousLockMode = UnityEngine.Cursor.lockState;
             previousCursorVisible = UnityEngine.Cursor.visible;
             UnityEngine.Cursor.lockState = CursorLockMode.None;
@@ -96,8 +97,10 @@ public sealed class DarkwoodMultiplayerPanel : MonoBehaviour
         address = GUILayout.TextField(address, 128);
         GUILayout.Label("TCP 端口");
         port = GUILayout.TextField(port, 5);
+        GUILayout.Label("玩家名称（热加入身份，主机据此保存你的物品）");
+        playerName = GUILayout.TextField(playerName, 64);
 
-        GUILayout.Label("联机人数（新生成的柜子物品倍率）");
+        GUILayout.Label("联机人数（含主机；新生成的柜子物品倍率）");
         GUILayout.BeginHorizontal();
         for (var players = 1; players <= 4; players++)
         {
@@ -169,6 +172,7 @@ public sealed class DarkwoodMultiplayerPanel : MonoBehaviour
     {
         if (runtime == null) { notice = "联机运行时不可用。"; return false; }
         if (!runtime.ApplyNetworkConfiguration(address, port, out var error)) { notice = error; return false; }
+        if (!runtime.ApplyPlayerName(playerName, out var nameError)) { notice = nameError; return false; }
         notice = "网络配置已保存。";
         return true;
     }

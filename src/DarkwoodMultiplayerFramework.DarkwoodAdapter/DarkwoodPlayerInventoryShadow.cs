@@ -17,10 +17,49 @@ internal sealed class DarkwoodPlayerInventoryShadow
     private readonly List<Slot> backpack=new List<Slot>();
     private readonly List<Slot> hotbar=new List<Slot>();
 
-    public static DarkwoodPlayerInventoryShadow CaptureInitial()
+    public static DarkwoodPlayerInventoryShadow FromRecord(GuestProfileRecord record, Action<string>? warn = null)
     {
-        var shadow=new DarkwoodPlayerInventoryShadow();var player=Player.Instance;if(player==null)return shadow;
-        shadow.Capture(player.Inventory,shadow.backpack);shadow.Capture(player.Hotbar,shadow.hotbar);return shadow;
+        var shadow = new DarkwoodPlayerInventoryShadow();
+        Restore(record.Backpack, shadow.backpack, warn);
+        Restore(record.Hotbar, shadow.hotbar, warn);
+        return shadow;
+    }
+
+    /// <summary>Grants config starter items. Invalid or unknown item types are skipped with a warning.</summary>
+    public void AddStarterKit(IReadOnlyList<GuestStarterEntry>? kit, Action<string>? warn = null)
+    {
+        if (kit == null) return;
+        foreach (var entry in kit)
+        {
+            try
+            {
+                var item = new InvItemClass(entry.Type, 100f, entry.Amount, (InvItem.ModifierQuality)0, false);
+                if (item == null || item.baseClass == null) throw new InvalidOperationException("未知物品类型");
+                if (!CanAdd(item)) { warn?.Invoke($"访客初始装备已满，跳过 {entry.Type}"); continue; }
+                Add(item);
+            }
+            catch (Exception error) { warn?.Invoke($"访客初始装备无效，跳过 {entry.Type}：" + error.Message); }
+        }
+    }
+
+    private static void Restore(InventorySlotWire[] wire, List<Slot> destination, Action<string>? warn)
+    {
+        foreach (var s in wire)
+        {
+            if (string.IsNullOrEmpty(s.Type) || s.Amount <= 0) { destination.Add(new Slot()); continue; }
+            try
+            {
+                var item = new InvItemClass(s.Type, s.Durability, s.Amount, (InvItem.ModifierQuality)s.Quality, s.Recipe);
+                var baseClass = item?.baseClass;
+                if (baseClass == null) throw new InvalidOperationException("未知物品类型");
+                destination.Add(new Slot { Type = s.Type, Amount = s.Amount, Durability = s.Durability, Quality = s.Quality, Recipe = s.Recipe, MaxAmount = Math.Max(1, baseClass.maxAmount), Stackable = baseClass.stackable });
+            }
+            catch (Exception error)
+            {
+                warn?.Invoke($"跳过无法恢复的物品 {s.Type}：" + error.Message);
+                destination.Add(new Slot());
+            }
+        }
     }
 
     public bool CanAdd(InvItemClass source)
@@ -85,16 +124,4 @@ internal sealed class DarkwoodPlayerInventoryShadow
     private static InvItemClass ToItemClass(Slot slot)=>new InvItemClass(slot.Type,slot.Durability,slot.Amount,(InvItem.ModifierQuality)slot.Quality,slot.Recipe);
     private static void Clear(Slot slot){slot.Type=string.Empty;slot.Amount=0;slot.Durability=0;slot.Quality=0;slot.Recipe=false;slot.MaxAmount=1;slot.Stackable=false;}
     private static InventorySlotWire[] ToWire(List<Slot> source){var result=new InventorySlotWire[source.Count];for(var i=0;i<source.Count;i++){var s=source[i];result[i]=new InventorySlotWire(s.Type,s.Amount,s.Durability,s.Quality,s.Recipe);}return result;}
-
-    private void Capture(Inventory inventory,List<Slot> destination)
-    {
-        if(inventory?.slots==null)return;
-        foreach(var original in inventory.slots)
-        {
-            var item=original?.invItem;
-            var baseClass=item?.baseClass;
-            if(InvItemClass.isNull(item)||item==null||baseClass==null)destination.Add(new Slot());
-            else destination.Add(new Slot{Type=item.type,Amount=item.amount,Durability=item.durability,Quality=(int)item.modifierQuality,Recipe=item.isRecipe,MaxAmount=Math.Max(1,baseClass.maxAmount),Stackable=baseClass.stackable});
-        }
-    }
 }

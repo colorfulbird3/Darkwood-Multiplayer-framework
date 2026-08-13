@@ -21,6 +21,8 @@ public sealed class ClientHandshakeSession : IDisposable
     public int PeerId { get; private set; } = -1;
     public Guid HostSessionId { get; private set; }
     public string LastError { get; private set; } = string.Empty;
+    /// <summary>Stable player identity sent in ClientHello; the host uses it for hot-join profile persistence. Set before Connect.</summary>
+    public string GuestKey { get; set; } = "Player";
     public event Action? HandshakeSucceeded;
     public event Action<string>? HandshakeFailed;
     public event Action<ProtocolEnvelope>? MessageReceived;
@@ -53,7 +55,7 @@ public sealed class ClientHandshakeSession : IDisposable
     {
         if (Session.Lifecycle.State != ConnectionState.Connecting) return;
         Session.Lifecycle.MoveTo(ConnectionState.VersionChecking);
-        Send(ProtocolMessageType.ClientHello, Session.SessionId, HandshakeProtocolCodec.Encode(new ClientHello(Session.Identity)));
+        Send(ProtocolMessageType.ClientHello, Session.SessionId, HandshakeProtocolCodec.Encode(new ClientHello(Session.Identity, GuestKey ?? string.Empty)));
     }
     private void OnData(ArraySegment<byte> packet)
     {
@@ -116,7 +118,7 @@ public sealed class ClientHandshakeSession : IDisposable
 
 public sealed class HostHandshakeSession : IDisposable
 {
-    private sealed class Peer { public bool Ready; public ProtocolIdentity Identity; public uint LastSequence; }
+    private sealed class Peer { public bool Ready; public ProtocolIdentity Identity; public string GuestKey = string.Empty; public uint LastSequence; }
     private readonly TelepathyServerTransport transport;
     private readonly Dictionary<int, Peer> peers = new Dictionary<int, Peer>();
     private uint sequence;
@@ -129,11 +131,14 @@ public sealed class HostHandshakeSession : IDisposable
     public NetworkSession Session { get; }
     public Guid SessionId { get; }
     public bool IsActive => transport.IsActive;
+    /// <summary>Maximum number of handshake-complete peers. A negative value means unlimited. New ClientHello beyond the limit is rejected with SESSION_FULL.</summary>
+    public int MaxPeers { get; set; } = -1;
     public int ReadyPeerCount { get { var count=0; foreach(var peer in peers.Values) if(peer.Ready) count++; return count; } }
     public event Action<int>? PeerAccepted;
     public event Action<int,string>? PeerRejected;
     public event Action<int>? PeerDisconnected;
     public event Action<int,ProtocolEnvelope>? MessageReceived;
+    public bool TryGetPeerGuestKey(int connectionId, out string guestKey) { if (peers.TryGetValue(connectionId, out var peer)) { guestKey = peer.GuestKey; return true; } guestKey = string.Empty; return false; }
     public void Start(ushort port)
     {
         if (port == 0) throw new ArgumentOutOfRangeException(nameof(port));
@@ -168,7 +173,8 @@ public sealed class HostHandshakeSession : IDisposable
             if (envelope.ProtocolVersion != ProtocolVersions.EnvelopeProtocol) throw new InvalidDataException("Envelope protocol version differs from the framework constant.");
             var result = HandshakeValidator.Validate(Identity, hello.Identity);
             if (!result.Accepted) { Reject(connectionId, result.ErrorCode); return; }
-            peer.Identity = hello.Identity; peer.Ready = true;
+            if (!peer.Ready && MaxPeers >= 0 && ReadyPeerCount >= MaxPeers) { Reject(connectionId, "SESSION_FULL"); return; }
+            peer.Identity = hello.Identity; peer.GuestKey = hello.GuestKey ?? string.Empty; peer.Ready = true;
             Send(connectionId, ProtocolMessageType.ServerHello, HandshakeProtocolCodec.Encode(new ServerHello(Identity, connectionId)));
             PeerAccepted?.Invoke(connectionId);
         }

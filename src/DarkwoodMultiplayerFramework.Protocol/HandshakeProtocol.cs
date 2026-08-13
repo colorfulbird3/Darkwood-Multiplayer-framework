@@ -20,8 +20,11 @@ public readonly struct ProtocolIdentity
 
 public readonly struct ClientHello
 {
-    public ClientHello(ProtocolIdentity identity) => Identity = identity;
+    public ClientHello(ProtocolIdentity identity, string guestKey)
+    { Identity = identity; GuestKey = guestKey ?? string.Empty; }
     public ProtocolIdentity Identity { get; }
+    /// <summary>Stable client-chosen player identity used by the host for hot-join profile persistence. Limited to 64 UTF-8 bytes.</summary>
+    public string GuestKey { get; }
 }
 
 public readonly struct ServerHello
@@ -59,10 +62,11 @@ public static class HandshakeValidator
 public static class HandshakeProtocolCodec
 {
     private const int MaxStringBytes = 1024;
-    public static byte[] Encode(ClientHello message) => EncodeIdentity(message.Identity);
+    private const int MaxGuestKeyBytes = 64;
+    public static byte[] Encode(ClientHello message) => Write(writer => { WriteIdentity(writer, message.Identity); WriteLimitedString(writer, message.GuestKey, MaxGuestKeyBytes); });
     public static byte[] Encode(ServerHello message) => Write(writer => { WriteIdentity(writer, message.Identity); writer.Write(message.PeerId); });
     public static byte[] Encode(HandshakeReject message) => Write(writer => { WriteString(writer, message.ErrorCode); WriteIdentity(writer, message.HostIdentity); });
-    public static ClientHello DecodeClientHello(byte[] payload) => new ClientHello(Read(payload, ReadIdentity));
+    public static ClientHello DecodeClientHello(byte[] payload) => Read(payload, reader => new ClientHello(ReadIdentity(reader), ReadLimitedString(reader, MaxGuestKeyBytes)));
     public static ServerHello DecodeServerHello(byte[] payload) => Read(payload, reader => new ServerHello(ReadIdentity(reader), reader.ReadInt32()));
     public static HandshakeReject DecodeReject(byte[] payload) => Read(payload, reader => new HandshakeReject(ReadString(reader), ReadIdentity(reader)));
     private static byte[] EncodeIdentity(ProtocolIdentity identity) => Write(writer => WriteIdentity(writer, identity));
@@ -70,6 +74,8 @@ public static class HandshakeProtocolCodec
     private static T Read<T>(byte[] payload, Func<BinaryReader,T> read) { using var stream=new MemoryStream(payload ?? Array.Empty<byte>(),false); using var reader=new BinaryReader(stream,Encoding.UTF8); var value=read(reader); if(stream.Position!=stream.Length) throw new InvalidDataException("Handshake payload contains trailing data."); return value; }
     private static void WriteIdentity(BinaryWriter writer, ProtocolIdentity identity) { WriteString(writer,identity.FrameworkVersion); WriteString(writer,identity.GameVersion); }
     private static ProtocolIdentity ReadIdentity(BinaryReader reader) => new ProtocolIdentity(ReadString(reader),ReadString(reader));
-    private static void WriteString(BinaryWriter writer,string value) { var bytes=Encoding.UTF8.GetBytes(value ?? string.Empty); if(bytes.Length>MaxStringBytes) throw new InvalidOperationException("Handshake string exceeds the configured limit."); writer.Write((ushort)bytes.Length); writer.Write(bytes); }
-    private static string ReadString(BinaryReader reader) { var length=reader.ReadUInt16(); if(length>MaxStringBytes) throw new InvalidDataException("Handshake string exceeds the configured limit."); var bytes=reader.ReadBytes(length); if(bytes.Length!=length) throw new EndOfStreamException(); return Encoding.UTF8.GetString(bytes); }
+    private static void WriteString(BinaryWriter writer,string value) => WriteLimitedString(writer,value,MaxStringBytes);
+    private static string ReadString(BinaryReader reader) => ReadLimitedString(reader,MaxStringBytes);
+    private static void WriteLimitedString(BinaryWriter writer,string value,int maxBytes) { var bytes=Encoding.UTF8.GetBytes(value ?? string.Empty); if(bytes.Length>maxBytes) throw new InvalidOperationException("Handshake string exceeds the configured limit."); writer.Write((ushort)bytes.Length); writer.Write(bytes); }
+    private static string ReadLimitedString(BinaryReader reader,int maxBytes) { var length=reader.ReadUInt16(); if(length>maxBytes) throw new InvalidDataException("Handshake string exceeds the configured limit."); var bytes=reader.ReadBytes(length); if(bytes.Length!=length) throw new EndOfStreamException(); return Encoding.UTF8.GetString(bytes); }
 }

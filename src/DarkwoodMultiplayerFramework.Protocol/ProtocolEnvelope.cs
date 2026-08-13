@@ -19,6 +19,7 @@ public enum ProtocolMessageType : ushort
     EntityDespawn = 31,
     InventoryState = 32,
     PlayerPose = 33,
+    GuestProfile = 34,
     ActionRequest = 50,
     ActionResult = 51,
     ActionRejected = 52,

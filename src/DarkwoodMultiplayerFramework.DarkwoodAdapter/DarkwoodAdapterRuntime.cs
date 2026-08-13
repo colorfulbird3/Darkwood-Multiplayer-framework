@@ -90,6 +90,17 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private readonly Dictionary<Guid,ActionRequestMessage> pendingActions = new Dictionary<Guid,ActionRequestMessage>();
     private readonly Dictionary<int,Vector3> remotePlayerPositions = new Dictionary<int,Vector3>();
     private readonly Dictionary<int,DarkwoodPlayerInventoryShadow> remoteInventories = new Dictionary<int,DarkwoodPlayerInventoryShadow>();
+    private readonly Dictionary<int,GuestProfileRecord> peerGuestRecords = new Dictionary<int,GuestProfileRecord>();
+    private readonly Dictionary<int,string> peerGuestKeys = new Dictionary<int,string>();
+    private DarkwoodGuestProfiles? guestProfiles;
+    private ConfigEntry<string>? playerNameConfig;
+    private ConfigEntry<string>? starterKitTier1Config;
+    private ConfigEntry<string>? starterKitTier2Config;
+    private ConfigEntry<string>? starterKitTier3Config;
+    private ConfigEntry<int>? starterKitTier2DayConfig;
+    private ConfigEntry<int>? starterKitTier3DayConfig;
+    private float nextProfileAutosave;
+    private const float ProfileAutosaveSeconds = 30f;
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -133,6 +144,14 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         portConfig = config.Bind("Network", "Port", 17777, "TCP port used by the standalone DMF 0.8 transport.");
         playerCountConfig = config.Bind("Gameplay", "PlayerCount", 2, "Target player count and new shared-container loot multiplier.");
         playerCountConfig.Value = Mathf.Clamp(playerCountConfig.Value, 1, 8);
+        playerNameConfig = config.Bind("Gameplay", "PlayerName", string.Empty, "访客身份（主机用它跨热加入保存你的物品）。留空自动生成唯一随机名。");
+        if (string.IsNullOrWhiteSpace(playerNameConfig.Value)) { playerNameConfig.Value = "Guest" + Guid.NewGuid().ToString("N").Substring(0, 4); playerNameConfig.ConfigFile.Save(); }
+        starterKitTier2DayConfig = config.Bind("Gameplay", "GuestStarterKitTier2Day", 3, "从第几天起发放第二档访客初始装备。");
+        starterKitTier3DayConfig = config.Bind("Gameplay", "GuestStarterKitTier3Day", 7, "从第几天起发放第三档访客初始装备。");
+        starterKitTier1Config = config.Bind("Gameplay", "GuestStarterKitTier1", "", "新访客首次加入的初始装备（分号分隔的 物品类型:数量；留空不发装备）。");
+        starterKitTier2Config = config.Bind("Gameplay", "GuestStarterKitTier2", "", "第二档访客初始装备（仅首次加入，按天数选档）。");
+        starterKitTier3Config = config.Bind("Gameplay", "GuestStarterKitTier3", "", "第三档访客初始装备（仅首次加入，按天数选档）。");
+        guestProfiles = new DarkwoodGuestProfiles(log, starterKitTier2DayConfig.Value, starterKitTier3DayConfig.Value, starterKitTier1Config.Value, starterKitTier2Config.Value, starterKitTier3Config.Value);
         lootScaleLedgerPath = Path.Combine(Paths.ConfigPath, "DarkwoodMultiplayerFramework.loot-scale-ledger.txt");
         LoadLootScaleLedger();
         telepathyPath = Path.Combine(Paths.PluginPath, "Telepathy.dll");
@@ -147,8 +166,10 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         hostSession.PeerRejected += OnPeerRejected;
         hostSession.PeerDisconnected += OnPeerDisconnected;
         hostSession.MessageReceived += OnHostMessage;
+        hostSession.MaxPeers = Math.Max(0, ConfiguredPlayerCount - 1);
+        peerGuestKeys.Clear(); peerGuestRecords.Clear();
         hostSession.Start(Port);
-        log?.LogInfo($"主机正在监听 TCP 端口 {Port}。");
+        log?.LogInfo($"主机正在监听 TCP 端口 {Port}（访客上限 {hostSession.MaxPeers}，联机人数 {ConfiguredPlayerCount}）。");
     }
 
     public void ConnectClient()
@@ -158,8 +179,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         clientSession.HandshakeSucceeded += OnHandshakeSucceeded;
         clientSession.HandshakeFailed += OnHandshakeFailed;
         clientSession.MessageReceived += OnClientMessage;
+        clientSession.GuestKey = NormalizeGuestKey(playerNameConfig?.Value);
         clientSession.Connect(addressConfig?.Value ?? "127.0.0.1", Port);
-        log?.LogInfo($"客户端正在连接 {addressConfig?.Value ?? "127.0.0.1"}:{Port}。");
+        log?.LogInfo($"客户端正在连接 {addressConfig?.Value ?? "127.0.0.1"}:{Port}（身份 {clientSession.GuestKey}）。");
     }
 
     public bool ApplyNetworkConfiguration(string address, string portText, out string error)
@@ -187,10 +209,11 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     public void StopNetwork()
     {
+        if (hostSession != null && guestProfiles != null) foreach (var peer in readyPeers.ToArray()) PersistGuestProfile(peer);
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty;
+        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty;
         SetState(ConnectionState.Disconnected);
     }
 
@@ -238,6 +261,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         }
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendHostPose();}
         else if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
+        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())PersistGuestProfile(peer);}
     }
 
     private void TrySendClientRegistryReady()
@@ -357,9 +381,19 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         clientSession?.Send(ProtocolMessageType.SaveTransferRequest,ReplicationProtocolCodec.Encode(new SaveTransferRequest(Guid.NewGuid())));
     }
     private void OnHandshakeFailed(string error) => log?.LogError($"握手失败：{error}");
-    private void OnPeerAccepted(int connectionId) => log?.LogInfo($"已接受玩家连接：{connectionId}。");
+    private void OnPeerAccepted(int connectionId)
+    {
+        var key = "player";
+        if (hostSession != null && hostSession.TryGetPeerGuestKey(connectionId, out var guestKey) && !string.IsNullOrWhiteSpace(guestKey)) key = NormalizeGuestKey(guestKey);
+        peerGuestKeys[connectionId] = key;
+        log?.LogInfo($"已接受玩家连接：{connectionId}（身份 {key}）。");
+    }
     private void OnPeerRejected(int connectionId, string error) => log?.LogWarning($"已拒绝玩家连接 {connectionId}：{error}");
-    private void OnPeerDisconnected(int connectionId){outgoing.Remove(connectionId);readyPeers.Remove(connectionId);sentSaves.Remove(connectionId);sentSnapshots.Remove(connectionId);pendingSnapshotRequests.Remove(connectionId);remotePlayerPositions.Remove(connectionId);remoteInventories.Remove(connectionId);remotePlayers.Remove(connectionId);nextAttackAllowed.Remove(connectionId);if(remoteAttackAnchors.TryGetValue(connectionId,out var anchor)){if(anchor!=null)UnityEngine.Object.Destroy(anchor);remoteAttackAnchors.Remove(connectionId);}}
+    private void OnPeerDisconnected(int connectionId)
+    {
+        PersistGuestProfile(connectionId);
+        outgoing.Remove(connectionId);readyPeers.Remove(connectionId);sentSaves.Remove(connectionId);sentSnapshots.Remove(connectionId);pendingSnapshotRequests.Remove(connectionId);remotePlayerPositions.Remove(connectionId);remoteInventories.Remove(connectionId);remotePlayers.Remove(connectionId);nextAttackAllowed.Remove(connectionId);peerGuestKeys.Remove(connectionId);peerGuestRecords.Remove(connectionId);if(remoteAttackAnchors.TryGetValue(connectionId,out var anchor)){if(anchor!=null)UnityEngine.Object.Destroy(anchor);remoteAttackAnchors.Remove(connectionId);}
+    }
 
     private void OnHostMessage(int peer,ProtocolEnvelope envelope)
     {
@@ -368,7 +402,32 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             if(envelope.MessageType==ProtocolMessageType.SaveTransferRequest){ReplicationProtocolCodec.DecodeSaveTransferRequest(envelope.Payload);PrepareSave(peer);}
             else if(envelope.MessageType==ProtocolMessageType.SaveTransferApplied){var applied=ReplicationProtocolCodec.DecodeSaveTransferApplied(envelope.Payload);if(!sentSaves.TryGetValue(peer,out var expected)||expected!=applied.TransferId)throw new InvalidDataException("Save acknowledgement does not match active transfer.");log?.LogInfo($"Peer {peer} installed verified save {applied.TransferId}.");}
             else if(envelope.MessageType==ProtocolMessageType.Ready){var ready=ReplicationProtocolCodec.DecodeReady(envelope.Payload);PrepareSnapshot(peer,ready);}
-            else if(envelope.MessageType==ProtocolMessageType.WorldSnapshotApplied){var applied=ReplicationProtocolCodec.DecodeWorldSnapshotApplied(envelope.Payload);if(!sentSnapshots.TryGetValue(peer,out var expected)||expected!=applied.SnapshotId||applied.Scene!=CurrentScene||applied.RegistryDigest!=RegistryDigest)throw new InvalidDataException("Snapshot acknowledgement does not match active snapshot.");var firstReady=readyPeers.Add(peer);if(firstReady)remoteInventories[peer]=DarkwoodPlayerInventoryShadow.CaptureInitial();Queue(peer,ProtocolMessageType.Ready,ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene,RegistryDigest)));SendHostPose(peer);log?.LogInfo(firstReady?$"Peer {peer} READY after applying snapshot {applied.SnapshotId}, {applied.EntityCount} entities.":$"Peer {peer} repeated snapshot acknowledgement {applied.SnapshotId}; Ready confirmation resent.");}
+            else if(envelope.MessageType==ProtocolMessageType.WorldSnapshotApplied)
+            {
+                var applied=ReplicationProtocolCodec.DecodeWorldSnapshotApplied(envelope.Payload);
+                if(!sentSnapshots.TryGetValue(peer,out var expected)||expected!=applied.SnapshotId||applied.Scene!=CurrentScene||applied.RegistryDigest!=RegistryDigest)throw new InvalidDataException("Snapshot acknowledgement does not match active snapshot.");
+                var firstReady=readyPeers.Add(peer);
+                if(firstReady)
+                {
+                    // Every joining peer gets its own shadow inventory restored from its guest profile (hot join).
+                    var key=peerGuestKeys.TryGetValue(peer,out var guestKey)?guestKey:"player";
+                    var hostPosition=Player.Instance!=null?Player.Instance.transform.position:Vector3.zero;
+                    var day=global::Core.currentProfile?.day??0;
+                    var record=new GuestProfileRecord(key,day,1,0f,0f,0f,Array.Empty<InventorySlotWire>(),Array.Empty<InventorySlotWire>(),DateTime.UtcNow.Ticks);
+                    var spawn=hostPosition;
+                    if(guestProfiles!=null)record=guestProfiles.Resolve(HostSaveToken(),key,day,hostPosition,out spawn);
+                    var shadow=DarkwoodPlayerInventoryShadow.FromRecord(record,message=>log?.LogWarning(message));
+                    if(record.JoinCount==1)shadow.AddStarterKit(guestProfiles?.KitForDay(day),message=>log?.LogWarning(message));
+                    remoteInventories[peer]=shadow;
+                    peerGuestRecords[peer]=record;
+                    Queue(peer,ProtocolMessageType.GuestProfile,ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(),spawn.x,spawn.y,spawn.z,record.Day,record.JoinCount)));
+                    PersistGuestProfile(peer);
+                    log?.LogInfo($"Peer {peer} guest profile resolved: {key}, day {record.Day}, join {record.JoinCount}, spawn ({spawn.x:F1},{spawn.y:F1},{spawn.z:F1}).");
+                }
+                Queue(peer,ProtocolMessageType.Ready,ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene,RegistryDigest)));
+                SendHostPose(peer);
+                log?.LogInfo(firstReady?$"Peer {peer} READY after applying snapshot {applied.SnapshotId}, {applied.EntityCount} entities.":$"Peer {peer} repeated snapshot acknowledgement {applied.SnapshotId}; Ready confirmation resent.");
+            }
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose){var pose=ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload);if(!readyPeers.Contains(peer)||pose.Scene!=CurrentScene)return;pose=new PlayerPoseMessage(peer,pose.Sequence,CurrentScene,pose.X,pose.Y,pose.Z,pose.Qx,pose.Qy,pose.Qz,pose.Qw,pose.Flags,pose.TorsoClip,pose.TorsoFrame,pose.LegsClip,pose.LegsFrame);remotePlayerPositions[peer]=new Vector3(pose.X,pose.Y,pose.Z);remotePlayers.Apply(pose,0);var payload=ReplicationProtocolCodec.Encode(pose);foreach(var readyPeer in readyPeers.ToArray())if(readyPeer!=peer)Queue(readyPeer,ProtocolMessageType.PlayerPose,payload);}
             else if(envelope.MessageType==ProtocolMessageType.ActionRequest)HandleActionRequest(peer,ReplicationProtocolCodec.DecodeActionRequest(envelope.Payload));
         }
@@ -388,6 +447,13 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose)remotePlayers.Apply(ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload),clientSession?.PeerId??-1);
             else if(envelope.MessageType==ProtocolMessageType.ActionResult)HandleActionResult(ReplicationProtocolCodec.DecodeActionResult(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.ActionRejected)HandleActionRejected(ReplicationProtocolCodec.DecodeActionRejected(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.GuestProfile)
+            {
+                var profile=ReplicationProtocolCodec.DecodeGuestProfile(envelope.Payload);
+                var lifecycle=clientSession?.Session.Lifecycle.State;
+                if(lifecycle!=ConnectionState.ApplyingSnapshot&&lifecycle!=ConnectionState.Ready)throw new InvalidDataException("Guest profile arrived outside the joining phase.");
+                ApplyGuestProfile(profile);
+            }
             else if(envelope.MessageType==ProtocolMessageType.Ready){var ready=ReplicationProtocolCodec.DecodeReady(envelope.Payload);if(ready.Scene!=CurrentScene||ready.RegistryDigest!=incomingSnapshotManifest.RegistryDigest)throw new InvalidDataException("主机就绪确认与已应用的世界快照不一致。");clientSnapshotReady=true;lastSnapshotApplied=null;snapshotAckRetryCount=0;TransferProgress="联机已就绪";if(clientSession?.Session.Lifecycle.State==ConnectionState.ApplyingSnapshot)clientSession.Session.Lifecycle.MoveTo(ConnectionState.Ready);log?.LogInfo($"客户端联机已就绪：场景 {ready.Scene}，注册表摘要 {ready.RegistryDigest}。");}
             else if(envelope.MessageType==ProtocolMessageType.Error){var error=ReplicationProtocolCodec.DecodeError(envelope.Payload);throw new InvalidDataException($"Host error {error.Code}: {error.Detail}");}
         }
@@ -1036,6 +1102,46 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         DarkwoodInventoryAdapter.Apply(player.Hotbar,ToDarkwoodSlots(state.Hotbar));
         player.refreshRecipes();
     }
+
+    private void ApplyGuestProfile(GuestProfileMessage profile)
+    {
+        var player=Player.Instance;if(player==null)throw new InvalidOperationException("客户端玩家尚未就绪。");
+        player.transform.position=new Vector3(profile.X,profile.Y,profile.Z);
+        foreach(var body in player.GetComponentsInChildren<Rigidbody>(true)){body.velocity=Vector3.zero;body.angularVelocity=Vector3.zero;}
+        ApplyPlayerInventory(profile.Inventory);
+        log?.LogInfo($"已应用访客档案：出生点 ({profile.X:F1},{profile.Y:F1},{profile.Z:F1})，第 {profile.Day} 天，第 {profile.JoinCount} 次加入。");
+    }
+
+    private void PersistGuestProfile(int peer)
+    {
+        if(guestProfiles==null)return;
+        if(!peerGuestKeys.TryGetValue(peer,out var key)||!peerGuestRecords.TryGetValue(peer,out var record)||!remoteInventories.TryGetValue(peer,out var shadow))return;
+        var position=remotePlayerPositions.TryGetValue(peer,out var pose)?pose:new Vector3(record.X,record.Y,record.Z);
+        var state=shadow.CaptureState();
+        var updated=new GuestProfileRecord(record.GuestKey,record.Day,record.JoinCount,position.x,position.y,position.z,state.Backpack,state.Hotbar,DateTime.UtcNow.Ticks);
+        guestProfiles.Save(HostSaveToken(),updated);
+    }
+
+    private static string NormalizeGuestKey(string? value)
+    {
+        var key=(value??string.Empty).Trim();
+        if(key.Length==0)return "player";
+        while(System.Text.Encoding.UTF8.GetByteCount(key)>64&&key.Length>1)key=key.Substring(0,key.Length-1);
+        return key;
+    }
+
+    public bool ApplyPlayerName(string name,out string error)
+    {
+        error=string.Empty;name=(name??string.Empty).Trim();
+        if(name.Length==0){error="玩家名称不能为空。";return false;}
+        if(System.Text.Encoding.UTF8.GetByteCount(name)>64){error="玩家名称过长（最多 64 字节）。";return false;}
+        if(playerNameConfig==null){error="配置尚未就绪。";return false;}
+        playerNameConfig.Value=name;playerNameConfig.ConfigFile.Save();
+        log?.LogInfo($"玩家名称已保存：{name}。");
+        return true;
+    }
+
+    public string ConfiguredPlayerName => playerNameConfig?.Value ?? string.Empty;
 
     private static DarkwoodInventorySlot[] ToDarkwoodSlots(InventorySlotWire[] slots)
     {

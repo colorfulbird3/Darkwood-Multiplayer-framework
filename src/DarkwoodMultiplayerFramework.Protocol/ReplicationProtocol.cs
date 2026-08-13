@@ -193,6 +193,28 @@ public readonly struct PlayerInventoryStatePayload
     public InventorySlotWire[] Hotbar {get;}
 }
 
+/// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>
+public readonly struct GuestProfileMessage
+{
+    public GuestProfileMessage(PlayerInventoryStatePayload inventory, float x, float y, float z, int day, int joinCount)
+    { Inventory=inventory; X=x; Y=y; Z=z; Day=day; JoinCount=joinCount; }
+    public PlayerInventoryStatePayload Inventory {get;}
+    public float X {get;} public float Y {get;} public float Z {get;}
+    public int Day {get;} public int JoinCount {get;}
+}
+
+/// <summary>Persistent hot-join guest identity record stored by the host beside the save. Binary, format-versioned.</summary>
+public readonly struct GuestProfileRecord
+{
+    public GuestProfileRecord(string guestKey, int day, int joinCount, float x, float y, float z, InventorySlotWire[] backpack, InventorySlotWire[] hotbar, long lastSeenUtcTicks)
+    { GuestKey=guestKey??string.Empty; Day=day; JoinCount=joinCount; X=x; Y=y; Z=z; Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); LastSeenUtcTicks=lastSeenUtcTicks; }
+    public string GuestKey {get;} public int Day {get;} public int JoinCount {get;}
+    public float X {get;} public float Y {get;} public float Z {get;}
+    public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;}
+    public long LastSeenUtcTicks {get;}
+    public bool HasPosition => X != 0f || Y != 0f || Z != 0f;
+}
+
 /// <summary>Client melee attack intent. The host derives damage from its own shadow inventory; the client never sends damage values.</summary>
 public readonly struct AttackPayload
 {
@@ -227,7 +249,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.7-alpha.11";
+    public const string Framework = "0.8.7-alpha.12";
 }
 
 public static class ReplicationProtocolCodec
@@ -271,12 +293,18 @@ public static class ReplicationProtocolCodec
     public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});
     public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r)));
+    public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);});
+    public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32());});
+    public static byte[] Encode(GuestProfileRecord m)=>Write(w=>{w.Write((byte)GuestProfileFormatVersion);WriteString(w,m.GuestKey);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.LastSeenUtcTicks);});
+    public static GuestProfileRecord DecodeGuestProfileRecord(byte[] p)=>Read(p,r=>{var version=r.ReadByte();if(version!=GuestProfileFormatVersion)throw new InvalidDataException("Unsupported guest profile format version.");var key=ReadString(r);var day=r.ReadInt32();var joins=r.ReadInt32();var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var backpack=ReadInventorySlots(r);var hotbar=ReadInventorySlots(r);var seen=r.ReadInt64();return new GuestProfileRecord(key,day,joins,x,y,z,backpack,hotbar,seen);});
     public static byte[] Encode(AttackPayload m)=>Write(w=>{w.Write(m.AttackKind);w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.DirX);w.Write(m.DirZ);w.Write(m.PosX);w.Write(m.PosZ);});
     public static AttackPayload DecodeAttack(byte[] p)=>Read(p,r=>{var kind=r.ReadByte();if(kind!=1&&kind!=2)throw new InvalidDataException("Unknown melee attack kind.");var fromHotbar=r.ReadBoolean();var slot=r.ReadInt32();if(slot<0||slot>255)throw new InvalidDataException("Attack slot index exceeds limit.");return new AttackPayload(kind,fromHotbar,slot,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle());});
     public static byte[] Encode(InteractPayload m)=>Write(w=>w.Write(m.ValueA));
     public static InteractPayload DecodeInteract(byte[] p)=>Read(p,r=>new InteractPayload(r.ReadInt32()));
     private const int SnapshotMax = 256*1024;
     private const int ActionPayloadMax = 64*1024;
+    private const int GuestProfileMax = 1024*1024;
+    private const byte GuestProfileFormatVersion = 1;
     private static void WriteInventorySlots(BinaryWriter w,InventorySlotWire[] slots){if(slots.Length>256)throw new InvalidOperationException("Too many player inventory slots.");w.Write(slots.Length);foreach(var s in slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}}
     private static InventorySlotWire[] ReadInventorySlots(BinaryReader r){var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return slots;}
     private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);} }

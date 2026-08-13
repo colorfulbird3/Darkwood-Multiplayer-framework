@@ -2,7 +2,7 @@
 
 Darkwood（Unity Mono 生存恐怖游戏）的多人联机插件框架。通过 BepInEx 5 + Harmony 注入游戏，使用自有二进制协议与 Telepathy TCP 在局域网 / Radmin VPN 中联机。
 
-当前版本：**0.8.7-alpha.11**
+当前版本：**0.8.7-alpha.12**
 
 ## 特性
 
@@ -12,6 +12,7 @@ Darkwood（Unity Mono 生存恐怖游戏）的多人联机插件框架。通过 
 - 怪物死亡镜像：尸体与掉落物以主机权威内容为准。
 - 开关门、封窗、物品开关等交互由主机校验后重放并广播。
 - 世界快照 + 实体增量（15 Hz）同步怪物/门窗/物品状态；远端怪物 AI 冻结，远端玩家模型插值。
+- 热加入：主机开局后随时接受新玩家；访客身份 + 主机侧档案持久化，断线重连不丢物品；按天数分档初始装备；超员拒绝（SESSION_FULL）。
 - 版本契约：无向下兼容；握手只比较框架版本与游戏版本，不一致直接拒绝加入。
 
 ## 下载与安装
@@ -32,7 +33,7 @@ dotnet run --project '.\src\DarkwoodMultiplayerFramework.SelfTests\DarkwoodMulti
 - `PROJECT-DOCUMENTATION-HERMES-DSV4.zh-CN.md`：项目定位、架构、数据契约与当前状态。
 - `ARCHITECTURE-ROADMAP.zh-CN.md`：架构路线图。
 - `AGENTS.md`：开发工作规则。
-- `RELEASE-NOTES-0.8.7-alpha.11.md`：当前版本发布说明。
+- `RELEASE-NOTES-0.8.7-alpha.12.md`：当前版本发布说明。
 
 ## 许可证
 

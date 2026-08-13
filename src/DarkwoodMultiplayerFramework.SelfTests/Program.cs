@@ -56,7 +56,14 @@ var tests = new (string Name, Action Run)[]
     ("attack action roundtrip", AttackActionRoundtrip),
     ("door interact action roundtrip", DoorInteractActionRoundtrip),
     ("item activate action roundtrip", ItemActivateActionRoundtrip),
-    ("framework version mismatch", FrameworkVersionMismatch)
+    ("framework version mismatch", FrameworkVersionMismatch),
+    ("client hello guest key", ClientHelloGuestKey),
+    ("guest profile message roundtrip", GuestProfileMessageRoundtrip),
+    ("guest profile record roundtrip", GuestProfileRecordRoundtrip),
+    ("guest profile record version", GuestProfileRecordVersion),
+    ("session full rejection", SessionFullRejection),
+    ("session capacity", SessionCapacity),
+    ("guest key loopback", GuestKeyLoopback)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -87,8 +94,14 @@ static void EnvelopeTruncated()
 }
 static void ClientHelloRoundtrip()
 {
-    var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity())));
-    Require(decoded.Identity.FrameworkVersion==ProtocolVersions.Framework && decoded.Identity.GameVersion=="darkwood-build");
+    var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity(),"夜色猎人")));
+    Require(decoded.Identity.FrameworkVersion==ProtocolVersions.Framework && decoded.Identity.GameVersion=="darkwood-build" && decoded.GuestKey=="夜色猎人");
+}
+static void ClientHelloGuestKey()
+{
+    var decoded=HandshakeProtocolCodec.DecodeClientHello(HandshakeProtocolCodec.Encode(new ClientHello(Identity(),string.Empty)));
+    Require(decoded.GuestKey.Length==0);
+    ExpectFailure(()=>HandshakeProtocolCodec.Encode(new ClientHello(Identity(),new string('汉',40))));
 }
 static void SaveProtocolRoundtrip()
 {
@@ -277,6 +290,63 @@ static void FrameworkVersionMismatch()
     var client=new ProtocolIdentity("0.8.7-alpha.9","darkwood-build");
     var result=HandshakeValidator.Validate(host,client);
     Require(!result.Accepted && result.ErrorCode=="INCOMPATIBLE_FRAMEWORK_VERSION");
+}
+static void GuestProfileMessageRoundtrip()
+{
+    var inventory=new PlayerInventoryStatePayload(new[]{new InventorySlotWire("Wood",2,.8f,1,false)},new[]{new InventorySlotWire("Knife",1,.4f,2,false)});
+    var decoded=ReplicationProtocolCodec.DecodeGuestProfile(ReplicationProtocolCodec.Encode(new GuestProfileMessage(inventory,12.5f,3.25f,-8.5f,4,2)));
+    Require(decoded.Inventory.Backpack.Length==1&&decoded.Inventory.Backpack[0].Type=="Wood"&&decoded.Inventory.Hotbar[0].Type=="Knife"&&Math.Abs(decoded.X-12.5f)<.001f&&Math.Abs(decoded.Y-3.25f)<.001f&&Math.Abs(decoded.Z+8.5f)<.001f&&decoded.Day==4&&decoded.JoinCount==2);
+}
+static void GuestProfileRecordRoundtrip()
+{
+    var record=new GuestProfileRecord("夜色猎人",5,3,1.5f,2.5f,3.5f,new[]{new InventorySlotWire("Wood",2,.8f,1,false)},new[]{new InventorySlotWire("Knife",1,.4f,2,false)},638273511234567890);
+    var decoded=ReplicationProtocolCodec.DecodeGuestProfileRecord(ReplicationProtocolCodec.Encode(record));
+    Require(decoded.GuestKey=="夜色猎人"&&decoded.Day==5&&decoded.JoinCount==3&&Math.Abs(decoded.X-1.5f)<.001f&&decoded.Backpack.Length==1&&decoded.Backpack[0].Amount==2&&decoded.Hotbar[0].Type=="Knife"&&decoded.LastSeenUtcTicks==638273511234567890&&decoded.HasPosition);
+}
+static void GuestProfileRecordVersion()
+{
+    var bytes=ReplicationProtocolCodec.Encode(new GuestProfileRecord("guest",1,1,0,0,0,Array.Empty<InventorySlotWire>(),Array.Empty<InventorySlotWire>(),0));
+    bytes[0]=9;ExpectFailure(()=>ReplicationProtocolCodec.DecodeGuestProfileRecord(bytes));
+}
+static void SessionFullRejection()
+{
+    var telepathy=FindTelepathy();var port=FindFreePort();var accepted=0;var rejected=string.Empty;
+    using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
+    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
+    host.MaxPeers=0;
+    host.PeerAccepted+=_=>accepted++;
+    host.PeerRejected+=(_,error)=>rejected=error;
+    host.Start(port);client.Connect("127.0.0.1",port);
+    var timeout=Stopwatch.StartNew();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)){host.Tick();client.Tick();if(client.Session.Lifecycle.State==ConnectionState.Failed&&rejected.Length>0)break;Thread.Sleep(1);}
+    Require(accepted==0&&rejected=="SESSION_FULL"&&client.LastError=="SESSION_FULL"&&client.Session.Lifecycle.State==ConnectionState.Failed&&host.ReadyPeerCount==0);
+}
+static void SessionCapacity()
+{
+    var telepathy=FindTelepathy();var port=FindFreePort();var accepted=0;var rejected=string.Empty;
+    using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
+    host.MaxPeers=1;
+    host.PeerAccepted+=_=>accepted++;
+    host.PeerRejected+=(_,error)=>rejected=error;
+    host.Start(port);
+    using var first=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
+    using var second=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
+    first.Connect("127.0.0.1",port);second.Connect("127.0.0.1",port);
+    var timeout=Stopwatch.StartNew();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)){host.Tick();first.Tick();second.Tick();if(first.HandshakeComplete&&second.Session.Lifecycle.State==ConnectionState.Failed&&rejected=="SESSION_FULL")break;Thread.Sleep(1);}
+    Require(first.HandshakeComplete&&accepted==1&&rejected=="SESSION_FULL"&&second.LastError=="SESSION_FULL"&&host.ReadyPeerCount==1);
+}
+static void GuestKeyLoopback()
+{
+    var telepathy=FindTelepathy();var port=FindFreePort();var peerId=-1;
+    using var host=new HostHandshakeSession(new TelepathyServerTransport(telepathy),Identity());
+    using var client=new ClientHandshakeSession(new TelepathyClientTransport(telepathy),Identity());
+    host.PeerAccepted+=id=>peerId=id;
+    client.GuestKey="夜色猎人";
+    host.Start(port);client.Connect("127.0.0.1",port);
+    var timeout=Stopwatch.StartNew();
+    while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&(!client.HandshakeComplete||peerId<0)){host.Tick();client.Tick();Thread.Sleep(1);}
+    Require(client.HandshakeComplete&&peerId>=0&&host.TryGetPeerGuestKey(peerId,out var key)&&key=="夜色猎人");
 }
 static void Require(bool value) { if(!value) throw new InvalidOperationException("assertion failed"); }
 static void ExpectFailure(Action action) { try { action(); } catch(Exception error) when(error is InvalidOperationException || error is InvalidDataException || error is EndOfStreamException) { return; } throw new InvalidOperationException("expected failure"); }

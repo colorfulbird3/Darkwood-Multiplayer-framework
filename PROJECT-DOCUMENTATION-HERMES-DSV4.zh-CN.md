@@ -2,7 +2,7 @@
 ## Hermes + DS V4 Pro 项目文档
 
 > 文档用途：作为 Hermes 的项目级上下文，说明项目背景、运行时架构、核心流程、数据契约、当前状态和后续开发边界。  
-> 文档基线：`0.8.7-alpha.11`（2026-08-13）  
+> 文档基线：`0.8.7-alpha.12`（2026-08-13）  
 > 重要边界：Hermes 是开发 Agent，DS V4 Pro 是开发模型；二者目前不是 Darkwood 的游戏运行时网络 SDK。
 
 ---
@@ -32,24 +32,24 @@ Darkwood Multiplayer Framework（DMF）是一个运行在 Darkwood 上的多人�
 游戏目录：<Darkwood 安装目录>
 插件目录：<游戏目录>\BepInEx\plugins
 Payload：<canonical 树>\Payload
-安装包：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.11
-ZIP：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.11.zip
+安装包：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.12
+ZIP：<游戏目录>\Darkwood联机框架-安装包-v0.8.7-alpha.12.zip
 ```
 
 当前发布基线：
 
 ```text
-Framework       0.8.7-alpha.11
+Framework       0.8.7-alpha.12
 Envelope        3（信封头常量）
 握手门槛        FrameworkVersion + GameVersion（无向下兼容，PROTO-001 已定）
 SaveBundle wire 3（实现细节，随框架版本绑定）
 Snapshot wire   2（实现细节，随框架版本绑定）
 ```
 
-alpha.11 ZIP 当前 SHA256：
+alpha.12 ZIP 当前 SHA256：
 
 ```text
-503C27E6DE135739FA27B529ECA7BD1AC2C96FC690D93F1C7731F66EFC4733B1
+422E775318864C2DEDFF64DD186EDBE4DEF267445180391A930BDF4CC900A181
 ```
 
 GitHub 工作副本（remote 为 https://github.com/colorfulbird3/Darkwood-Multiplayer-framework）只保留当前版本的源码与文档；canonical 树为开发主树，发布时把源码以普通提交推送到仓库 main（第三方二进制、Payload、安装包与旧版本不进仓库）。禁止在两棵树之间混改。
@@ -220,18 +220,19 @@ DS V4 Pro 负责：
 
 ### VERIFIED
 
-- alpha.11 solution 构建：0 warning、0 error。
-- SelfTests：43 项通过，包含 Envelope、握手、分块、Action、快照、Telepathy loopback 以及攻击/交互 payload 负例。
-- 已记录 alpha.11 ZIP SHA256：`503C27E6DE135739FA27B529ECA7BD1AC2C96FC690D93F1C7731F66EFC4733B1`。
+- alpha.12 solution 构建：0 warning、0 error。
+- SelfTests：50 项通过（退出码 0），包含 Envelope、握手（含访客身份与容量）、分块、Action、快照、Telepathy loopback、GuestProfile 消息/档案往返与格式版本拒绝、SESSION_FULL 拒绝、双客户端容量以及攻击/交互 payload 负例。
+- 已记录 alpha.12 ZIP SHA256：`422E775318864C2DEDFF64DD186EDBE4DEF267445180391A930BDF4CC900A181`（真 PK ZIP；manifest 32/32 校验通过）。
 - 版本契约：无向下兼容，握手只比较 FrameworkVersion + GameVersion（PROTO-001 已定）。
 
 ### IMPLEMENTED_UNVERIFIED
 
 - 物品主机权威事务（拿取/放置/拖放/堆叠/交换）、近战攻击权威闭环、怪物死亡镜像、门窗/物品交互 Action 化——代码与自动测试完成，真实双端矩阵未验证。
+- 热加入与访客档案（HOTJOIN-001）：访客身份、每 peer 影子库存、档案持久化、GuestProfile 出生点/库存、三档初始装备、SESSION_FULL 容量——代码与自动测试完成，双端实机未验证。
 
 ### BUG_OPEN / 待处理
 
-1. 远端玩家库存 shadow 的初始来源和拒绝回滚需要真实验证与修复（INV-001）。
+1. 远端玩家库存 shadow 的初始来源与拒绝回滚需要真实双端复验（INV-001，alpha.12 已改为按访客档案初始化）。
 2. 火器/投掷物不同步；陷阱、发电机专属逻辑、剧情/任务事件尚未 Action 化。
 3. 运行时生成实体（夜间怪物/掉落物）的 Spawn/Destroy/Reconnect 同步缺失（P2）。
 4. 远端玩家攻击不计算技能加成；近战弧为近似值；封窗/物品开关拦截依赖启发式——需双端实机调参。
