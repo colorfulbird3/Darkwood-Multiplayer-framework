@@ -1,6 +1,6 @@
 # Darkwood Multiplayer Framework 架构路线图
 
-本文档记录 0.8.x 及后续版本的架构目标与**真实进度**。当前发布版本：**0.8.7-alpha.18**（构建 0 警告 0 错误，SelfTests 54/54，双端实机验证进行中）。
+本文档记录 0.8.x 及后续版本的架构目标与**真实进度**。当前发布版本：**0.8.7-alpha.19**（构建 0 警告 0 错误，SelfTests 58/58，真机矩阵 VERIFY-001 进行中；alpha.18 首轮实测暴露 FIX-006——完成回调挂错场景内单例实例，alpha.19 已修复）。
 
 > 重要认知（2026-08-14 项目评审后更新）：项目当前主要矛盾不是缺功能，而是**实现速度超过验证速度**。
 > 0.8.7 已从"Runtime Entity"演变为"Playable-system expansion + Hot Join + 客户端存档加载稳定化"；
@@ -11,19 +11,19 @@
 | 版本 | 主题 | 状态 |
 |---|---|---|
 | `0.8.6` | Action Core：Pickup 的 Request → Validate → Apply → Result 闭环 | ✅ 已完成 |
-| `0.8.7` | 玩法系统扩展（容器/战斗/门窗/物品 + 倒地营救）+ Hot Join + 客户端存档加载稳定化 | 🔧 代码完成（alpha.18），等待真机矩阵 |
+| `0.8.7` | 玩法系统扩展（容器/战斗/门窗/物品 + 倒地营救）+ Hot Join + 客户端存档加载稳定化 | 🔧 代码完成（alpha.19），真机矩阵重测中 |
 | `0.8.8` | Runtime Entity：Host 分配运行时 ID，补齐 Spawn/Despawn 生命周期；Scene Transition | ⬜ 未开始 |
 | `0.8.9` | Stability：断线重连、重复包、超时诊断；怪物伤害从距离近似模型收敛为真实攻击事件 | ⬜ 未开始 |
 | `0.9.0` | 横向玩法扩展 | ⬜ 未开始 |
 
 ### 0.8.7 的真实内容
 
-0.8.7 实际已实现（截至 alpha.18）：
+0.8.7 实际已实现（截至 alpha.19）：
 
 - **Action 协议扩展**：Pickup、ContainerTake、ContainerPut、Attack、DoorInteract、WindowInteract、ItemActivate，统一走 `Client Intent → ActionRequest → Host Validate → Host Apply → ActionResult/Rejected`。
 - **Hot Join**：ClientHello → GuestKey → Host Guest Profile；访客独立背包/快捷栏/位置/加入天数/次数；Host 持久化访客档案；SESSION_FULL 限员。
 - **倒地与营救**：PlayerHealth / RescueRequest / RescueProgress / AllDowned；全员倒地才走原版死亡结局。
-- **客户端存档加载稳定化（FIX-002~005）**：强制真实 Load 分支；跳过 joinPaths；主机剥离 A* 导航图后传输（实测 -64%）+ 客户端跳过图反序列化；剥离带运行时保护（字段缺失/重复/结构异常回退完整存档）。
+- **客户端存档加载稳定化（FIX-002~006）**：强制真实 Load 分支；跳过 joinPaths；主机剥离 A* 导航图后传输（实测 -64%）+ 客户端跳过图反序列化；剥离带运行时保护（字段缺失/重复/结构异常回退完整存档）；完成回调挂到真正执行 Load 的场景内 SaveManager 实例（FIX-006，修复实机卡 92%）。
 - **注册表稳定化**：实体数连续 3 次不变才发送 Ready，避免世界流式生成期间注册表不完整。
 
 ### 0.8.7 已知欠账（不阻塞 beta，但必须记录）
