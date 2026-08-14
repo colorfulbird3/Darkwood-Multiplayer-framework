@@ -11,9 +11,8 @@ public static class DarkwoodSaveBundle
 {
     private const int Magic=0x44534650,Schema=3,MaxFiles=24; private const long MaxBytes=128L*1024*1024;
     private static readonly string[] Files={"sav.dat","sav.dat_bak","savs.dat","savs.dat_bak","savch.dat","savch.dat_bak"};
-    private static readonly System.Text.RegularExpressions.Regex GraphField=new System.Text.RegularExpressions.Regex("(\"graph\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"",System.Text.RegularExpressions.RegexOptions.Compiled);
     /// <summary>客户端专用打包：剥离 savs.dat 中的 A* 导航图（实测约占总文件 63%），
-    /// 客户端是视觉镜像（怪物 AI 冻结、无本地寻路），大幅缩短弱机 JSON 解析时间。</summary>
+    /// 客户端是视觉镜像（怪物 AI 冻结、无本地寻路），大幅缩短弱机加载时间。</summary>
     public static byte[] BuildForClient(string baseDirectory,int profileId)=>BuildInternal(baseDirectory,profileId,StripGraphs);
     public static byte[] Build(string baseDirectory,int profileId)=>BuildInternal(baseDirectory,profileId,null);
     private static byte[] BuildInternal(string baseDirectory,int profileId,System.Func<string,byte[],byte[]>? transform)
@@ -28,9 +27,23 @@ public static class DarkwoodSaveBundle
         var name=Path.GetFileName(normalized);
         if(!name.Equals("savs.dat",StringComparison.OrdinalIgnoreCase)&&!name.Equals("savs.dat_bak",StringComparison.OrdinalIgnoreCase))return data;
         var text=Encoding.UTF8.GetString(data);
-        if(text.IndexOf("\"graph\"",System.StringComparison.Ordinal)<0)return data; // 加密或格式异常：原样传输
-        var replaced=GraphField.Replace(text,"$1\"\"");
-        return Encoding.UTF8.GetBytes(replaced);
+        // 保护：graph 字段缺失或出现次数不是 1（未来存档 schema 变化）→ 原样传输，
+        // 客户端侧的图反序列化跳过补丁仍会兜底，功能不受影响。
+        var stripped=DarkwoodMultiplayerFramework.Core.DarkwoodSaveStrip.TryStrip(text);
+        if(stripped==null)return data;
+        try
+        {
+            // 保护：剥离后立即做 JSON 结构验证（运行时验证，不只在开发机测试时验证）。
+            var parsed=Newtonsoft.Json.Linq.JObject.Parse(stripped);
+            if(parsed["graph"]==null)throw new System.IO.InvalidDataException("graph field missing after strip.");
+            UnityEngine.Debug.Log("DMF 客户端存档打包：已剥离 A* 导航图（"+text.Length+" → "+stripped.Length+" 字符，约 -"+100L*(text.Length-stripped.Length)/Math.Max(1,text.Length)+"%）。");
+            return Encoding.UTF8.GetBytes(stripped);
+        }
+        catch
+        {
+            UnityEngine.Debug.LogWarning("DMF 客户端存档打包：剥离后 JSON 验证失败，回退为原样传输完整存档。");
+            return data;
+        }
     }
     public static int Extract(byte[] bundle,string destination)
     {

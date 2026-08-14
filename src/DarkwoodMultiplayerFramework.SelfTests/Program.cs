@@ -67,7 +67,11 @@ var tests = new (string Name, Action Run)[]
     ("player health roundtrip", PlayerHealthRoundtrip),
     ("rescue request roundtrip", RescueRequestRoundtrip),
     ("rescue progress roundtrip", RescueProgressRoundtrip),
-    ("all downed roundtrip", AllDownedRoundtrip)
+    ("all downed roundtrip", AllDownedRoundtrip),
+    ("save graph strip single field", SaveGraphStripSingle),
+    ("save graph strip duplicate field", SaveGraphStripDuplicate),
+    ("save graph strip missing field", SaveGraphStripMissing),
+    ("save graph strip escaped quotes", SaveGraphStripEscaped)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -382,6 +386,30 @@ static void GuestKeyLoopback()
     var timeout=Stopwatch.StartNew();
     while(timeout.Elapsed<TimeSpan.FromSeconds(5)&&(!client.HandshakeComplete||peerId<0)){host.Tick();client.Tick();Thread.Sleep(1);}
     Require(client.HandshakeComplete&&peerId>=0&&host.TryGetPeerGuestKey(peerId,out var key)&&key=="夜色猎人");
+}
+static void SaveGraphStripSingle()
+{
+    var json="{\"graph\":\"UEsDBBQAAAAIAAAA\",\"savedObjs\":[{\"Name\":\"wolf\"}]}";
+    var stripped=DarkwoodSaveStrip.TryStrip(json);
+    Require(stripped!=null);
+    Require(stripped!.Contains("\"graph\":\"\"",StringComparison.Ordinal)&&stripped.Contains("\"savedObjs\":[{\"Name\":\"wolf\"}]",StringComparison.Ordinal));
+}
+static void SaveGraphStripDuplicate()
+{
+    // graph 字段出现两次：未来存档 schema 变化时可能发生，必须回退而不是误伤。
+    Require(DarkwoodSaveStrip.TryStrip("{\"graph\":\"AAAA\",\"other\":{\"graph\":\"BBBB\"}}")==null);
+}
+static void SaveGraphStripMissing()
+{
+    Require(DarkwoodSaveStrip.TryStrip("{\"savedObjs\":[]}")==null);
+}
+static void SaveGraphStripEscaped()
+{
+    // 值内含转义引号/反斜杠：正则必须完整吞掉整个字符串值，只把值替换为空。
+    var json="{\"graph\":\"a\\\"b\\\\c\"}";
+    var stripped=DarkwoodSaveStrip.TryStrip(json);
+    Require(stripped!=null);
+    Require(stripped=="{\"graph\":\"\"}");
 }
 static void Require(bool value) { if(!value) throw new InvalidOperationException("assertion failed"); }
 static void ExpectFailure(Action action) { try { action(); } catch(Exception error) when(error is InvalidOperationException || error is InvalidDataException || error is EndOfStreamException) { return; } throw new InvalidOperationException("expected failure"); }

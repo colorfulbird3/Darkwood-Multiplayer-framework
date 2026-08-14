@@ -54,3 +54,22 @@ public static class DarkwoodGraphDeserializePatch
         return false;
     }
 }
+
+/// <summary>
+/// FIX-006：onFinishedLoading 回调必须挂到“真正执行 Load 的 SaveManager 实例”上。
+/// SaveManager 是场景内单例（Awake 里 registerMe，无 DontDestroyOnLoad）：主菜单场景
+/// 的实例在 LoadScene("chapter1") 后随场景销毁，而 Load() 跑在 chapter1 场景的新实例上。
+/// 在新实例上只有 WorldChunk 等场景对象的订阅，我们的完成回调从未触发 → 客户端永远
+/// 停在 LoadingSave（实测：加载界面卡 92%，且 timeScale=0 无人恢复，hideLoadingScreen
+/// 的 timeScaleDependent Invoke 永不执行）。本补丁在 Load 入口把回调幂等挂到 __instance。
+/// </summary>
+[HarmonyPatch(typeof(SaveManager), "Load", new[]{ typeof(bool), typeof(bool) })]
+public static class DarkwoodLoadFinishedPatch
+{
+    public static void Prefix(SaveManager __instance)
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || !runtime.IsClient || !runtime.ClientSaveLoadPending) return;
+        DarkwoodAdapterRuntime.AttachLoadFinishedCallback(__instance);
+    }
+}

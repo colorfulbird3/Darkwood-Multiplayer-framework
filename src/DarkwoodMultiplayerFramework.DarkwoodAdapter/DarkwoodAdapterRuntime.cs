@@ -540,7 +540,12 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private IEnumerator LoadDownloadedSave(int profileId)
     {
-        yield return null;try{if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed)throw new InvalidOperationException("客户端连接已断开，取消存档加载。");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));manager.onFinishedLoading=(saveDelegate)Delegate.Combine(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));TransferProgress="正在加载存档";loadStartedAt=Time.unscaledTime;
+        yield return null;try{if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed)throw new InvalidOperationException("客户端连接已断开，取消存档加载。");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);
+        // FIX-006：不在此处挂 onFinishedLoading——SaveManager 是场景内单例（非 DontDestroyOnLoad），
+        // 此处挂到的是主菜单场景的实例，LoadScene 后随场景销毁；Load() 跑在 chapter1 场景的
+        // 新实例上，回调永远不触发（实测：加载卡 92%、timeScale 无人恢复、界面永不隐藏）。
+        // 改由 DarkwoodLoadFinishedPatch 在 SaveManager.Load 入口挂到 __instance。
+        TransferProgress="正在加载存档";loadStartedAt=Time.unscaledTime;
         // FIX-002：initLoadGame() 内部先跑 initNewGame()，会把 Core.loadingGame 重置为 false，
         // WorldGenerator.Start 因此走“生成新世界”分支（教学梦境，约 8 个实体），且
         // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
@@ -554,6 +559,17 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         ClientSaveLoadPending=false;LogMessage($"存档加载完成回调已触发（用时 {(loadStartedAt>0f?Time.unscaledTime-loadStartedAt:0f):F1} 秒）。");
         if(Time.timeScale<=0.01f){Time.timeScale=1f;LogMessage("已强制恢复 timeScale=1（加载期间曾被冻结）。");}
         var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
+    }
+
+    /// <summary>FIX-006：把完成回调幂等挂到“真正执行 Load 的 SaveManager 实例”上。
+    /// SaveManager 是场景内单例（无 DontDestroyOnLoad），主菜单场景的实例会在
+    /// LoadScene 后销毁；只有当前场景实例上挂的回调才会被 Load() 触发。</summary>
+    internal static void AttachLoadFinishedCallback(SaveManager manager)
+    {
+        var runtime = Instance;
+        if (runtime == null) return;
+        manager.onFinishedLoading = (saveDelegate)Delegate.Remove(manager.onFinishedLoading, new saveDelegate(runtime.OnDownloadedSaveFinished));
+        manager.onFinishedLoading = (saveDelegate)Delegate.Combine(manager.onFinishedLoading, new saveDelegate(runtime.OnDownloadedSaveFinished));
     }
 
     private IEnumerator WaitForRegistryThenReady()
