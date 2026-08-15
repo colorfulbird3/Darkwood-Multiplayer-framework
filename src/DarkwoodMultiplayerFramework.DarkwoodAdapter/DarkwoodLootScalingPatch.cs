@@ -59,7 +59,9 @@ internal static class DarkwoodLootScalingPatch
         for (var remaining = total - item.amount; remaining > 0;)
         {
             var amount = Math.Min(remaining, stackLimit);
-            if (!Copy(inventory, item, amount)) { item.amount += remaining; item.refresh(); break; }
+            // FIX-008：无空槽时停止复制——绝不把剩余量堆回原槽（会超 maxAmount 写入存档，
+            // 游戏读档时校验失败导致"存档损坏/无法进入"）。
+            if (!Copy(inventory, item, amount)) break;
             remaining -= amount;
         }
     }

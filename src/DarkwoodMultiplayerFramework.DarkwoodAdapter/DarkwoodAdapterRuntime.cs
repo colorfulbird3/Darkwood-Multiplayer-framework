@@ -672,11 +672,14 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private string HostSaveToken()
     {
+        // FIX-008：不再用 savs.dat 的文件创建时间——游戏保存会重写该文件，创建时间随之变化，
+        // 扩容账本因此全部失效，导致每次开服对共享柜子重复翻倍物品，最终溢出损坏主机存档。
+        // 改用稳定身份：存档目录名 + profile id。新档的 uniqueId 会全新分配，账本不会误命中。
         try
         {
             var manager=Singleton<SaveManager>.Instance;
-            var path=manager?.staticFile;
-            if(!string.IsNullOrEmpty(path)&&File.Exists(path))return Path.GetFullPath(path)+"|"+File.GetCreationTimeUtc(path).Ticks;
+            var dir=manager!=null&&!string.IsNullOrEmpty(manager.staticFile)?Path.GetDirectoryName(manager.staticFile):string.Empty;
+            if(!string.IsNullOrEmpty(dir))return Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar))+"|"+(global::Core.currentProfile?.id??-1);
         }
         catch{}
         return "profile:"+(global::Core.currentProfile?.id??-1);
@@ -1039,7 +1042,12 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){RejectAction(peer,request,"ITEM_NOT_FOUND",0);return;}
         if(!remotePlayerPositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
-        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,item.transform.position.x,item.transform.position.y,item.transform.position.z,InteractDistance)){RejectAction(peer,request,"TOO_FAR",0);return;}
+        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,item.transform.position.x,item.transform.position.y,item.transform.position.z,InteractDistance)){
+            // FIX-010 诊断：记录具体距离与双方坐标，定位客户端物品开关被拒的偏差来源。
+            var ip=item.transform.position;var dx=pose.x-ip.x;var dy=pose.y-ip.y;var dz=pose.z-ip.z;
+            log?.LogWarning($"物品开关被拒 TOO_FAR：目标 {id}，玩家镜像=({pose.x:F1},{pose.y:F1},{pose.z:F1})，物品=({ip.x:F1},{ip.y:F1},{ip.z:F1})，距离 {Mathf.Sqrt(dx*dx+dy*dy+dz*dz):F1}m，阈值 {InteractDistance:F0}m。");
+            RejectAction(peer,request,"TOO_FAR",0);return;
+        }
         if(request.ExpectedRevision!=0&&replication.TryGetState(id,out var state)&&!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendEntityState(peer,item);return;}
         if(item.destroyed||!item.gameObject.activeSelf){RejectAction(peer,request,"ITEM_UNAVAILABLE",0);return;}
         item.activate();
@@ -1616,7 +1624,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
                 }
                 else normalBudget--;
             }
-            if(queue.Count==0){outgoing.Remove(peer);log?.LogInfo($"已完成向玩家 {peer} 发送排队数据。");}
+            if(queue.Count==0){outgoing.Remove(peer);}
         }
     }
     private void SendLocalPose(){if(!DarkwoodPlayerAdapter.TryCapture(out var p)||clientSession==null)return;var player=Player.Instance;var maxHealth=player!=null?player.maxHealth:100f;var flags=p.Flags;if(DarkwoodDownedPatch.LocalDowned)flags|=PlayerPoseFlags.Downed;clientSession.Send(ProtocolMessageType.PlayerPose,ReplicationProtocolCodec.Encode(new PlayerPoseMessage(clientSession.PeerId,++poseSequence,p.Scene,p.Position.x,p.Position.y,p.Position.z,p.Rotation.x,p.Rotation.y,p.Rotation.z,p.Rotation.w,maxHealth,flags,p.TorsoClip,p.TorsoFrame,p.LegsClip,p.LegsFrame)));}
