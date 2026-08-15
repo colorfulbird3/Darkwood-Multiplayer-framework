@@ -17,10 +17,6 @@ Darkwood（Unity Mono 生存恐怖游戏）的多人联机插件框架。通过 
 
 发布安装包（ZIP）见 GitHub Releases。安装说明随安装包提供。
 
-## 参与贡献（PR）
-
-欢迎通过 Pull Request 贡献。流程与入门任务清单见 **[CONTRIBUTING.md](CONTRIBUTING.md)**：fork → 修改 → 构建自测 → 发 PR。贡献者可在 GitHub 上获得公开的贡献记录。
-
 ## 构建与自测
 
 前置条件：
@@ -40,7 +36,6 @@ dotnet run --project '.\src\DarkwoodMultiplayerFramework.SelfTests\DarkwoodMulti
 
 - `ARCHITECTURE-ROADMAP.zh-CN.md`：架构路线图。
 - `AGENTS.md`：开发工作规则。
-- `CONTRIBUTING.md`：贡献流程与任务清单。
 - `RELEASE-NOTES-0.8.7-alpha.23.md`：当前版本发布说明。
 
 ## 许可证
