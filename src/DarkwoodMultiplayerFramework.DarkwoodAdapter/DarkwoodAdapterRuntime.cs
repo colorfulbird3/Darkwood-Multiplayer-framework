@@ -490,6 +490,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             }
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose){var pose=ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload);if(!readyPeers.Contains(peer)||pose.Scene!=CurrentScene)return;peerMaxHealths[peer]=pose.MaxHealth;pose=new PlayerPoseMessage(peer,pose.Sequence,CurrentScene,pose.X,pose.Y,pose.Z,pose.Qx,pose.Qy,pose.Qz,pose.Qw,pose.MaxHealth,pose.Flags,pose.TorsoClip,pose.TorsoFrame,pose.LegsClip,pose.LegsFrame);remotePlayerPositions[peer]=new Vector3(pose.X,pose.Y,pose.Z);remotePlayers.Apply(pose,0);var payload=ReplicationProtocolCodec.Encode(pose);foreach(var readyPeer in readyPeers.ToArray())if(readyPeer!=peer)Queue(readyPeer,ProtocolMessageType.PlayerPose,payload);}
             else if(envelope.MessageType==ProtocolMessageType.ActionRequest)HandleActionRequest(peer,ReplicationProtocolCodec.DecodeActionRequest(envelope.Payload));
+            else if(envelope.MessageType==ProtocolMessageType.InventoryState){var inventory=ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);if(!replication.Apply(inventory)){missingEntities.Add(new EntityId(inventory.Value,inventory.Persistent));log?.LogWarning($"忽略缺失实体的容器状态：ID={inventory.Value:X16}，名称={inventory.Name}（主机运行时生成物，等待 Spawn 生命周期补发）。");}else{foreach(var readyPeer in readyPeers.ToArray())if(readyPeer!=peer)Queue(readyPeer,ProtocolMessageType.InventoryState,envelope.Payload);log?.LogInfo($"主机已应用客户端容器状态并转发：ID={inventory.Value:X16}，玩家 {peer}，版本 {inventory.Revision}，槽位 {inventory.Slots.Length}。");}}
             else if(envelope.MessageType==ProtocolMessageType.RescueRequest){var rescue=ReplicationProtocolCodec.DecodeRescueRequest(envelope.Payload);if(rescue.PlayerId!=peer)throw new InvalidDataException("Rescue request player id mismatch.");HandleRescueIntent(peer,rescue.Cancel);}
         }
         catch(Exception error){log?.LogError($"Host protocol handler failed for peer {peer}: {error}");Queue(peer,ProtocolMessageType.Error,ReplicationProtocolCodec.Encode(new ProtocolErrorMessage("HOST_HANDLER_FAILED",error.Message)));}
@@ -728,49 +729,6 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         return true;
     }
 
-    public bool TryRequestContainerTake(InvSlot slot, bool takeAll)
-    {
-        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||slot.inventory==null)return false;
-        if(InvItemClass.isNull(slot.invItem))return true;
-        if(!replication.TryGetId(slot.inventory,out var id)||!replication.TryGetInventoryState(id,out var state))
-        {
-            log?.LogWarning("Container take was not sent because the inventory has no registered EntityId.");
-            return true;
-        }
-        var slotIndex=slot.inventory.slots.IndexOf(slot);
-        if(slotIndex<0)return true;
-        var payload=ReplicationProtocolCodec.Encode(new ContainerTakePayload(slotIndex,takeAll?-1:1));
-        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerTake,id.Value,id.IsPersistent,state.Revision,payload);
-        pendingActions[request.RequestId]=request;
-        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"Container take request {request.RequestId} sent for {id}, slot {slotIndex}, amount {(takeAll?"all":"1")}, revision {state.Revision}.");
-        return true;
-    }
-
-    public bool TryRequestContainerPut(InvSlot sourceSlot, Inventory destination, bool putAll) =>
-        TryRequestContainerPut(sourceSlot, destination, -1, putAll);
-
-    public bool TryRequestContainerPut(InvSlot sourceSlot, Inventory destination, int destinationSlotIndex, bool putAll)
-    {
-        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||sourceSlot?.inventory==null||destination==null)return false;
-        if(sourceSlot.inventory.invType!=Inventory.InvType.playerInv&&sourceSlot.inventory.invType!=Inventory.InvType.hotbar)return true;
-        if(!replication.TryGetId(destination,out var id)||!replication.TryGetInventoryState(id,out var state))
-        {
-            log?.LogWarning("物品未放入：目标容器没有已注册的 EntityId。");
-            return true;
-        }
-        var hotbar=sourceSlot.inventory.invType==Inventory.InvType.hotbar;
-        var slotIndex=sourceSlot.inventory.slots.IndexOf(sourceSlot);
-        if(slotIndex<0)return true;
-        foreach(var pending in pendingActions.Values)if(pending.Kind==ActionKindWire.ContainerPut){var existing=ReplicationProtocolCodec.DecodeContainerPut(pending.Payload);if(existing.Hotbar==hotbar&&existing.SlotIndex==slotIndex){log?.LogInfo($"该玩家槽位已有等待主机确认的放入请求：{(hotbar?"快捷栏":"背包")} {slotIndex}。");return true;}}
-        var payload=ReplicationProtocolCodec.Encode(new ContainerPutPayload(hotbar,slotIndex,destinationSlotIndex,putAll?-1:1));
-        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerPut,id.Value,id.IsPersistent,state.Revision,payload);
-        pendingActions[request.RequestId]=request;
-        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"已发送容器放入请求 {request.RequestId}：容器 {id}，目标槽位 {destinationSlotIndex}，{(hotbar?"快捷栏":"背包")}槽位 {slotIndex}，数量 {(putAll?"全部":"1")}，容器版本 {state.Revision}。");
-        return true;
-    }
-
     public bool TryRequestMeleeAttack(Player player,bool special)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||player==null)return false;
@@ -848,6 +806,21 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         catch(Exception error){log?.LogWarning($"Failed to publish host container mutation for {id}: {error.Message}");}
     }
 
+    /// <summary>FIX-011 信任模式：客户端容器本地执行后的状态上报（不经主机审批）。</summary>
+    public void ReportSharedContainerChanged(Inventory inventory)
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||inventory==null||replication.ApplyingRemote)return;
+        if(inventory.invType!=Inventory.InvType.itemInv&&inventory.invType!=Inventory.InvType.deathDrop)return;
+        if(!replication.TryGetId(inventory,out var id))return;
+        try
+        {
+            var state=replication.CaptureAuthoritativeInventory(id);
+            clientSession.Send(ProtocolMessageType.InventoryState,ReplicationProtocolCodec.Encode(state));
+            log?.LogInfo($"客户端已上报共享容器状态：ID={id.Value:X16}，版本 {state.Revision}，槽位 {state.Slots.Length}。");
+        }
+        catch(Exception error){log?.LogWarning($"Failed to report client container mutation for {id}: {error.Message}");}
+    }
+
     private void HandleActionRequest(int peer,ActionRequestMessage request)
     {
         if(request.RequestId==Guid.Empty)return;
@@ -865,8 +838,6 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         switch(request.Kind)
         {
             case ActionKindWire.Pickup: HandlePickupRequest(peer,request);return;
-            case ActionKindWire.ContainerTake: HandleContainerTakeRequest(peer,request);return;
-            case ActionKindWire.ContainerPut: HandleContainerPutRequest(peer,request);return;
             case ActionKindWire.Attack: HandleAttackRequest(peer,request);return;
             case ActionKindWire.DoorInteract: HandleDoorInteractRequest(peer,request);return;
             case ActionKindWire.WindowInteract: HandleWindowInteractRequest(peer,request);return;
@@ -900,68 +871,6 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
         var delta=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,Array.Empty<EntityStateWire>(),new[]{despawn}));foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.EntityDelta,delta);
         log?.LogInfo($"Pickup accepted {request.RequestId}: peer {peer}, {pickup.ItemType} x{pickup.Amount}, target {id}, revision {despawn.Revision}.");
-    }
-
-    private void HandleContainerTakeRequest(int peer,ActionRequestMessage request)
-    {
-        var id=new EntityId(request.TargetValue,request.TargetPersistent);
-        if(!replication.TryGetComponent(id,out var component)||!(component is Inventory inventory)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
-        if(inventory.invType!=Inventory.InvType.itemInv&&inventory.invType!=Inventory.InvType.deathDrop){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
-        if(!replication.TryGetInventoryState(id,out var state)){RejectAction(peer,request,"CONTAINER_STATE_MISSING",0);return;}
-        var take=ReplicationProtocolCodec.DecodeContainerTake(request.Payload);
-        if(take.SlotIndex<0||take.SlotIndex>=inventory.slots.Count){RejectAction(peer,request,"SLOT_NOT_FOUND",state.Revision);SendInventory(peer,state);return;}
-        var sourceSlot=inventory.slots[take.SlotIndex];
-        if(sourceSlot==null||InvItemClass.isNull(sourceSlot.invItem)){RejectAction(peer,request,"ITEM_EMPTY",state.Revision);SendInventory(peer,state);return;}
-        if(!remoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
-        var source=sourceSlot.invItem;
-        var amount=take.Amount<0?source.amount:Math.Min(Math.Max(1,take.Amount),source.amount);
-        var award=new InvItemClass(source);award.amount=amount;
-        if(!shadow.CanAdd(award)){RejectAction(peer,request,"INVENTORY_FULL",state.Revision);return;}
-        shadow.Add(award);
-        source.removeAmount(amount);
-        inventory.refreshItems();
-        var authoritative=replication.CaptureAuthoritativeInventory(id);
-        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,authoritative.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
-        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(authoritative.Revision),string.Empty)));acceptedActions++;
-        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
-        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
-        BroadcastInventory(authoritative);
-        log?.LogInfo($"主机已批准容器取出 {request.RequestId}：玩家 {peer}，{award.type} x{award.amount}，容器 {id}，槽位 {take.SlotIndex}，版本 {authoritative.Revision}。");
-    }
-
-    private void HandleContainerPutRequest(int peer,ActionRequestMessage request)
-    {
-        var id=new EntityId(request.TargetValue,request.TargetPersistent);
-        if(!replication.TryGetComponent(id,out var component)||!(component is Inventory inventory)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
-        if(inventory.invType!=Inventory.InvType.itemInv){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
-        if(!replication.TryGetInventoryState(id,out var state)){RejectAction(peer,request,"CONTAINER_STATE_MISSING",0);return;}
-        if(!remoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
-        var put=ReplicationProtocolCodec.DecodeContainerPut(request.Payload);
-        if(!shadow.TryPeek(put.Hotbar,put.SlotIndex,put.Amount,out var item)){RejectAction(peer,request,"PLAYER_SLOT_EMPTY",state.Revision);SendInventory(peer,state);return;}
-        var swapped=false;
-        if(put.DestinationSlotIndex>=0&&put.DestinationSlotIndex<inventory.slots.Count)
-        {
-            var destination=inventory.slots[put.DestinationSlotIndex];var existing=destination?.invItem;
-            if(destination!=null&&existing!=null&&!InvItemClass.isNull(existing)&&existing.type!=item.Type)
-            {
-                if(!shadow.CanSwap(put.Hotbar,put.SlotIndex,item)||existing.baseClass==null){RejectAction(peer,request,"SWAP_SOURCE_CHANGED",state.Revision);return;}
-                var replacement=new DarkwoodPlayerInventoryShadow.Item(existing.type,existing.amount,existing.durability,(int)existing.modifierQuality,existing.isRecipe,Math.Max(1,existing.baseClass.maxAmount),existing.baseClass.stackable);
-                destination.removeItem();destination.createItem(item.Type,item.Amount,item.Durability,(InvItem.ModifierQuality)item.Quality,item.Recipe);shadow.Swap(put.Hotbar,put.SlotIndex,replacement);swapped=true;
-            }
-        }
-        if(!swapped)
-        {
-            if(!TryAddToContainer(inventory,item,put.DestinationSlotIndex)){RejectAction(peer,request,put.DestinationSlotIndex>=0?"DESTINATION_OCCUPIED":"CONTAINER_FULL",state.Revision);SendInventory(peer,state);return;}
-            if(!shadow.Remove(put.Hotbar,put.SlotIndex,item.Amount))throw new InvalidOperationException("Host inventory shadow changed during container transaction.");
-        }
-        inventory.refreshItems();
-        var authoritative=replication.CaptureAuthoritativeInventory(id);
-        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,authoritative.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
-        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(authoritative.Revision),string.Empty)));acceptedActions++;
-        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
-        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
-        BroadcastInventory(authoritative);
-        log?.LogInfo($"主机已批准容器{(swapped?"交换":"放入")} {request.RequestId}：玩家 {peer}，{item.Type} x{item.Amount}，容器 {id}，目标槽位 {put.DestinationSlotIndex}，来源 {(put.Hotbar?"快捷栏":"背包")}槽位 {put.SlotIndex}，版本 {authoritative.Revision}。");
     }
 
     private void HandleAttackRequest(int peer,ActionRequestMessage request)
