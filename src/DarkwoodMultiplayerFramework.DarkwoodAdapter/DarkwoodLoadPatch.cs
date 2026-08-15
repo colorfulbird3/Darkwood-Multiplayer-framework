@@ -70,6 +70,7 @@ public static class DarkwoodLoadFinishedPatch
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || !runtime.ClientSaveLoadPending) return;
+        DarkwoodAdapterRuntime.LogMessage("客户端 SaveManager.Load 入口已触发（FIX-006 挂载完成回调）。");
         DarkwoodAdapterRuntime.AttachLoadFinishedCallback(__instance);
     }
 }

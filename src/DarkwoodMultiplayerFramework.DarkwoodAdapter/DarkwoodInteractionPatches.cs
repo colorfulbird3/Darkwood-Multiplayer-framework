@@ -37,71 +37,65 @@ internal static class DarkwoodMeleeAttackPatch
     }
 }
 
-/// <summary>Player-initiated door toggles become authoritative requests.</summary>
+/// <summary>Player-initiated door toggles run locally (trust model) and notify the host.</summary>
 [HarmonyPatch]
 internal static class DarkwoodDoorTogglePatch
 {
     // Verified signature: public void Door.openClose(Transform openerTransform).
     private static MethodBase TargetMethod() => AccessTools.Method(typeof(Door), "openClose", new[] { typeof(Transform) });
 
-    private static bool Prefix(Door __instance, Transform openerTransform)
+    // FIX-011：联机信任模型（用户要求，类 MC）——客户端操作本地直接执行，
+    // 不再等待主机批准；请求仅作为主机侧状态同步与广播的凭据。
+    private static void Postfix(Door __instance, Transform openerTransform)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready)
-            return true;
-        // Only intercept the local player's interaction; enemy/npc door pushes keep the vanilla path.
+            return;
         if (openerTransform == null || openerTransform.GetComponent<Player>() != Player.Instance)
-            return true;
-
+            return;
         runtime.TryRequestDoorToggle(__instance);
-        return false;
     }
 }
 
-/// <summary>Player-initiated window barricades become authoritative requests.</summary>
+/// <summary>Player-initiated window barricades run locally (trust model) and notify the host.</summary>
 [HarmonyPatch]
 internal static class DarkwoodWindowBarricadePatch
 {
     // Verified signature: public void Window.barricade(int destHealth = 0, bool byPlayer = false).
     private static MethodBase TargetMethod() => AccessTools.Method(typeof(Window), "barricade", new[] { typeof(int), typeof(bool) });
 
-    private static bool Prefix(Window __instance, int destHealth, bool byPlayer)
+    private static void Postfix(Window __instance, int destHealth, bool byPlayer)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready)
-            return true;
+            return;
         // The vanilla flow calls barricade with byPlayer=false from ConstructionMenu;
         // the selectedObject check isolates the player-initiated call.
         if (!byPlayer && (Player.Instance == null || Player.Instance.selectedObject != __instance.transform))
-            return true;
-
+            return;
         runtime.TryRequestWindowBarricade(__instance, destHealth);
-        return false;
     }
 }
 
-/// <summary>Player-initiated item toggles (lamps, machines) become authoritative requests.</summary>
+/// <summary>Player-initiated item toggles (lamps, machines, containers) run locally and notify the host.</summary>
 [HarmonyPatch]
 internal static class DarkwoodItemActivatePatch
 {
     // Verified signature: public bool Item.activate().
     private static MethodBase TargetMethod() => AccessTools.Method(typeof(Item), "activate", Type.EmptyTypes);
 
-    private static bool Prefix(Item __instance, ref bool __result)
+    // FIX-011：记录是否为本地玩家的交互；activate() 原方法正常执行（本地立即生效），
+    // Postfix 把执行后的 isOn 状态报告给主机（主机应用状态并广播，不弹容器 UI）。
+    private static void Prefix(Item __instance, ref bool __state)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready)
-            return true;
-        if (Player.Instance == null || Player.Instance.selectedObject != __instance.transform)
-            return true;
+        __state = runtime != null && runtime.IsClient && runtime.State == ConnectionState.Ready
+                  && Player.Instance != null && Player.Instance.selectedObject == __instance.transform;
+    }
 
-        if (runtime.TryRequestItemActivate(__instance))
-        {
-            // Report success to the vanilla caller so its prompt flow completes; the
-            // authoritative state arrives with the ActionResult/delta.
-            __result = true;
-            return false;
-        }
-        return true;
+    private static void Postfix(Item __instance, bool __state)
+    {
+        if (!__state) return;
+        DarkwoodAdapterRuntime.Instance?.TryRequestItemActivate(__instance);
     }
 }

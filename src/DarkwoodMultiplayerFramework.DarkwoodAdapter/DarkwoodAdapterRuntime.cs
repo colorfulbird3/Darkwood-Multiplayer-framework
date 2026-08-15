@@ -165,10 +165,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     /// 对这些 ID 的后续库存/状态消息静默忽略，等待 0.8.8 的 Spawn 生命周期补发。</summary>
     private readonly HashSet<EntityId> missingEntities = new HashSet<EntityId>();
     private const float AttackCooldownSeconds = 0.35f;
-    private const float AttackPoseTolerance = 2f;
     private const float MeleeReach = 1.6f;
     private const float MeleeConeDot = 0.3f;
-    private const float InteractDistance = 6f;
 
     private sealed class OutgoingPacket
     {
@@ -554,7 +552,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
         // 正确路径：保持 loadingGame=true 直接加载章节场景，WorldGenerator.Start
         // 会走 SaveManager.Load() 恢复主机存档世界，完成后回调 onFinishedLoading。
-        global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;ClientSaveLoadPending=true;UnityEngine.SceneManagement.SceneManager.LoadScene(profile.chapter>=2?"chapter2":"chapter1");global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
+        global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;ClientSaveLoadPending=true;LogMessage($"正在切换到章节场景 {(profile.chapter>=2?"chapter2":"chapter1")} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(profile.chapter>=2?"chapter2":"chapter1");global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
     }
 
     private void OnDownloadedSaveFinished()
@@ -834,10 +832,11 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(!replication.TryGetId(item,out var id)){log?.LogWarning("Item activate was not sent because the item has no registered EntityId.");return false;}
         ulong expectedRevision=0;
         if(replication.TryGetState(id,out var state))expectedRevision=state.Revision;
-        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ItemActivate,id.Value,id.IsPersistent,expectedRevision,Array.Empty<byte>());
+        // FIX-011：报告本地执行后的 isOn 状态，主机直接应用（信任模型），不调用 activate()。
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ItemActivate,id.Value,id.IsPersistent,expectedRevision,ReplicationProtocolCodec.Encode(new InteractPayload(item.isOn?1:0)));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"Item activate request {request.RequestId} sent for {id}, revision {expectedRevision}.");
+        log?.LogInfo($"Item activate request {request.RequestId} sent for {id}, isOn {(item.isOn?1:0)}, revision {expectedRevision}.");
         return true;
     }
 
@@ -881,10 +880,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){RejectAction(peer,request,"ENTITY_NOT_FOUND",0);return;}
         if(!replication.TryGetState(id,out var state)){RejectAction(peer,request,"ENTITY_STATE_MISSING",0);return;}
-        if(!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);return;}
         if(!item.gameObject.activeSelf||item.destroyed||!item.isDroppedItem){RejectAction(peer,request,"NOT_PICKABLE",state.Revision);return;}
-        if(!remotePlayerPositions.TryGetValue(peer,out var position)){RejectAction(peer,request,"PLAYER_POSE_MISSING",state.Revision);return;}
-        if(!ActionValidation.WithinDistance(position.x,position.y,position.z,item.transform.position.x,item.transform.position.y,item.transform.position.z,4.5f)){RejectAction(peer,request,"TOO_FAR",state.Revision);return;}
         var droppedInventory=DarkwoodDroppedItemAccessor.GetInventory(item);
         if(droppedInventory==null||droppedInventory.slots==null||droppedInventory.slots.Count==0||InvItemClass.isNull(droppedInventory.slots[0].invItem)){RejectAction(peer,request,"ITEM_EMPTY",state.Revision);return;}
         if(!remoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
@@ -912,9 +908,6 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(!replication.TryGetComponent(id,out var component)||!(component is Inventory inventory)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
         if(inventory.invType!=Inventory.InvType.itemInv&&inventory.invType!=Inventory.InvType.deathDrop){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
         if(!replication.TryGetInventoryState(id,out var state)){RejectAction(peer,request,"CONTAINER_STATE_MISSING",0);return;}
-        if(!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendInventory(peer,state);return;}
-        if(!remotePlayerPositions.TryGetValue(peer,out var position)){RejectAction(peer,request,"PLAYER_POSE_MISSING",state.Revision);return;}
-        if(!ActionValidation.WithinDistance(position.x,position.y,position.z,inventory.transform.position.x,inventory.transform.position.y,inventory.transform.position.z,8f)){RejectAction(peer,request,"TOO_FAR",state.Revision);return;}
         var take=ReplicationProtocolCodec.DecodeContainerTake(request.Payload);
         if(take.SlotIndex<0||take.SlotIndex>=inventory.slots.Count){RejectAction(peer,request,"SLOT_NOT_FOUND",state.Revision);SendInventory(peer,state);return;}
         var sourceSlot=inventory.slots[take.SlotIndex];
@@ -942,9 +935,6 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(!replication.TryGetComponent(id,out var component)||!(component is Inventory inventory)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
         if(inventory.invType!=Inventory.InvType.itemInv){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
         if(!replication.TryGetInventoryState(id,out var state)){RejectAction(peer,request,"CONTAINER_STATE_MISSING",0);return;}
-        if(!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendInventory(peer,state);return;}
-        if(!remotePlayerPositions.TryGetValue(peer,out var position)){RejectAction(peer,request,"PLAYER_POSE_MISSING",state.Revision);return;}
-        if(!ActionValidation.WithinDistance(position.x,position.y,position.z,inventory.transform.position.x,inventory.transform.position.y,inventory.transform.position.z,8f)){RejectAction(peer,request,"TOO_FAR",state.Revision);return;}
         if(!remoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
         var put=ReplicationProtocolCodec.DecodeContainerPut(request.Payload);
         if(!shadow.TryPeek(put.Hotbar,put.SlotIndex,put.Amount,out var item)){RejectAction(peer,request,"PLAYER_SLOT_EMPTY",state.Revision);SendInventory(peer,state);return;}
@@ -982,8 +972,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(!remotePlayerPositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
         if(nextAttackAllowed.TryGetValue(peer,out var allowedAt)&&Time.unscaledTime<allowedAt){RejectAction(peer,request,"RATE_LIMITED",0);return;}
         nextAttackAllowed[peer]=Time.unscaledTime+AttackCooldownSeconds;
-        // The payload position is client-claimed; the host only accepts it near the tracked pose.
-        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,attack.PosX,pose.y,attack.PosZ,AttackPoseTolerance)){RejectAction(peer,request,"POSE_MISMATCH",0);return;}
+        // FIX-011：信任模型——不再校验攻击位置与追踪姿势的距离；目标仍按客户端报告的方向解析。
         if(!remoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
         if(!shadow.TryPeek(attack.FromHotbar,attack.SlotIndex,-1,out var weapon)){RejectAction(peer,request,"PLAYER_SLOT_EMPTY",0);return;}
         // Damage is derived from the HOST's game data for the shadow weapon type; the client never sends damage values.
@@ -1016,9 +1005,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Door door)){RejectAction(peer,request,"DOOR_NOT_FOUND",0);return;}
         if(!remotePlayerPositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
-        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,door.transform.position.x,door.transform.position.y,door.transform.position.z,InteractDistance)){RejectAction(peer,request,"TOO_FAR",0);return;}
-        if(request.ExpectedRevision!=0&&replication.TryGetState(id,out var state)&&!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendEntityState(peer,door);return;}
-        if(door.barricaded){RejectAction(peer,request,"DOOR_BARRICADED",0);return;}
+        // FIX-011：信任模型——距离/版本/封板判断全部移除，客户端本地已执行，主机直接执行并广播。
         door.openClose(GetAttackAnchor(peer,pose).transform);
         AcceptInteract(peer,request,id,door,0);
         log?.LogInfo($"主机已批准开关门 {request.RequestId}：玩家 {peer}，门 {id}。");
@@ -1028,31 +1015,23 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     {
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Window window)){RejectAction(peer,request,"WINDOW_NOT_FOUND",0);return;}
-        if(!remotePlayerPositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
-        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,window.transform.position.x,window.transform.position.y,window.transform.position.z,InteractDistance)){RejectAction(peer,request,"TOO_FAR",0);return;}
-        if(request.ExpectedRevision!=0&&replication.TryGetState(id,out var state)&&!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendEntityState(peer,window);return;}
+        // FIX-011：信任模型——距离/版本判断移除，客户端本地已执行，主机直接应用并广播。
         var interact=ReplicationProtocolCodec.DecodeInteract(request.Payload);
         window.barricade(interact.ValueA,true);
         AcceptInteract(peer,request,id,window,0);
-        log?.LogInfo($"主机已批准封窗 {request.RequestId}：玩家 {peer}，窗 {id}，目标耐久 {interact.ValueA}。");
+        log?.LogInfo($"主机已应用封窗 {request.RequestId}：玩家 {peer}，窗 {id}，目标耐久 {interact.ValueA}。");
     }
 
     private void HandleItemActivateRequest(int peer,ActionRequestMessage request)
     {
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){RejectAction(peer,request,"ITEM_NOT_FOUND",0);return;}
-        if(!remotePlayerPositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
-        if(!ActionValidation.WithinDistance(pose.x,pose.y,pose.z,item.transform.position.x,item.transform.position.y,item.transform.position.z,InteractDistance)){
-            // FIX-010 诊断：记录具体距离与双方坐标，定位客户端物品开关被拒的偏差来源。
-            var ip=item.transform.position;var dx=pose.x-ip.x;var dy=pose.y-ip.y;var dz=pose.z-ip.z;
-            log?.LogWarning($"物品开关被拒 TOO_FAR：目标 {id}，玩家镜像=({pose.x:F1},{pose.y:F1},{pose.z:F1})，物品=({ip.x:F1},{ip.y:F1},{ip.z:F1})，距离 {Mathf.Sqrt(dx*dx+dy*dy+dz*dz):F1}m，阈值 {InteractDistance:F0}m。");
-            RejectAction(peer,request,"TOO_FAR",0);return;
-        }
-        if(request.ExpectedRevision!=0&&replication.TryGetState(id,out var state)&&!ActionValidation.RevisionMatches(state.Revision,request.ExpectedRevision)){RejectAction(peer,request,"STALE_REVISION",state.Revision);SendEntityState(peer,item);return;}
-        if(item.destroyed||!item.gameObject.activeSelf){RejectAction(peer,request,"ITEM_UNAVAILABLE",0);return;}
-        item.activate();
+        // FIX-011：信任模型——客户端本地已执行 activate() 并报告 isOn 结果状态；
+        // 主机直接应用该状态（不调用 activate()，避免在主机弹出容器 UI）并广播。
+        var interact=ReplicationProtocolCodec.DecodeInteract(request.Payload);
+        item.isOn = interact.ValueA != 0;
         AcceptInteract(peer,request,id,item,0);
-        log?.LogInfo($"主机已批准物品开关 {request.RequestId}：玩家 {peer}，物品 {id}。");
+        log?.LogInfo($"主机已应用物品开关 {request.RequestId}：玩家 {peer}，物品 {id}，isOn={item.isOn}。");
     }
 
     private void AcceptInteract(int peer,ActionRequestMessage request,EntityId id,Component target,ulong revision)
