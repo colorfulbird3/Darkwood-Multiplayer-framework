@@ -61,6 +61,12 @@ var tests = new (string Name, Action Run)[]
     ("guest profile message roundtrip", GuestProfileMessageRoundtrip),
     ("guest profile record roundtrip", GuestProfileRecordRoundtrip),
     ("guest profile record version", GuestProfileRecordVersion),
+    ("runtime entity spawn roundtrip", RuntimeEntitySpawnRoundtrip),
+    ("runtime entity despawn roundtrip", RuntimeEntityDespawnRoundtrip),
+    ("runtime entity spawn empty state", RuntimeEntitySpawnEmptyState),
+    ("runtime entity unknown kind", RuntimeEntityUnknownKind),
+    ("runtime entity despawn unknown reason", RuntimeEntityDespawnUnknownReason),
+    ("runtime entity zero id", RuntimeEntityZeroId),
     ("session full rejection", SessionFullRejection),
     ("session capacity", SessionCapacity),
     ("guest key loopback", GuestKeyLoopback),
@@ -344,6 +350,36 @@ static void GuestProfileRecordVersion()
 {
     var bytes=ReplicationProtocolCodec.Encode(new GuestProfileRecord("guest",1,1,0,0,0,Array.Empty<InventorySlotWire>(),Array.Empty<InventorySlotWire>(),0));
     bytes[0]=9;ExpectFailure(()=>ReplicationProtocolCodec.DecodeGuestProfileRecord(bytes));
+}
+static void RuntimeEntitySpawnRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(ReplicationProtocolCodec.Encode(new RuntimeEntitySpawnMessage(1001,RuntimeEntityKind.DroppedItem,"wood","chapter1",-11997.6f,16f,-5902.7f,0f,0f,0f,1f,new byte[]{1,2,3},42)));
+    Require(decoded.RuntimeEntityId==1001&&decoded.Kind==RuntimeEntityKind.DroppedItem&&decoded.PrototypeId=="wood"&&decoded.Scene=="chapter1"&&Math.Abs(decoded.X+11997.6f)<.01f&&Math.Abs(decoded.Y-16f)<.01f&&Math.Abs(decoded.Z+5902.7f)<.01f&&Math.Abs(decoded.Qw-1f)<.001f&&decoded.InitialState.Length==3&&decoded.InitialState[2]==3&&decoded.ServerTick==42);
+}
+static void RuntimeEntityDespawnRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(1001,43,RuntimeEntityDespawnReason.Collected)));
+    Require(decoded.RuntimeEntityId==1001&&decoded.ServerTick==43&&decoded.Reason==RuntimeEntityDespawnReason.Collected);
+}
+static void RuntimeEntitySpawnEmptyState()
+{
+    var decoded=ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(ReplicationProtocolCodec.Encode(new RuntimeEntitySpawnMessage(2,RuntimeEntityKind.Enemy,"banshee","chapter1",0,0,0,0,0,0,1,Array.Empty<byte>(),0)));
+    Require(decoded.RuntimeEntityId==2&&decoded.Kind==RuntimeEntityKind.Enemy&&decoded.InitialState.Length==0);
+}
+static void RuntimeEntityUnknownKind()
+{
+    var bytes=ReplicationProtocolCodec.Encode(new RuntimeEntitySpawnMessage(3,RuntimeEntityKind.Corpse,"x","chapter1",0,0,0,0,0,0,1,Array.Empty<byte>(),0));
+    bytes[8]=200;ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(bytes));
+}
+static void RuntimeEntityDespawnUnknownReason()
+{
+    var bytes=ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(4,0,RuntimeEntityDespawnReason.Died));
+    bytes[16]=200;ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(bytes));
+}
+static void RuntimeEntityZeroId()
+{
+    ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(ReplicationProtocolCodec.Encode(new RuntimeEntitySpawnMessage(0,RuntimeEntityKind.Corpse,"x","chapter1",0,0,0,0,0,0,1,Array.Empty<byte>(),0))));
+    ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(0,0,RuntimeEntityDespawnReason.Other))));
 }
 static void SessionFullRejection()
 {

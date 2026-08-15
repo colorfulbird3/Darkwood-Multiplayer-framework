@@ -271,6 +271,62 @@ public readonly struct AttackPayload
     public float PosX {get;} public float PosZ {get;}
 }
 
+/// <summary>0.8.8-alpha.1：运行时实体类别。扩展时递增框架版本（无向下兼容）。</summary>
+public enum RuntimeEntityKind : byte
+{
+    /// <summary>非法/未知，线路上不应出现。</summary>
+    Unknown = 0,
+    /// <summary>运行时生成的可拾取物品（0.8.8-alpha.3 首个验证目标）。</summary>
+    DroppedItem = 1,
+    /// <summary>运行时生成的敌人（0.8.8-alpha.4）。</summary>
+    Enemy = 2,
+    /// <summary>敌人死亡产生的尸体。</summary>
+    Corpse = 3,
+}
+
+/// <summary>0.8.8-alpha.1：运行时实体移除原因。</summary>
+public enum RuntimeEntityDespawnReason : byte
+{
+    Unknown = 0,
+    /// <summary>被拾取/收集（物品进背包）。</summary>
+    Collected = 1,
+    /// <summary>死亡（敌人）。</summary>
+    Died = 2,
+    /// <summary>被玩家破坏/摧毁。</summary>
+    Destroyed = 3,
+    /// <summary>其他（场景切换清理等）。</summary>
+    Other = 255,
+}
+
+/// <summary>
+/// 0.8.8-alpha.1：Runtime Entity 生成广播。RuntimeEntityId 只能由 Host 分配，
+/// 会话内单调递增、绝不复用（销毁的 ID 不再分配给新对象）。
+/// InitialState 预留给 alpha.3+ 的实体专属初始状态（当前可为空）。
+/// </summary>
+public readonly struct RuntimeEntitySpawnMessage
+{
+    public RuntimeEntitySpawnMessage(ulong runtimeEntityId,RuntimeEntityKind kind,string prototypeId,string scene,float x,float y,float z,float qx,float qy,float qz,float qw,byte[] initialState,long serverTick)
+    {RuntimeEntityId=runtimeEntityId;Kind=kind;PrototypeId=prototypeId;Scene=scene;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;InitialState=initialState??Array.Empty<byte>();ServerTick=serverTick;}
+    public ulong RuntimeEntityId {get;}
+    public RuntimeEntityKind Kind {get;}
+    public string PrototypeId {get;}
+    public string Scene {get;}
+    public float X {get;} public float Y {get;} public float Z {get;}
+    public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;}
+    public byte[] InitialState {get;}
+    public long ServerTick {get;}
+}
+
+/// <summary>0.8.8-alpha.1：Runtime Entity 移除广播。</summary>
+public readonly struct RuntimeEntityDespawnMessage
+{
+    public RuntimeEntityDespawnMessage(ulong runtimeEntityId,long serverTick,RuntimeEntityDespawnReason reason)
+    {RuntimeEntityId=runtimeEntityId;ServerTick=serverTick;Reason=reason;}
+    public ulong RuntimeEntityId {get;}
+    public long ServerTick {get;}
+    public RuntimeEntityDespawnReason Reason {get;}
+}
+
 /// <summary>Generic world-interaction payload. ValueA semantics depend on the action kind.</summary>
 public readonly struct InteractPayload
 {
@@ -290,7 +346,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.7-alpha.23";
+    public const string Framework = "0.8.8-alpha.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -350,6 +406,11 @@ public static class ReplicationProtocolCodec
     public static AttackPayload DecodeAttack(byte[] p)=>Read(p,r=>{var kind=r.ReadByte();if(kind!=1&&kind!=2)throw new InvalidDataException("Unknown melee attack kind.");var fromHotbar=r.ReadBoolean();var slot=r.ReadInt32();if(slot<0||slot>255)throw new InvalidDataException("Attack slot index exceeds limit.");return new AttackPayload(kind,fromHotbar,slot,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle());});
     public static byte[] Encode(InteractPayload m)=>Write(w=>w.Write(m.ValueA));
     public static InteractPayload DecodeInteract(byte[] p)=>Read(p,r=>new InteractPayload(r.ReadInt32()));
+    private const int RuntimeInitialStateMax = 64*1024;
+    public static byte[] Encode(RuntimeEntitySpawnMessage m)=>Write(w=>{w.Write(m.RuntimeEntityId);w.Write((byte)m.Kind);WriteString(w,m.PrototypeId);WriteString(w,m.Scene);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);WriteBytes(w,m.InitialState,RuntimeInitialStateMax);w.Write(m.ServerTick);});
+    public static RuntimeEntitySpawnMessage DecodeRuntimeEntitySpawn(byte[] p)=>Read(p,r=>{var id=r.ReadUInt64();if(id==0)throw new InvalidDataException("Runtime entity id must not be zero.");var kind=ReadRuntimeEntityKind(r);return new RuntimeEntitySpawnMessage(id,kind,ReadString(r),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),ReadBytes(r,RuntimeInitialStateMax),r.ReadInt64());});
+    public static byte[] Encode(RuntimeEntityDespawnMessage m)=>Write(w=>{w.Write(m.RuntimeEntityId);w.Write(m.ServerTick);w.Write((byte)m.Reason);});
+    public static RuntimeEntityDespawnMessage DecodeRuntimeEntityDespawn(byte[] p)=>Read(p,r=>{var id=r.ReadUInt64();if(id==0)throw new InvalidDataException("Runtime entity id must not be zero.");return new RuntimeEntityDespawnMessage(id,r.ReadInt64(),ReadRuntimeEntityDespawnReason(r));});
     private const int SnapshotMax = 256*1024;
     private const int ActionPayloadMax = 64*1024;
     private const int GuestProfileMax = 1024*1024;
@@ -367,5 +428,7 @@ public static class ReplicationProtocolCodec
     private static int ReadCount(BinaryReader r,int max){var n=r.ReadInt32();if(n<0||n>max)throw new InvalidDataException("Count exceeds limit.");return n;}
     private static byte[] ReadExact(BinaryReader r,int n){var b=r.ReadBytes(n);if(b.Length!=n)throw new EndOfStreamException();return b;}
     private static ActionKindWire ReadActionKind(BinaryReader r){var kind=(ActionKindWire)r.ReadByte();if(!Enum.IsDefined(typeof(ActionKindWire),kind))throw new InvalidDataException("Unknown action kind.");return kind;}
+    private static RuntimeEntityKind ReadRuntimeEntityKind(BinaryReader r){var kind=(RuntimeEntityKind)r.ReadByte();if(!Enum.IsDefined(typeof(RuntimeEntityKind),kind)||kind==RuntimeEntityKind.Unknown)throw new InvalidDataException("Unknown runtime entity kind.");return kind;}
+    private static RuntimeEntityDespawnReason ReadRuntimeEntityDespawnReason(BinaryReader r){var reason=(RuntimeEntityDespawnReason)r.ReadByte();if(!Enum.IsDefined(typeof(RuntimeEntityDespawnReason),reason)||reason==RuntimeEntityDespawnReason.Unknown)throw new InvalidDataException("Unknown runtime entity despawn reason.");return reason;}
     private static void RequireActionId(Guid id){if(id==Guid.Empty)throw new InvalidDataException("Action request id must not be empty.");}
 }

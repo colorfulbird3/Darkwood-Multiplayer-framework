@@ -1,12 +1,6 @@
-# ---- 公开仓库源码（src/ 必须被跟踪，请勿忽略）----
-
-# 私有/本地文件护栏：以下文件绝不能进入 Git 历史。
-.hermes/
-.hermes.md
-IDEA.md
-PROJECT-DOCUMENTATION*.md
-MIGRATION-NOTES*.md
-README-本地源码.md
+# Private local source and reverse-engineering references.
+# These directories must never be committed or uploaded.
+src/
 legacy-reference/
 legacy-reference-first-pass/
 .tools/
@@ -15,17 +9,7 @@ src-staging/
 artifacts-local/
 legacy-build.log
 
-# 旧版本 Release Notes（仅保留当前版本）
-RELEASE-NOTES-0.8.6-*.md
-RELEASE-NOTES-0.8.7-alpha.[0-9].md
-RELEASE-NOTES-0.8.7-alpha.1[0-9].md
-
-# 构建与 IDE
 .vs/
 *.user
 *.suo
-bin/
-obj/
-
-# 游戏运行日志
 BepInEx/LogOutput.log

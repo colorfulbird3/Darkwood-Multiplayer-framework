@@ -28,6 +28,8 @@ public enum ProtocolMessageType : ushort
     ActionResult = 51,
     ActionRejected = 52,
     Ready = 40,
+    RuntimeEntitySpawn = 60,
+    RuntimeEntityDespawn = 61,
     Error = 255
 }
 
