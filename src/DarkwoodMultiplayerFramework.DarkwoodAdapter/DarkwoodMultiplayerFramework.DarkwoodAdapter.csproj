@@ -13,8 +13,8 @@
     <ProjectReference Include="..\DarkwoodMultiplayerFramework.Actions\DarkwoodMultiplayerFramework.Actions.csproj" />
     <ProjectReference Include="..\DarkwoodMultiplayerFramework.Snapshots\DarkwoodMultiplayerFramework.Snapshots.csproj" />
     <Reference Include="Assembly-CSharp"><HintPath>..\..\..\Darkwood_Data\Managed\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="BepInEx"><HintPath>..\..\Payload\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="0Harmony"><HintPath>..\..\Payload\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>..\..\libs\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>..\..\libs\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine"><HintPath>..\..\..\Darkwood_Data\Managed\UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>..\..\..\Darkwood_Data\Managed\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputLegacyModule"><HintPath>..\..\..\Darkwood_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
