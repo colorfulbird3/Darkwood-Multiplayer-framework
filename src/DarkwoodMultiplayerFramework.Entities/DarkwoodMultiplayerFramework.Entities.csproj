@@ -1,2 +1,2 @@
-﻿<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>netstandard2.0</TargetFramework><Nullable>enable</Nullable><LangVersion>latest</LangVersion></PropertyGroup><ItemGroup><ProjectReference Include="..\DarkwoodMultiplayerFramework.Core\DarkwoodMultiplayerFramework.Core.csproj" /></ItemGroup></Project>
+﻿<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>netstandard2.0</TargetFramework><Nullable>enable</Nullable><LangVersion>latest</LangVersion></PropertyGroup><ItemGroup><ProjectReference Include="..\DarkwoodMultiplayerFramework.Core\DarkwoodMultiplayerFramework.Core.csproj" /><ProjectReference Include="..\DarkwoodMultiplayerFramework.Protocol\DarkwoodMultiplayerFramework.Protocol.csproj" /></ItemGroup></Project>
 

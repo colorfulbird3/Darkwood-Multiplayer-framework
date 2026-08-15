@@ -67,6 +67,12 @@ var tests = new (string Name, Action Run)[]
     ("runtime entity unknown kind", RuntimeEntityUnknownKind),
     ("runtime entity despawn unknown reason", RuntimeEntityDespawnUnknownReason),
     ("runtime entity zero id", RuntimeEntityZeroId),
+    ("runtime id monotonic", RuntimeIdMonotonic),
+    ("runtime id never reused", RuntimeIdNeverReused),
+    ("runtime duplicate spawn rejected", RuntimeDuplicateSpawnRejected),
+    ("runtime despawn unknown id", RuntimeDespawnUnknownId),
+    ("runtime lifecycle sequence", RuntimeLifecycleSequence),
+    ("runtime clear keeps counter", RuntimeClearKeepsCounter),
     ("session full rejection", SessionFullRejection),
     ("session capacity", SessionCapacity),
     ("guest key loopback", GuestKeyLoopback),
@@ -380,6 +386,40 @@ static void RuntimeEntityZeroId()
 {
     ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(ReplicationProtocolCodec.Encode(new RuntimeEntitySpawnMessage(0,RuntimeEntityKind.Corpse,"x","chapter1",0,0,0,0,0,0,1,Array.Empty<byte>(),0))));
     ExpectFailure(()=>ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(0,0,RuntimeEntityDespawnReason.Other))));
+}
+static void RuntimeIdMonotonic()
+{
+    var r=new RuntimeEntityRegistry();var a=r.Allocate();var b=r.Allocate();var c=r.Allocate();
+    Require(a==1&&b==2&&c==3&&r.NextId==4);
+}
+static void RuntimeIdNeverReused()
+{
+    var r=new RuntimeEntityRegistry();var id=r.Allocate();r.Register(new RuntimeEntityRecord(id,RuntimeEntityKind.DroppedItem,"wood","s",0));
+    Require(r.Remove(id)&&r.Count==0);var next=r.Allocate();Require(next==id+1);
+}
+static void RuntimeDuplicateSpawnRejected()
+{
+    var r=new RuntimeEntityRegistry();var id=r.Allocate();
+    Require(r.Register(new RuntimeEntityRecord(id,RuntimeEntityKind.Enemy,"e","s",1)));
+    Require(!r.Register(new RuntimeEntityRecord(id,RuntimeEntityKind.Enemy,"e","s",1))&&r.Count==1);
+}
+static void RuntimeDespawnUnknownId()
+{
+    var r=new RuntimeEntityRegistry();Require(!r.Remove(999));
+}
+static void RuntimeLifecycleSequence()
+{
+    var r=new RuntimeEntityRegistry();var id=r.Allocate();
+    Require(r.Register(new RuntimeEntityRecord(id,RuntimeEntityKind.Corpse,"c","chapter1",7)));
+    Require(r.TryGet(id,out var rec)&&rec.Kind==RuntimeEntityKind.Corpse&&rec.Scene=="chapter1"&&rec.ServerTick==7);
+    Require(r.Remove(id)&&!r.TryGet(id,out _)&&r.Count==0);
+}
+static void RuntimeClearKeepsCounter()
+{
+    var r=new RuntimeEntityRegistry();
+    r.Register(new RuntimeEntityRecord(r.Allocate(),RuntimeEntityKind.DroppedItem,"x","s",0));
+    r.Register(new RuntimeEntityRecord(r.Allocate(),RuntimeEntityKind.DroppedItem,"x","s",0));
+    r.ClearAlive();Require(r.Count==0&&r.Allocate()==3);
 }
 static void SessionFullRejection()
 {

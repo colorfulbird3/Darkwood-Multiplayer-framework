@@ -89,6 +89,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private ChunkTransferAssembler? incomingSnapshot;
     private WorldSnapshotManifest incomingSnapshotManifest;
     private long serverTick;
+    /// <summary>0.8.8-alpha.2：运行时实体注册表（与持久实体注册表分离；ID 会话内单调递增）。</summary>
+    private readonly RuntimeEntityRegistry runtimeRegistry = new RuntimeEntityRegistry();
     private float nextDelta;
     private float nextInventoryDelta;
     private float nextPose;
@@ -506,6 +508,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             else if(envelope.MessageType==ProtocolMessageType.WorldSnapshotChunk)ReceiveSnapshotChunk(ReplicationProtocolCodec.DecodeWorldSnapshotChunk(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.EntityDelta){var delta=ReplicationProtocolCodec.DecodeEntityDelta(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&delta.Scene==CurrentScene){replication.Apply(delta.Entities,false);replication.ApplyDespawns(delta.Despawns);}}
             else if(envelope.MessageType==ProtocolMessageType.InventoryState){var inventory=ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);if(!replication.Apply(inventory)){missingEntities.Add(new EntityId(inventory.Value,inventory.Persistent));log?.LogWarning($"忽略缺失实体的容器状态：ID={inventory.Value:X16}，名称={inventory.Name}（主机运行时生成物，等待 Spawn 生命周期补发）。");}}
+            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntitySpawn){var spawn=ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&spawn.Scene==CurrentScene){runtimeRegistry.Register(new RuntimeEntityRecord(spawn.RuntimeEntityId,spawn.Kind,spawn.PrototypeId,spawn.Scene,spawn.ServerTick));log?.LogInfo($"客户端已登记运行时实体：ID {spawn.RuntimeEntityId}，类型 {spawn.Kind}，原型 {spawn.PrototypeId}（0.8.8-alpha.3 起实例化游戏对象）。");}}
+            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntityDespawn){var despawn=ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready){if(runtimeRegistry.Remove(despawn.RuntimeEntityId))log?.LogInfo($"客户端已移除运行时实体：ID {despawn.RuntimeEntityId}，原因 {despawn.Reason}。");else log?.LogWarning($"客户端收到未知运行时实体移除：ID {despawn.RuntimeEntityId}（晚到/重复包，已忽略）。");}}
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose)remotePlayers.Apply(ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload),clientSession?.PeerId??-1);
             else if(envelope.MessageType==ProtocolMessageType.ActionResult)HandleActionResult(ReplicationProtocolCodec.DecodeActionResult(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.ActionRejected)HandleActionRejected(ReplicationProtocolCodec.DecodeActionRejected(envelope.Payload));
@@ -804,6 +808,29 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(!replication.TryGetId(inventory,out var id))return;
         try{BroadcastInventory(replication.CaptureAuthoritativeInventory(id));}
         catch(Exception error){log?.LogWarning($"Failed to publish host container mutation for {id}: {error.Message}");}
+    }
+
+    /// <summary>0.8.8-alpha.2：Host 广播运行时实体生成。分配 ID（单调递增）、登记并发送给所有就绪玩家。返回分配的 ID；非主机返回 0。</summary>
+    public ulong BroadcastRuntimeEntitySpawn(RuntimeEntityKind kind,string prototypeId,Vector3 position,Quaternion rotation,byte[]? initialState=null)
+    {
+        if(hostSession==null)return 0;
+        var id=runtimeRegistry.Allocate();
+        var message=new RuntimeEntitySpawnMessage(id,kind,prototypeId,CurrentScene,position.x,position.y,position.z,rotation.x,rotation.y,rotation.z,rotation.w,initialState??Array.Empty<byte>(),serverTick);
+        runtimeRegistry.Register(new RuntimeEntityRecord(id,kind,prototypeId,CurrentScene,serverTick));
+        var payload=ReplicationProtocolCodec.Encode(message);
+        foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.RuntimeEntitySpawn,payload);
+        log?.LogInfo($"主机已广播运行时实体生成：ID {id}，类型 {kind}，原型 {prototypeId}，tick {serverTick}。");
+        return id;
+    }
+
+    /// <summary>0.8.8-alpha.2：Host 广播运行时实体移除。未登记的 ID 直接返回 false（不广播）。</summary>
+    public bool BroadcastRuntimeEntityDespawn(ulong runtimeEntityId,RuntimeEntityDespawnReason reason)
+    {
+        if(hostSession==null||!runtimeRegistry.Remove(runtimeEntityId))return false;
+        var payload=ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(runtimeEntityId,serverTick,reason));
+        foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.RuntimeEntityDespawn,payload);
+        log?.LogInfo($"主机已广播运行时实体移除：ID {runtimeEntityId}，原因 {reason}，tick {serverTick}。");
+        return true;
     }
 
     /// <summary>FIX-011 信任模式：客户端容器本地执行后的状态上报（不经主机审批）。</summary>
