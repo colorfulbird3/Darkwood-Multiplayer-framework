@@ -1,90 +1,214 @@
-# Darkwood Multiplayer Framework 架构路线图
+# Darkwood Multiplayer Framework — 架构路线图
 
-本文档记录 0.8.x 及后续版本的架构目标与**真实进度**。当前发布版本：**0.8.7-alpha.19**（构建 0 警告 0 错误，SelfTests 58/58，真机矩阵 VERIFY-001 进行中；alpha.18 首轮实测暴露 FIX-006——完成回调挂错场景内单例实例，alpha.19 已修复）。
+> 最后更新：0.8.7-beta.1（2026-08-15）
 
-> 重要认知（2026-08-14 项目评审后更新）：项目当前主要矛盾不是缺功能，而是**实现速度超过验证速度**。
-> 0.8.7 已从"Runtime Entity"演变为"Playable-system expansion + Hot Join + 客户端存档加载稳定化"；
-> Runtime Entity 生命周期与 Scene Transition 是尚未偿还的底层欠账，已排入 0.8.8。
+## 当前状态
 
-## 0.8.x 版本规划
+| 项 | 值 |
+|---|---|
+| 当前发布版本 | **0.8.7-beta.1**（源码版本 0.8.7-alpha.23 封版，无功能改动） |
+| 真机验证 | **VERIFY-001 核心玩法矩阵通过**（详见 `docs/VERIFY-001.md`） |
+| 下一开发版本 | 0.8.8-alpha.1：Runtime Entity 协议 |
+| 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
 
-| 版本 | 主题 | 状态 |
+版本路线：
+
+```text
+0.8.7-alpha.23          ← 真机核心玩法验证通过
+        ↓
+0.8.7-beta.1            ← 文档/验证/版本收口（本版）
+        ↓
+0.8.7-beta.2            ← Container Revision 并发冲突保护
+        ↓
+0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换
+        ↓
+0.8.8-beta              ← 多场景真机验证
+        ↓
+0.8.9                   ← 重连 / 稳定性 / 诊断（几乎不加玩法）
+        ↓
+0.9.0-alpha             ← 恢复横向扩展玩法
+```
+
+---
+
+## 权威模型：Hybrid Authority / Trust Mode
+
+架构已从"全 Host Authoritative"演变为混合权威。共享容器、门窗、物品交互在 0.8.7-alpha.22/23 起改为**信任模式**：客户端本地直接执行、状态上报主机同步。不要再笼统称整个项目为"Host Authoritative"。
+
+| 领域 | 权威方 | 说明 |
 |---|---|---|
-| `0.8.6` | Action Core：Pickup 的 Request → Validate → Apply → Result 闭环 | ✅ 已完成 |
-| `0.8.7` | 玩法系统扩展（容器/战斗/门窗/物品 + 倒地营救）+ Hot Join + 客户端存档加载稳定化 | 🔧 代码完成（alpha.19），真机矩阵重测中 |
-| `0.8.8` | Runtime Entity：Host 分配运行时 ID，补齐 Spawn/Despawn 生命周期；Scene Transition | ⬜ 未开始 |
-| `0.8.9` | Stability：断线重连、重复包、超时诊断；怪物伤害从距离近似模型收敛为真实攻击事件 | ⬜ 未开始 |
-| `0.9.0` | 横向玩法扩展 | ⬜ 未开始 |
+| 世界 / 存档 | **HOST** | 主机打包存档、剥离导航图、分块传输 |
+| 敌人 AI / 血量 / 战斗结算 | **HOST** | 客户端不跑 AI；伤害由主机结算 |
+| 玩家生命 / 倒地 / 营救 | **HOST** | 主机维护全员血量与倒地状态机 |
+| 世界快照 | **HOST** | 权威快照 + 注册表摘要 |
+| 玩家姿势 | CLIENT 输入 → HOST 转发 | 15 Hz pose 广播 |
+| 共享容器 | **CLIENT 本地执行 → HOST 应用并转发** | InventoryState 上报，无审批 |
+| 门 / 窗 / 物品交互 | **CLIENT 本地执行（信任）→ HOST 重放广播** | 无距离/权限校验 |
 
-### 0.8.7 的真实内容
-
-0.8.7 实际已实现（截至 alpha.19）：
-
-- **Action 协议扩展**：Pickup、ContainerTake、ContainerPut、Attack、DoorInteract、WindowInteract、ItemActivate，统一走 `Client Intent → ActionRequest → Host Validate → Host Apply → ActionResult/Rejected`。
-- **Hot Join**：ClientHello → GuestKey → Host Guest Profile；访客独立背包/快捷栏/位置/加入天数/次数；Host 持久化访客档案；SESSION_FULL 限员。
-- **倒地与营救**：PlayerHealth / RescueRequest / RescueProgress / AllDowned；全员倒地才走原版死亡结局。
-- **客户端存档加载稳定化（FIX-002~006）**：强制真实 Load 分支；跳过 joinPaths；主机剥离 A* 导航图后传输（实测 -64%）+ 客户端跳过图反序列化；剥离带运行时保护（字段缺失/重复/结构异常回退完整存档）；完成回调挂到真正执行 Load 的场景内 SaveManager 实例（FIX-006，修复实机卡 92%）。
-- **注册表稳定化**：实体数连续 3 次不变才发送 Ready，避免世界流式生成期间注册表不完整。
-
-### 0.8.7 已知欠账（不阻塞 beta，但必须记录）
-
-- **Runtime Entity 生命周期未落地**：`AllocateRuntimeId()` 仅有 ID 分配，协议中没有 RuntimeEntitySpawn/Despawn；扫描器产出的对象仍全部走 Persistent ID。夜间新怪、动态掉落物、投掷武器等运行时对象尚未走完整生命周期链。
-- **怪物攻击访客是近似模型**：Host 按距离扫描（≤1.6m + 0.5s 冷却）扣影子血量，不是真实攻击命中事件；0.8.9 前应收敛。
-- **Scene Transition 未实现**：跨场景（梦境/地点切换）期间的 Action 暂停、Registry 重建与重新快照仍需设计。
-
-## 0.8.7-beta.1 发布门槛（真机矩阵）
-
-beta.1 的定义：**第一版"真实双端基本玩法验证完成"的 0.8.7**。不再产生 alpha.19 等横向迭代，冻结功能，按以下矩阵逐项真机验证：
+数据流（共享容器）：
 
 ```text
-第一关（加载链）：
-  Host 进游戏 → Client 加入 → 下载裁剪后存档 → 0→100% 加载
-  → onFinishedLoading → Registry 稳定 → Snapshot → READY → 双方互相可见
-
-第二关（玩法）：
-  Pickup / Container Take / Container Put → Door / Window
-  → Client 攻击怪物 → 怪物攻击 Client → Client 倒地 → 营救
-  → 断线重连 → 第二个 Client Hot Join
+Client A 本地操作 Container
+        ↓
+InventoryState（含版本）
+        ↓
+Host Apply（应用到自身世界）
+        ↓
+Host Relay
+        ↓
+其他 Client
 ```
 
-## 联机生命周期
+---
+
+## 0.8.7-beta.2：Container Revision（容器并发保护）
+
+信任模式带来并发风险：两个客户端同时操作同一容器，Host 直接 Apply 两份状态会复制物品（例：10 木板被 A 拿 3、B 拿 5，最终箱 5 + 背包 8 = 13）。**不回退到审批制**，只加轻量乐观锁：
+
+- 客户端上报 `ContainerState { ExpectedRevision = 10, NewRevision = 11 }`。
+- Host：`current == Expected → Accept`；否则 `Conflict → 回发最新状态`，客户端本地 UI 以最新状态刷新。
+- 仍保持"本地即时操作"体验，仅冲突时纠正。
+
+SelfTests：`container revision conflict`。
+
+---
+
+## 0.8.8：Runtime Entity 生命周期（主开发线）
+
+### 背景（真实已发生的问题）
+
+alpha.20 真机：Host 快照 755 个容器，Client 只能绑定 753 个——**2 个运行时生成对象**（乌鸦群、动物尸体）不在存档中，客户端仅靠加载 Host Save 无法生成。当前临时方案：缺失比例 ≤ max(10, 5%) 时记入 `missingEntities` 跳过并允许 READY（FIX-007）。**0.8.8 的第一刀就打这里**，把它们纳入网络世界。
+
+### 拆分（不一次写完）
+
+#### 0.8.8-alpha.1：Runtime Entity 协议
+
+新增消息（当前协议完全没有）：
+
+```csharp
+RuntimeEntitySpawn
+{
+    RuntimeEntityId   // 只能由 Host 分配
+    EntityKind
+    PrototypeId
+    Scene
+    Position
+    Rotation
+    InitialState
+    ServerTick
+}
+
+RuntimeEntityDespawn
+{
+    RuntimeEntityId
+    ServerTick
+    Reason
+}
+```
+
+#### 0.8.8-alpha.2：RuntimeEntityRegistry
+
+Runtime Entity 不再混进 Persistent Registry：
 
 ```text
-CONNECT → VERSION_CHECK → SAVE_TRANSFER → LOAD_SAVE
-→ ENTITY_REGISTRY → WORLD_SNAPSHOT → READY → LIVE_REPLICATION
+EntityRegistry
+├── PersistentRegistry
+└── RuntimeRegistry
 ```
 
-客户端在收到 `READY` 前不发送玩家实体状态，也不处理实时交互请求。断线重连或切换场景后，必须重新执行 `WORLD_SNAPSHOT` 和 `READY`。
-
-## 实体身份
-
-- `WorldEntityId`：存档中的箱子、门、发电机、工作台和固定物品。
-- `RuntimeEntityId`：敌人、投射物、临时掉落物等运行时实体，由主机分配。
-- 禁止使用 Unity `GetInstanceID()`、名称或 Instantiate 顺序作为网络身份。
-
-实体注册表必须在主机和客户端建立后比较 digest；不匹配时停止实时同步并记录明确原因。
-
-## 主机权威与 Action 层
+`AllocateRuntimeId()` 已存在，接入网络生命周期：
 
 ```text
-Client Request → Host Validate → Host Apply → StateVersion++ → Replicate Result
+Host 发现新 Runtime Entity
+        ↓
+AllocateRuntimeId()
+        ↓
+Register
+        ↓
+RuntimeEntitySpawn → Clients
 ```
 
-拾取、丢弃、攻击、开门、制作和使用物品都应走统一 Action 协议。客户端只发送意图，不直接提交最终世界状态。
+**ID 纪律：整个 Session 单调递增，绝不复用**（销毁的 #3 不再分配给新对象），否则晚到的 `Despawn #3` 会误杀新生 #3。
 
-## 通用状态版本
+#### 0.8.8-alpha.3：Runtime Dropped Item（最小闭环）
 
-容器现有的 `InventoryRevision` 应逐步抽象为通用 `StateVersion`，覆盖实体、门、敌人、发电机、容器和世界快照。客户端收到旧版本时直接丢弃，避免乱序消息回滚状态。
+第一版只做一种实体验证全链路：Host 动态生成物品 → `Runtime ID 1001` → Spawn → Client 出现；Host 拾取/删除 → `Despawn #1001` → Client 消失。
 
-## 玩家同步
+验收：`Spawn → Delta → Interaction → Despawn` 四步全过。
 
-玩家状态保持约 15 Hz：位置、方向、移动/奔跑、瞄准和攻击状态。主机校验速度、场景和可行走范围；客户端使用插值显示远端玩家，不把每帧 Transform 当作最终权威状态。
+#### 0.8.8-alpha.4：Runtime Enemy
 
-## 实现优先级（更新后）
+Host：实例化 + AI + 寻路 + 血量 + 攻击 + 死亡；Client：纯远端代理（冻结 AI，插值跟随）。
 
-1. **冻结功能开发**：完成 0.8.7-beta.1 真机矩阵，不横向增加玩法同步对象。
-2. Runtime Entity：协议增加 SpawnEntity / RuntimeEntitySpawn / Despawn 生命周期消息；扫描器区分 Persistent/Runtime 实体。
-3. Scene Transition：切场景期间暂停 Action/Delta，重建 Registry 并重新快照。
-4. Stability：断线重连、重复包、超时与诊断界面；怪物真实伤害事件（替代距离近似模型）。
-5. 将 `InventoryRevision` 提取为通用 `StateVersion`。
-6. 序列化、实体注册表、快照和断线重连测试持续扩充。
+- 生成：`RuntimeEntitySpawn` → Client 生成代理 → 15 Hz `EntityDelta` → 插值。
+- 死亡：`Despawn Enemy #1001`；有尸体/掉落时 `Spawn Corpse #1002`、`Spawn Item #1003/1004`。
+
+#### 0.8.8-alpha.5：Hot Join 的 Runtime Snapshot
+
+世界快照扩展：
+
+```text
+WorldSnapshot
+├── Persistent Entity State
+├── Container State
+├── Player State
+└── RuntimeEntityState[]   ← 新增
+```
+
+晚加入的客户端从快照恢复所有存活 Runtime Entity（#1001 Enemy、#1002 Corpse、#1003 Drop），否则 Runtime Entity 只支持"在线时看见"。
+
+#### 0.8.8-alpha.6：Scene Transition
+
+```text
+READY
+   ↓
+SceneChangeBegin（暂停 Action / EntityDelta / InventoryDelta / Combat）
+   ↓
+Host Load New Scene / Client Load New Scene
+   ↓
+Persistent Registry Build → Stabilize
+   ↓
+Runtime Snapshot → World Snapshot
+   ↓
+SceneReady → READY
+```
+
+**切场景期间绝不再发旧场景的 Delta**（stale packet 直接丢弃）。
+
+### 0.8.8 SelfTests 新增清单
+
+```
+runtime id allocation
+runtime spawn roundtrip
+duplicate runtime spawn
+runtime despawn roundtrip
+despawn unknown id
+spawn → delta → despawn
+late join runtime snapshot
+scene transition stale packet
+```
+
+---
+
+## 0.8.9：稳定性（几乎不加玩法）
+
+- Reconnect / Retry / Timeout / State recovery / Diagnostics / Long-run test
+- 重点用例：Action retry、Snapshot retry、Runtime Spawn/Despawn duplicate、Late packet、Scene stale packet、Disconnect during scene load / snapshot。
+
+---
+
+## 0.8.7 已知欠账（当前存在、暂不阻塞）
+
+1. **运行时生成物不同步**（乌鸦/动物尸体等）：FIX-007 容忍跳过，0.8.8 解决。
+2. **容器并发复制风险**：0.8.7-beta.2（Container Revision）解决。
+3. **拾取仍走主机审批**（Pickup Action）：信任模式改造未覆盖，观察后再决定是否本地化。
+4. **近战攻击仍走主机结算**（伤害由主机影子武器库推导）：0.8.8 Runtime Enemy 后统一调整。
+5. **场景切换未实现**：0.8.8-alpha.6。
+6. **热加入期间运行时对象缺失**：0.8.8-alpha.5。
+
+## 历史里程碑
+
+- alpha.20：首次完整双端连通（READY + 双方可见 + 事件同步）。
+- alpha.21：修存档损坏（FIX-008 扩容账本 token）。
+- alpha.22：信任模式第一步（FIX-011 删除距离/权限校验）。
+- alpha.23：容器交互客户端本地权威（FIX-012），核心玩法矩阵真机通过。
