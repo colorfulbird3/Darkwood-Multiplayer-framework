@@ -71,7 +71,10 @@ var tests = new (string Name, Action Run)[]
     ("save graph strip single field", SaveGraphStripSingle),
     ("save graph strip duplicate field", SaveGraphStripDuplicate),
     ("save graph strip missing field", SaveGraphStripMissing),
-    ("save graph strip escaped quotes", SaveGraphStripEscaped)
+    ("save graph strip escaped quotes", SaveGraphStripEscaped),
+    ("snapshot tolerance runtime spawns", SnapshotToleranceRuntimeSpawns),
+    ("snapshot tolerance registry disaster", SnapshotToleranceRegistryDisaster),
+    ("snapshot tolerance boundary", SnapshotToleranceBoundary)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -410,6 +413,23 @@ static void SaveGraphStripEscaped()
     var stripped=DarkwoodSaveStrip.TryStrip(json);
     Require(stripped!=null);
     Require(stripped=="{\"graph\":\"\"}");
+}
+static void SnapshotToleranceRuntimeSpawns()
+{
+    // FIX-007 实机数据：739 个容器中 2 个缺失（主机运行时生成的乌鸦/动物尸体）→ 容忍
+    Require(SnapshotTolerance.Tolerate(2,739));
+}
+static void SnapshotToleranceRegistryDisaster()
+{
+    // alpha.14 灾难数据：741 个容器中 738 个绑定失败（注册表不完整）→ 必须阻断
+    Require(!SnapshotTolerance.Tolerate(738,741));
+}
+static void SnapshotToleranceBoundary()
+{
+    // 阈值边界：总数 200 时 5% = 10，10 可容忍，11 阻断；小总数按固定 10 计
+    Require(SnapshotTolerance.Tolerate(10,200)&&!SnapshotTolerance.Tolerate(11,200));
+    Require(SnapshotTolerance.Tolerate(10,100)&&!SnapshotTolerance.Tolerate(11,100));
+    Require(SnapshotTolerance.Tolerate(0,0));
 }
 static void Require(bool value) { if(!value) throw new InvalidOperationException("assertion failed"); }
 static void ExpectFailure(Action action) { try { action(); } catch(Exception error) when(error is InvalidOperationException || error is InvalidDataException || error is EndOfStreamException) { return; } throw new InvalidOperationException("expected failure"); }
