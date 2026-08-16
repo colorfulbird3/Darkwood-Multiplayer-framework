@@ -205,7 +205,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
 
     public void StopNetwork()
     {
-        if (hostSession != null) foreach (var peer in readyPeers.ToArray()) Players.Players.PersistGuestProfile(peer);
+        if (hostSession != null) foreach (var peer in readyPeers.ToArray()) Players.PersistGuestProfile(peer);
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
