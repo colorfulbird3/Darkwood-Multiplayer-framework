@@ -6,12 +6,24 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 /// <summary>World-space rescue progress bar drawn above the downed player's head.</summary>
 public sealed class DarkwoodRescueOverlay : MonoBehaviour
 {
-    private static readonly GUIStyle LabelStyle = new GUIStyle(GUI.skin.label)
+    private static GUIStyle? labelStyle;
+    /// <summary>FIX-014：GUI.skin 只能在 OnGUI 上下文内访问；静态构造在 OnGUI 外会抛 ArgumentException（0.8.8-alpha.6 实机崩溃）。改为懒初始化。</summary>
+    private static GUIStyle LabelStyle
     {
-        fontSize = 12,
-        alignment = TextAnchor.MiddleCenter,
-        fontStyle = FontStyle.Bold
-    };
+        get
+        {
+            if (labelStyle == null)
+            {
+                labelStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 12,
+                    alignment = TextAnchor.MiddleCenter,
+                    fontStyle = FontStyle.Bold
+                };
+            }
+            return labelStyle;
+        }
+    }
 
     private void OnGUI()
     {

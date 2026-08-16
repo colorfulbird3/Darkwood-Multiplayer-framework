@@ -1,28 +1,28 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.7-beta.1（2026-08-15）
+> 最后更新：0.8.8-beta.1（2026-08-16）
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.7-beta.1**（源码版本 0.8.7-alpha.23 封版，无功能改动） |
-| 真机验证 | **VERIFY-001 核心玩法矩阵通过**（详见 `docs/VERIFY-001.md`） |
-| 下一开发版本 | 0.8.8-alpha.1：Runtime Entity 协议 |
+| 当前发布版本 | **0.8.8-beta.1**（0.8.8 开发线收官：Runtime Entity 全链 + 出生点 + 场景切换 + 回环自测） |
+| 真机验证 | **VERIFY-001 核心玩法矩阵通过**（0.8.7）；**VERIFY-002 回环自测全链路通过**（详见 `docs/VERIFY-002.md`）；0.8.8 新功能实机矩阵进行中 |
+| 下一开发版本 | 0.8.8-beta.2：Container Revision 并发冲突保护（防双客户端复制物品，0.8.7-beta.2 顺延并入） |
 | 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
 
 版本路线：
 
 ```text
-0.8.7-alpha.23          ← 真机核心玩法验证通过
+0.8.7-beta.1            ← 0.8.7 收口（VERIFY-001）
         ↓
-0.8.7-beta.1            ← 文档/验证/版本收口（本版）
+0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换 + 回环自测（已完成）
         ↓
-0.8.7-beta.2            ← Container Revision 并发冲突保护
+0.8.8-beta.1            ← 0.8.8 封版（本版，VERIFY-002）
         ↓
-0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换
+0.8.8-beta.2            ← Container Revision 并发冲突保护
         ↓
-0.8.8-beta              ← 多场景真机验证
+0.8.8 实机矩阵          ← 双机验证 0.8.8 新功能
         ↓
 0.8.9                   ← 重连 / 稳定性 / 诊断（几乎不加玩法）
         ↓

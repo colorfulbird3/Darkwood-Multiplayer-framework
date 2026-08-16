@@ -30,6 +30,7 @@ public enum ProtocolMessageType : ushort
     Ready = 40,
     RuntimeEntitySpawn = 60,
     RuntimeEntityDespawn = 61,
+    SceneChange = 62,
     Error = 255
 }
 

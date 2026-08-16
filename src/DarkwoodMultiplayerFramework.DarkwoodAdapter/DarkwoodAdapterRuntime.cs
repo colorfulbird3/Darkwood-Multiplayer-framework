@@ -12,6 +12,7 @@ using DarkwoodMultiplayerFramework.Entities;
 using DarkwoodMultiplayerFramework.Network;
 using DarkwoodMultiplayerFramework.Protocol;
 using HarmonyLib;
+using Steamworks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -74,6 +75,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private HostHandshakeSession? hostSession;
     private ClientHandshakeSession? clientSession;
     private string telepathyPath = string.Empty;
+    /// <summary>0.8.8 自测：Telepathy 传输 DLL 路径（供回环自测客户端复用）。</summary>
+    public string TelepathyPath => telepathyPath;
     private ConfigEntry<string>? addressConfig;
     private ConfigEntry<int>? portConfig;
     private ConfigEntry<int>? playerCountConfig;
@@ -93,6 +96,23 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private readonly RuntimeEntityRegistry runtimeRegistry = new RuntimeEntityRegistry();
     private float nextDelta;
     private float nextInventoryDelta;
+    /// <summary>0.8.8-alpha.3：主机侧运行时可搜刮容器映射（组件 → runtime ID）。</summary>
+    private readonly Dictionary<Inventory, ulong> runtimeInventoryIds = new Dictionary<Inventory, ulong>();
+    /// <summary>0.8.8-alpha.3：客户端侧运行时容器镜像（runtime ID → 实例化 Transform）。</summary>
+    private readonly Dictionary<ulong, Transform> runtimeInventoryMirrors = new Dictionary<ulong, Transform>();
+    private float nextRuntimeScan;
+    /// <summary>0.8.8-alpha.6：场景切换自动重连时刻（>0 表示待重连）。</summary>
+    private float autoReconnectAt;
+    /// <summary>0.8.8-alpha.3：待触发的随机事件（runtime ID → Spawn 消息），等客户端进入范围才单播。</summary>
+    private readonly Dictionary<ulong, RuntimeEntitySpawnMessage> pendingRuntimeEvents = new Dictionary<ulong, RuntimeEntitySpawnMessage>();
+    /// <summary>0.8.8-alpha.4：主机侧运行时敌人映射（Character → runtime ID）。</summary>
+    private readonly Dictionary<Character, ulong> runtimeEnemyIds = new Dictionary<Character, ulong>();
+    /// <summary>0.8.8-alpha.4：客户端侧运行时敌人代理（runtime ID → Character）。</summary>
+    private readonly Dictionary<ulong, Character> runtimeEnemyMirrors = new Dictionary<ulong, Character>();
+    /// <summary>0.8.8-alpha.3：随机事件一次性派发跟踪（每个事件对每个玩家最多触发一次）。</summary>
+    private readonly RuntimeEventDispatch runtimeEventDispatch = new RuntimeEventDispatch();
+    /// <summary>0.8.8-alpha.3：随机事件动画触发范围（XZ 平面距离，米）。客户端进入该范围才触发。</summary>
+    private const float RuntimeEventTriggerRange = 35f;
     private float nextPose;
     private uint poseSequence;
     private string sessionError = string.Empty;
@@ -116,6 +136,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
     private ConfigEntry<string>? starterKitTier3Config;
     private ConfigEntry<int>? starterKitTier2DayConfig;
     private ConfigEntry<int>? starterKitTier3DayConfig;
+    private ConfigEntry<bool>? autoSelfTestConfig;
+    /// <summary>0.8.8 自测：自动回环自测开关（配置 SelfTestAuto）。</summary>
+    public bool AutoSelfTest => autoSelfTestConfig?.Value ?? false;
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
     private readonly Dictionary<int,float> peerHealths = new Dictionary<int,float>();
@@ -202,6 +225,7 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         starterKitTier1Config = config.Bind("Gameplay", "GuestStarterKitTier1", "", "新访客首次加入的初始装备（分号分隔的 物品类型:数量；留空不发装备）。");
         starterKitTier2Config = config.Bind("Gameplay", "GuestStarterKitTier2", "", "第二档访客初始装备（仅首次加入，按天数选档）。");
         starterKitTier3Config = config.Bind("Gameplay", "GuestStarterKitTier3", "", "第三档访客初始装备（仅首次加入，按天数选档）。");
+        autoSelfTestConfig = config.Bind("Gameplay", "SelfTestAuto", false, "启动后自动执行回环自测：自动开主机 → 自动读档 → 主机 READY 后自动连接 127.0.0.1 回环客户端并跑完整协议链（本地验证用，正常联机请保持 false）。");
         guestProfiles = new DarkwoodGuestProfiles(log, starterKitTier2DayConfig.Value, starterKitTier3DayConfig.Value, starterKitTier1Config.Value, starterKitTier2Config.Value, starterKitTier3Config.Value);
         lootScaleLedgerPath = Path.Combine(Paths.ConfigPath, "DarkwoodMultiplayerFramework.loot-scale-ledger.txt");
         LoadLootScaleLedger();
@@ -316,8 +340,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;TransferProgress=$"正在加载存档…({percent}%)";var bucket=percent/10;if(bucket>lastLoadBucket){lastLoadBucket=bucket;LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-loadStartedAt:F0} 秒）。");}}}
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())PersistGuestProfile(peer);}
         PollRescueHotkey();
-        if(hostSession!=null){ScanMonsterDamage();SyncHostHealth();TickRescue();}
+        if(hostSession!=null){ScanMonsterDamage();SyncHostHealth();TickRescue();ScanRuntimeLootContainers();}
         if(scheduledStopAt>0f&&Time.unscaledTime>=scheduledStopAt){scheduledStopAt=0f;StopNetwork();}
+        if(autoReconnectAt>0f&&Time.unscaledTime>=autoReconnectAt){autoReconnectAt=0f;log?.LogInfo("场景切换自动重连：正在重新连接主机……");ConnectClient();}
         if(localInvulUntil>0f&&Time.unscaledTime>=localInvulUntil){localInvulUntil=0f;var player=Player.Instance;if(player!=null)player.invulnerable=false;}
     }
 
@@ -357,6 +382,20 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         registry = null;
         RegistryDigest = string.Empty;
         hostLootScaleScanComplete = false;
+        // 0.8.8-alpha.6：场景切换——主机通知所有客户端自动重连（重连走完整握手+新场景存档加载），
+        // 并重置运行时实体状态（新场景是全新的运行时世界；Runtime ID 计数器继续单调递增、绝不复用）。
+        if (hostSession != null && (scene.Equals("chapter1", StringComparison.Ordinal) || scene.Equals("chapter2", StringComparison.Ordinal)))
+        {
+            var payload = ReplicationProtocolCodec.Encode(new SceneChangeMessage(scene));
+            var notified = 0;
+            foreach (var readyPeer in readyPeers.ToArray()) { Queue(readyPeer, ProtocolMessageType.SceneChange, payload); notified++; }
+            pendingRuntimeEvents.Clear();
+            runtimeInventoryIds.Clear();
+            runtimeEnemyIds.Clear();
+            runtimeEventDispatch.Clear();
+            runtimeRegistry.ClearAlive();
+            if (notified > 0) log?.LogInfo($"主机场景已切换：{scene}，已通知 {notified} 个客户端自动重连。");
+        }
         SceneChanged?.Invoke(scene);
     }
 
@@ -476,6 +515,8 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
                     var record=new GuestProfileRecord(key,day,1,0f,0f,0f,Array.Empty<InventorySlotWire>(),Array.Empty<InventorySlotWire>(),DateTime.UtcNow.Ticks);
                     var spawn=hostPosition;
                     if(guestProfiles!=null)record=guestProfiles.Resolve(HostSaveToken(),key,day,hostPosition,out spawn);
+                    // 0.8.8-alpha.5：无论档案记录如何，客户端始终在游戏默认出生点（playerBase 的 playerSpawn）出生，不在主机位置出生。
+                    spawn=DefaultSpawnPoint();
                     var shadow=DarkwoodPlayerInventoryShadow.FromRecord(record,message=>log?.LogWarning(message));
                     if(record.JoinCount==1)shadow.AddStarterKit(guestProfiles?.KitForDay(day),message=>log?.LogWarning(message));
                     remoteInventories[peer]=shadow;
@@ -508,8 +549,9 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
             else if(envelope.MessageType==ProtocolMessageType.WorldSnapshotChunk)ReceiveSnapshotChunk(ReplicationProtocolCodec.DecodeWorldSnapshotChunk(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.EntityDelta){var delta=ReplicationProtocolCodec.DecodeEntityDelta(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&delta.Scene==CurrentScene){replication.Apply(delta.Entities,false);replication.ApplyDespawns(delta.Despawns);}}
             else if(envelope.MessageType==ProtocolMessageType.InventoryState){var inventory=ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);if(!replication.Apply(inventory)){missingEntities.Add(new EntityId(inventory.Value,inventory.Persistent));log?.LogWarning($"忽略缺失实体的容器状态：ID={inventory.Value:X16}，名称={inventory.Name}（主机运行时生成物，等待 Spawn 生命周期补发）。");}}
-            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntitySpawn){var spawn=ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&spawn.Scene==CurrentScene){runtimeRegistry.Register(new RuntimeEntityRecord(spawn.RuntimeEntityId,spawn.Kind,spawn.PrototypeId,spawn.Scene,spawn.ServerTick));log?.LogInfo($"客户端已登记运行时实体：ID {spawn.RuntimeEntityId}，类型 {spawn.Kind}，原型 {spawn.PrototypeId}（0.8.8-alpha.3 起实例化游戏对象）。");}}
-            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntityDespawn){var despawn=ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready){if(runtimeRegistry.Remove(despawn.RuntimeEntityId))log?.LogInfo($"客户端已移除运行时实体：ID {despawn.RuntimeEntityId}，原因 {despawn.Reason}。");else log?.LogWarning($"客户端收到未知运行时实体移除：ID {despawn.RuntimeEntityId}（晚到/重复包，已忽略）。");}}
+            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntitySpawn){var spawn=ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&spawn.Scene==CurrentScene){runtimeRegistry.Register(new RuntimeEntityRecord(spawn.RuntimeEntityId,spawn.Kind,spawn.PrototypeId,spawn.Scene,spawn.ServerTick));log?.LogInfo($"客户端已登记运行时实体：ID {spawn.RuntimeEntityId}，类型 {spawn.Kind}，原型 {spawn.PrototypeId}。");if(spawn.Kind==RuntimeEntityKind.LootContainer)SpawnRuntimeLootContainerMirror(spawn);else if(spawn.Kind==RuntimeEntityKind.Enemy)SpawnRuntimeEnemyMirror(spawn);}}
+            else if(envelope.MessageType==ProtocolMessageType.RuntimeEntityDespawn){var despawn=ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(envelope.Payload);if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready){if(runtimeRegistry.Remove(despawn.RuntimeEntityId)){if(runtimeInventoryMirrors.TryGetValue(despawn.RuntimeEntityId,out var mirror)){runtimeInventoryMirrors.Remove(despawn.RuntimeEntityId);if(mirror!=null)UnityEngine.Object.Destroy(mirror.gameObject);}if(runtimeEnemyMirrors.TryGetValue(despawn.RuntimeEntityId,out var enemy)){runtimeEnemyMirrors.Remove(despawn.RuntimeEntityId);replication.UnregisterRuntimeEntity(new EntityId(despawn.RuntimeEntityId,false));if(enemy!=null)UnityEngine.Object.Destroy(enemy.gameObject);}log?.LogInfo($"客户端已移除运行时实体：ID {despawn.RuntimeEntityId}，原因 {despawn.Reason}。");}else log?.LogWarning($"客户端收到未知运行时实体移除：ID {despawn.RuntimeEntityId}（晚到/重复包，已忽略）。");}}
+            else if(envelope.MessageType==ProtocolMessageType.SceneChange){var change=ReplicationProtocolCodec.DecodeSceneChange(envelope.Payload);log?.LogInfo($"主机场景已切换到 {change.Scene}，客户端将在 3 秒后自动重连并重新加载新场景存档。");autoReconnectAt=Time.unscaledTime+3f;}
             else if(envelope.MessageType==ProtocolMessageType.PlayerPose)remotePlayers.Apply(ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload),clientSession?.PeerId??-1);
             else if(envelope.MessageType==ProtocolMessageType.ActionResult)HandleActionResult(ReplicationProtocolCodec.DecodeActionResult(envelope.Payload));
             else if(envelope.MessageType==ProtocolMessageType.ActionRejected)HandleActionRejected(ReplicationProtocolCodec.DecodeActionRejected(envelope.Payload));
@@ -531,7 +573,16 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
 
     private void PrepareSave(int peer)
     {
-        var profile=global::Core.currentProfile;if(profile==null||!profile.Active)throw new InvalidOperationException("Host has no active save profile.");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager is unavailable.");manager.Save(false,true,true,false,false,true,false);manager.saveProfilesFile();var bundle=DarkwoodSaveBundle.BuildForClient(manager.baseSaveDirectory,profile.id);var id=Guid.NewGuid();sentSaves[peer]=id;var chunks=ChunkTransferAssembler.Split(bundle,128*1024);Queue(peer,ProtocolMessageType.SaveTransferManifest,ReplicationProtocolCodec.Encode(new SaveTransferManifest(id,profile.id,bundle.LongLength,chunks.Length,ChunkTransferAssembler.Hash(bundle),$"Day {profile.day}, chapter {profile.chapter}")));for(var i=0;i<chunks.Length;i++)Queue(peer,ProtocolMessageType.SaveTransferChunk,ReplicationProtocolCodec.Encode(new SaveTransferChunk(id,i,chunks.Length,chunks[i],ChunkTransferAssembler.Hash(chunks[i]))),"存档",i,chunks.Length);log?.LogInfo($"已为玩家 {peer} 准备实时存档：传输 {id}，{bundle.Length} 字节，{chunks.Length} 个数据块。");
+        var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager is unavailable.");
+        var profile=global::Core.currentProfile;
+        if(profile==null||!profile.Active)
+        {
+            // 0.8.8 自测：quickLoadGame 等路径不会激活档案——从档案列表恢复（主机侧通用健壮性）。
+            var state=manager.loadGameProfiles();
+            if(state?.profiles!=null){global::Core.profiles=state.profiles;profile=state.profiles.FirstOrDefault(p=>p!=null&&p.Active);if(profile!=null){global::Core.currentProfile=profile;manager.updateFilePaths();log?.LogWarning("主机档案未激活，已从档案列表恢复当前档案。");}}
+        }
+        if(profile==null||!profile.Active)throw new InvalidOperationException("Host has no active save profile.");
+        manager.Save(false,true,true,false,false,true,false);manager.saveProfilesFile();var bundle=DarkwoodSaveBundle.BuildForClient(manager.baseSaveDirectory,profile.id);var id=Guid.NewGuid();sentSaves[peer]=id;var chunks=ChunkTransferAssembler.Split(bundle,128*1024);Queue(peer,ProtocolMessageType.SaveTransferManifest,ReplicationProtocolCodec.Encode(new SaveTransferManifest(id,profile.id,bundle.LongLength,chunks.Length,ChunkTransferAssembler.Hash(bundle),$"Day {profile.day}, chapter {profile.chapter}")));for(var i=0;i<chunks.Length;i++)Queue(peer,ProtocolMessageType.SaveTransferChunk,ReplicationProtocolCodec.Encode(new SaveTransferChunk(id,i,chunks.Length,chunks[i],ChunkTransferAssembler.Hash(chunks[i]))),"存档",i,chunks.Length);log?.LogInfo($"已为玩家 {peer} 准备实时存档：传输 {id}，{bundle.Length} 字节，{chunks.Length} 个数据块。");
     }
 
     private void ReceiveSaveChunk(SaveTransferChunk chunk)
@@ -810,20 +861,47 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         catch(Exception error){log?.LogWarning($"Failed to publish host container mutation for {id}: {error.Message}");}
     }
 
-    /// <summary>0.8.8-alpha.2：Host 广播运行时实体生成。分配 ID（单调递增）、登记并发送给所有就绪玩家。返回分配的 ID；非主机返回 0。</summary>
-    public ulong BroadcastRuntimeEntitySpawn(RuntimeEntityKind kind,string prototypeId,Vector3 position,Quaternion rotation,byte[]? initialState=null)
+    /// <summary>0.8.8-alpha.5：游戏默认出生点（playerBase 的 playerSpawn，与单机新游戏出生一致）。取不到时回退主机玩家位置。</summary>
+    private Vector3 DefaultSpawnPoint()
     {
-        if(hostSession==null)return 0;
+        try
+        {
+            var worldGen=Singleton<WorldGenerator>.Instance;
+            if(worldGen!=null&&worldGen.playerBase!=null)
+            {
+                var location=worldGen.playerBase.GetComponent<Location>();
+                if(location!=null&&location.playerSpawn!=null)return location.playerSpawn.transform.position;
+            }
+        }
+        catch(Exception error){log?.LogWarning($"读取默认出生点失败：{error.Message}");}
+        var player=Player.Instance;
+        return player!=null?player.transform.position:Vector3.zero;
+    }
+
+    /// <summary>0.8.8-alpha.3：Host 构建运行时实体生成消息（分配 ID 并登记）。非主机返回 default。</summary>
+    public RuntimeEntitySpawnMessage BuildRuntimeEntitySpawn(RuntimeEntityKind kind,string prototypeId,Vector3 position,Quaternion rotation,byte[]? initialState=null)
+    {
+        if(hostSession==null)return default;
         var id=runtimeRegistry.Allocate();
         var message=new RuntimeEntitySpawnMessage(id,kind,prototypeId,CurrentScene,position.x,position.y,position.z,rotation.x,rotation.y,rotation.z,rotation.w,initialState??Array.Empty<byte>(),serverTick);
         runtimeRegistry.Register(new RuntimeEntityRecord(id,kind,prototypeId,CurrentScene,serverTick));
-        var payload=ReplicationProtocolCodec.Encode(message);
-        foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.RuntimeEntitySpawn,payload);
-        log?.LogInfo($"主机已广播运行时实体生成：ID {id}，类型 {kind}，原型 {prototypeId}，tick {serverTick}。");
-        return id;
+        return message;
     }
 
-    /// <summary>0.8.8-alpha.2：Host 广播运行时实体移除。未登记的 ID 直接返回 false（不广播）。</summary>
+    /// <summary>0.8.8-alpha.3：向单个玩家发送 Spawn（随机事件范围门控的单播通道）。</summary>
+    private void SendRuntimeEntitySpawnTo(int peer,RuntimeEntitySpawnMessage message)=>Queue(peer,ProtocolMessageType.RuntimeEntitySpawn,ReplicationProtocolCodec.Encode(message));
+
+    /// <summary>0.8.8-alpha.3：Host 广播运行时实体生成。分配 ID（单调递增）、登记并发送给所有就绪玩家。返回分配的 ID；非主机返回 0。</summary>
+    public ulong BroadcastRuntimeEntitySpawn(RuntimeEntityKind kind,string prototypeId,Vector3 position,Quaternion rotation,byte[]? initialState=null)
+    {
+        var message=BuildRuntimeEntitySpawn(kind,prototypeId,position,rotation,initialState);
+        if(message.RuntimeEntityId==0)return 0;
+        foreach(var readyPeer in readyPeers.ToArray())SendRuntimeEntitySpawnTo(readyPeer,message);
+        log?.LogInfo($"主机已广播运行时实体生成：ID {message.RuntimeEntityId}，类型 {kind}，原型 {prototypeId}，tick {serverTick}。");
+        return message.RuntimeEntityId;
+    }
+
+    /// <summary>0.8.8-alpha.3：Host 广播运行时实体移除。未登记的 ID 直接返回 false（不广播）。</summary>
     public bool BroadcastRuntimeEntityDespawn(ulong runtimeEntityId,RuntimeEntityDespawnReason reason)
     {
         if(hostSession==null||!runtimeRegistry.Remove(runtimeEntityId))return false;
@@ -831,6 +909,126 @@ public sealed class DarkwoodAdapterRuntime : MonoBehaviour
         foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.RuntimeEntityDespawn,payload);
         log?.LogInfo($"主机已广播运行时实体移除：ID {runtimeEntityId}，原因 {reason}，tick {serverTick}。");
         return true;
+    }
+
+    /// <summary>
+    /// 0.8.8-alpha.3：主机周期扫描运行时生成的可搜刮容器（乌鸦群、动物尸体等 deathDrop 对象，
+    /// 不在持久注册表内——它们不写入存档，客户端靠加载存档无法获得）。
+    /// 范围门控 + 一次性语义：新容器只登记为"待触发事件"；客户端玩家进入动画范围（XZ 35 米）
+    /// 才单播 Spawn；一次性事件（乌鸦等）触发后同一客户端离开再进入不再重播；
+    /// 容器消失 → Despawn 广播并清除事件记录。
+    /// </summary>
+    private void ScanRuntimeLootContainers()
+    {
+        if(hostSession==null||readyPeers.Count==0||Time.unscaledTime<nextRuntimeScan)return;
+        nextRuntimeScan=Time.unscaledTime+2f;
+        var seen=new HashSet<Inventory>();
+        var seenEnemies=new HashSet<Character>();
+        foreach(var component in scanner.ScanScene())
+        {
+            if(component is Inventory inventory&&inventory.invType==Inventory.InvType.deathDrop)
+            {
+                if(replication.TryGetId(inventory,out _))continue; // 已在持久注册表（存档内对象），非运行时生成
+                seen.Add(inventory);
+                if(runtimeInventoryIds.ContainsKey(inventory))continue;
+                byte[] initialState;
+                try{initialState=ReplicationProtocolCodec.Encode(replication.CaptureInventoryState(inventory,0));}
+                catch(Exception error){log?.LogWarning($"捕获运行时容器初始状态失败（{inventory.name}）：{error.Message}");initialState=Array.Empty<byte>();}
+                var message=BuildRuntimeEntitySpawn(RuntimeEntityKind.LootContainer,inventory.name,inventory.transform.position,inventory.transform.rotation,initialState);
+                if(message.RuntimeEntityId==0)continue;
+                runtimeInventoryIds[inventory]=message.RuntimeEntityId;
+                pendingRuntimeEvents[message.RuntimeEntityId]=message;
+                log?.LogInfo($"主机登记随机事件容器（待客户端进入范围触发）：ID {message.RuntimeEntityId}，prefab {inventory.name}，位置 ({message.X:F0},{message.Y:F0},{message.Z:F0})。");
+            }
+            else if(component is Character character&&!(character is Player))
+            {
+                if(replication.TryGetId(character,out _))continue; // 存档内怪物
+                seenEnemies.Add(character); // 尸体也算"仍在场"（防误 Despawn，等游戏清理后再广播移除）
+                if(!character.alive)continue; // 尸体不 Spawn；若转为 deathDrop 会被上面的容器分支捕获
+                if(runtimeEnemyIds.ContainsKey(character))continue;
+                var prefabName=character.name.Replace("(Clone)","");
+                var enemyMessage=BuildRuntimeEntitySpawn(RuntimeEntityKind.Enemy,prefabName,character.transform.position,character.transform.rotation);
+                if(enemyMessage.RuntimeEntityId==0)continue;
+                runtimeEnemyIds[character]=enemyMessage.RuntimeEntityId;
+                replication.RegisterRuntimeEntity(new EntityId(enemyMessage.RuntimeEntityId,false),character);
+                pendingRuntimeEvents[enemyMessage.RuntimeEntityId]=enemyMessage;
+                log?.LogInfo($"主机登记运行时敌人（待客户端进入范围触发）：ID {enemyMessage.RuntimeEntityId}，prefab {prefabName}，位置 ({enemyMessage.X:F0},{enemyMessage.Y:F0},{enemyMessage.Z:F0})。");
+            }
+        }
+        foreach(var pair in runtimeInventoryIds.ToArray())
+        {
+            if(pair.Key==null||!seen.Contains(pair.Key))
+            {
+                runtimeInventoryIds.Remove(pair.Key);
+                pendingRuntimeEvents.Remove(pair.Value);
+                runtimeEventDispatch.ClearEvent(pair.Value);
+                BroadcastRuntimeEntityDespawn(pair.Value,RuntimeEntityDespawnReason.Collected);
+            }
+        }
+        foreach(var pair in runtimeEnemyIds.ToArray())
+        {
+            if(pair.Key==null||!seenEnemies.Contains(pair.Key))
+            {
+                runtimeEnemyIds.Remove(pair.Key);
+                pendingRuntimeEvents.Remove(pair.Value);
+                runtimeEventDispatch.ClearEvent(pair.Value);
+                replication.UnregisterRuntimeEntity(new EntityId(pair.Value,false));
+                BroadcastRuntimeEntityDespawn(pair.Value,RuntimeEntityDespawnReason.Died);
+            }
+        }
+        foreach(var pair in pendingRuntimeEvents.ToArray())
+        {
+            var message=pair.Value;
+            foreach(var readyPeer in readyPeers.ToArray())
+            {
+                if(!remotePlayerPositions.TryGetValue(readyPeer,out var pose))continue;
+                var dx=pose.x-message.X;var dz=pose.z-message.Z;
+                if(dx*dx+dz*dz>RuntimeEventTriggerRange*RuntimeEventTriggerRange)continue; // 距离过远：不触发
+                if(!runtimeEventDispatch.TryMark(message.RuntimeEntityId,readyPeer))continue; // 一次性：已触发过不重播
+                SendRuntimeEntitySpawnTo(readyPeer,message);
+                log?.LogInfo($"客户端 {readyPeer} 进入随机事件范围，触发动画：ID {message.RuntimeEntityId}，prefab {message.PrototypeId}。");
+            }
+        }
+    }
+
+    /// <summary>0.8.8-alpha.3：客户端实例化运行时容器镜像（禁交互，防物品复制；库存内容用 InitialState 填充）。</summary>
+    private void SpawnRuntimeLootContainerMirror(RuntimeEntitySpawnMessage spawn)
+    {
+        try
+        {
+            var go=global::Core.AddPrefab(spawn.PrototypeId,new Vector3(spawn.X,spawn.Y,spawn.Z),new Quaternion(spawn.Qx,spawn.Qy,spawn.Qz,spawn.Qw),global::Core.ItemContainer);
+            if(go==null){log?.LogWarning($"客户端无法实例化运行时容器：prefab {spawn.PrototypeId} 不存在或不可用。");return;}
+            var inventory=go.GetComponent<Inventory>();
+            if(inventory!=null&&spawn.InitialState.Length>0)
+            {
+                var state=ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
+                var slots=new DarkwoodInventorySlot[state.Slots.Length];
+                for(var i=0;i<slots.Length;i++){var s=state.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}
+                DarkwoodInventoryAdapter.Apply(inventory,slots);
+            }
+            foreach(var col in go.GetComponentsInChildren<Collider>(true))col.enabled=false;
+            runtimeInventoryMirrors[spawn.RuntimeEntityId]=go.transform;
+            log?.LogInfo($"客户端已实例化运行时容器镜像：ID {spawn.RuntimeEntityId}，prefab {spawn.PrototypeId}，槽位 {(inventory!=null?inventory.slots.Count:0)}。");
+        }
+        catch(Exception error){log?.LogWarning($"实例化运行时容器失败（{spawn.PrototypeId}）：{error.Message}");}
+    }
+
+    /// <summary>0.8.8-alpha.4：客户端实例化运行时敌人代理。AI 冻结（远端代理），注册进 entities 以接收 15Hz delta（位置/血量/动画/死亡）。</summary>
+    private void SpawnRuntimeEnemyMirror(RuntimeEntitySpawnMessage spawn)
+    {
+        try
+        {
+            var go=global::Core.AddPrefab(spawn.PrototypeId,new Vector3(spawn.X,spawn.Y,spawn.Z),new Quaternion(spawn.Qx,spawn.Qy,spawn.Qz,spawn.Qw),global::Core.ItemContainer);
+            if(go==null){log?.LogWarning($"客户端无法实例化运行时敌人：prefab {spawn.PrototypeId} 不存在或不可用。");return;}
+            var character=go.GetComponent<Character>();
+            if(character==null){UnityEngine.Object.Destroy(go);log?.LogWarning($"运行时敌人实例无 Character 组件：{spawn.PrototypeId}。");return;}
+            character.enabled=false; // 远端代理：冻结 AI
+            if(character.AIpath!=null)character.AIpath.enabled=false;
+            replication.RegisterRuntimeEntity(new EntityId(spawn.RuntimeEntityId,false),character);
+            runtimeEnemyMirrors[spawn.RuntimeEntityId]=character;
+            log?.LogInfo($"客户端已实例化运行时敌人代理：ID {spawn.RuntimeEntityId}，prefab {spawn.PrototypeId}，血量 {character.health:F0}/{character.maxHealth:F0}。");
+        }
+        catch(Exception error){log?.LogWarning($"实例化运行时敌人失败（{spawn.PrototypeId}）：{error.Message}");}
     }
 
     /// <summary>FIX-011 信任模式：客户端容器本地执行后的状态上报（不经主机审批）。</summary>

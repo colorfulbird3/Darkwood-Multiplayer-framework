@@ -282,6 +282,8 @@ public enum RuntimeEntityKind : byte
     Enemy = 2,
     /// <summary>敌人死亡产生的尸体。</summary>
     Corpse = 3,
+    /// <summary>运行时生成的可搜刮容器（乌鸦群、动物尸体等 deathDrop 类对象）。</summary>
+    LootContainer = 4,
 }
 
 /// <summary>0.8.8-alpha.1：运行时实体移除原因。</summary>
@@ -327,6 +329,13 @@ public readonly struct RuntimeEntityDespawnMessage
     public RuntimeEntityDespawnReason Reason {get;}
 }
 
+/// <summary>0.8.8-alpha.6：主机场景切换通知（客户端收到后自动重连并重新加载新场景存档）。</summary>
+public readonly struct SceneChangeMessage
+{
+    public SceneChangeMessage(string scene){Scene=scene;}
+    public string Scene {get;}
+}
+
 /// <summary>Generic world-interaction payload. ValueA semantics depend on the action kind.</summary>
 public readonly struct InteractPayload
 {
@@ -346,7 +355,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.8-alpha.2";
+    public const string Framework = "0.8.8-beta.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -411,6 +420,8 @@ public static class ReplicationProtocolCodec
     public static RuntimeEntitySpawnMessage DecodeRuntimeEntitySpawn(byte[] p)=>Read(p,r=>{var id=r.ReadUInt64();if(id==0)throw new InvalidDataException("Runtime entity id must not be zero.");var kind=ReadRuntimeEntityKind(r);return new RuntimeEntitySpawnMessage(id,kind,ReadString(r),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),ReadBytes(r,RuntimeInitialStateMax),r.ReadInt64());});
     public static byte[] Encode(RuntimeEntityDespawnMessage m)=>Write(w=>{w.Write(m.RuntimeEntityId);w.Write(m.ServerTick);w.Write((byte)m.Reason);});
     public static RuntimeEntityDespawnMessage DecodeRuntimeEntityDespawn(byte[] p)=>Read(p,r=>{var id=r.ReadUInt64();if(id==0)throw new InvalidDataException("Runtime entity id must not be zero.");return new RuntimeEntityDespawnMessage(id,r.ReadInt64(),ReadRuntimeEntityDespawnReason(r));});
+    public static byte[] Encode(SceneChangeMessage m)=>Write(w=>WriteString(w,m.Scene));
+    public static SceneChangeMessage DecodeSceneChange(byte[] p)=>Read(p,r=>new SceneChangeMessage(ReadString(r)));
     private const int SnapshotMax = 256*1024;
     private const int ActionPayloadMax = 64*1024;
     private const int GuestProfileMax = 1024*1024;

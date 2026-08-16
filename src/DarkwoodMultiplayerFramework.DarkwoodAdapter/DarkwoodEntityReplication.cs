@@ -24,6 +24,15 @@ public sealed class DarkwoodEntityReplication
     public bool Apply(InventoryStateMessage message){var id=new EntityId(message.Value,message.Persistent);if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory)||!IsShared(inventory)){if(!TryRebindInventory(id,message,out inventory))return false;}if(lastInventories.TryGetValue(id,out var previous)&&message.Revision<previous.Revision)return true;var slots=new DarkwoodInventorySlot[message.Slots.Length];for(var i=0;i<slots.Length;i++){var s=message.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}ApplyingRemote=true;try{DarkwoodInventoryAdapter.Apply(inventory,slots);lastInventories[id]=message;return true;}finally{ApplyingRemote=false;}}
     public bool TryGetInventoryState(EntityId id,out InventoryStateMessage state){if(entities.TryGetValue(id,out var component)&&component is Inventory inventory){state=CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision:0);return true;}state=default;return false;}
     public InventoryStateMessage CaptureAuthoritativeInventory(EntityId id){if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory))throw new InvalidOperationException("Inventory entity does not exist.");var message=CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision+1:++revision);lastInventories[id]=message;return message;}
+
+    /// <summary>0.8.8-alpha.3：为运行时容器（不在 entities 注册表内）捕获库存状态，用于 RuntimeEntitySpawn 的 InitialState。</summary>
+    public InventoryStateMessage CaptureInventoryState(Inventory inventory,ulong value){if(inventory==null)throw new ArgumentNullException(nameof(inventory));return CaptureInventory(new EntityId(value,false),inventory,++revision);}
+
+    /// <summary>0.8.8-alpha.4：把运行时实体（敌人代理等）注册进 entities，使其自动纳入 15Hz delta 捕获/应用。</summary>
+    public void RegisterRuntimeEntity(EntityId id,Component component){if(entities.ContainsKey(id))return;entities[id]=component;}
+
+    /// <summary>0.8.8-alpha.4：移除运行时实体的注册（Despawn 后不再参与 delta）。</summary>
+    public void UnregisterRuntimeEntity(EntityId id){entities.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
     public void ApplyDespawns(IEnumerable<EntityStateWire> states){foreach(var s in states){var id=new EntityId(s.Value,s.Persistent);if(!entities.TryGetValue(id,out var component))continue;if(component is Character character)frozen.Remove(character);component.gameObject.SetActive(false);targets.Remove(id);last.Remove(id);lastInventories.Remove(id);}}
     public bool TryGetComponent(EntityId id,out Component component)=>entities.TryGetValue(id,out component!);
     /// <summary>Captures and commits fresh revisions for the given components (immediate authoritative broadcast helper).</summary>

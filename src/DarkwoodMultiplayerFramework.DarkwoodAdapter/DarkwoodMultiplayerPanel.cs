@@ -32,6 +32,7 @@ public sealed class DarkwoodMultiplayerPanel : MonoBehaviour
     private void SetVisible(bool next)
     {
         visible = next;
+        DarkwoodAdapterRuntime.LogMessage(next ? "联机面板已显示（F6）。" : "联机面板已隐藏（F6）。");
         if (visible)
         {
             var runtime = DarkwoodAdapterRuntime.Instance;

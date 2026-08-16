@@ -73,6 +73,11 @@ var tests = new (string Name, Action Run)[]
     ("runtime despawn unknown id", RuntimeDespawnUnknownId),
     ("runtime lifecycle sequence", RuntimeLifecycleSequence),
     ("runtime clear keeps counter", RuntimeClearKeepsCounter),
+    ("runtime event first trigger per peer", RuntimeEventFirstTrigger),
+    ("runtime event no retrigger same peer", RuntimeEventNoRetrigger),
+    ("runtime event independent per peer", RuntimeEventPerPeerIndependent),
+    ("runtime event clear on despawn", RuntimeEventClearOnDespawn),
+    ("scene change roundtrip", SceneChangeRoundtrip),
     ("session full rejection", SessionFullRejection),
     ("session capacity", SessionCapacity),
     ("guest key loopback", GuestKeyLoopback),
@@ -420,6 +425,36 @@ static void RuntimeClearKeepsCounter()
     r.Register(new RuntimeEntityRecord(r.Allocate(),RuntimeEntityKind.DroppedItem,"x","s",0));
     r.Register(new RuntimeEntityRecord(r.Allocate(),RuntimeEntityKind.DroppedItem,"x","s",0));
     r.ClearAlive();Require(r.Count==0&&r.Allocate()==3);
+}
+static void RuntimeEventFirstTrigger()
+{
+    var d=new RuntimeEventDispatch();
+    Require(d.TryMark(1,1));
+    Require(d.WasSent(1,1));
+}
+static void RuntimeEventNoRetrigger()
+{
+    var d=new RuntimeEventDispatch();
+    d.TryMark(2,1);
+    Require(!d.TryMark(2,1));
+}
+static void RuntimeEventPerPeerIndependent()
+{
+    var d=new RuntimeEventDispatch();
+    Require(d.TryMark(3,1)&&d.TryMark(3,2));
+    Require(d.WasSent(3,1)&&d.WasSent(3,2));
+}
+static void RuntimeEventClearOnDespawn()
+{
+    var d=new RuntimeEventDispatch();
+    d.TryMark(4,1);
+    d.ClearEvent(4);
+    Require(!d.WasSent(4,1)&&d.TryMark(4,1));
+}
+static void SceneChangeRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeSceneChange(ReplicationProtocolCodec.Encode(new SceneChangeMessage("chapter2")));
+    Require(decoded.Scene=="chapter2");
 }
 static void SessionFullRejection()
 {
