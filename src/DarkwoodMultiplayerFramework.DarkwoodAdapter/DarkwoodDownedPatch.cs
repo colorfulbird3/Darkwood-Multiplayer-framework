@@ -36,7 +36,7 @@ public static class DarkwoodDownedPatch
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsMultiplayerActive) return true;
         if (AllDowned) return true; // vanilla ending is running
-        runtime.OnLocalPlayerDowned();
+        runtime.Combat.OnLocalPlayerDowned(); // 0.8.9：倒地状态归战斗服务
         return false; // skip the vanilla death sequence
     }
 

@@ -1,13 +1,13 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.9-beta.1（2026-08-17）
+> 最后更新：0.8.9-beta.2（2026-08-17）
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.9-beta.1**（十刀架构重构：partial 拆分 + SessionContext + MessageRouter + 协议领域文件 + Transport 真接口 + Host/Client Tick 分离 + Runtime Entity 生命周期模型 + xUnit） |
-| 集成验证 | **VERIFY-001 核心玩法矩阵通过**（0.8.7）；**VERIFY-002 回环自测全链路通过**（详见 `docs/VERIFY-002.md`，0.8.9-beta.1 重构后复测通过）；0.8.8 新功能双机矩阵进行中 |
+| 当前发布版本 | **0.8.9-beta.2**（所有权拆分：RuntimeEntity/Combat/Player/SaveState 四服务 + EntityStateAdapter + Protocol 11 子目录 + xUnit 15 项） |
+| 集成验证 | **VERIFY-001 核心玩法矩阵通过**（0.8.7）；**VERIFY-002 回环自测全链路通过**（详见 `docs/VERIFY-002.md`，0.8.9-beta.2 重构后复测通过）；0.8.8 新功能双机矩阵进行中 |
 | 下一开发版本 | 0.8.9 剩余工程（SelfTests 全量迁 xUnit / RuntimeEntityService 字典收拢 / UDP-KCP 评估）或新玩法 |
 | 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
 
@@ -20,7 +20,7 @@
         ↓
 0.8.8-beta.1..5         ← 封版 + Container Revision + 实机二轮修复（掉落物/夹子同步/营救/Despawn 定向）
         ↓
-0.8.9-beta.1            ← 十刀架构重构（本版：partial 拆分 + SessionContext + MessageRouter + 协议领域文件 + Transport 真接口 + Host/Client Tick 分离 + Runtime Entity 生命周期模型 + xUnit）
+0.8.9-beta.2            ← 十刀架构重构（本版：partial 拆分 + SessionContext + MessageRouter + 协议领域文件 + Transport 真接口 + Host/Client Tick 分离 + Runtime Entity 生命周期模型 + xUnit）
         ↓
 0.8.8/0.8.9 实机矩阵    ← 双机验证 Runtime Entity / 掉落物 / 场景切换 / 长时稳定性
         ↓

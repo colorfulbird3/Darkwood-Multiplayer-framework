@@ -24,7 +24,7 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
 {
     public static DarkwoodAdapterRuntime? Instance { get; private set; }
-    public bool ClientSaveLoadPending { get; private set; }
+    public bool ClientSaveLoadPending { get => SaveState.ClientSaveLoadPending; set => SaveState.ClientSaveLoadPending = value; }
     public static void LogMessage(string message) => Instance?.log?.LogInfo(message);
     public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
     public string StateDisplay => StateText(State);
@@ -47,83 +47,67 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
     public long DuplicateActionCount => duplicateActions;
     public bool ApplyingAuthoritativeInventory => replication.ApplyingRemote;
     public string SessionError => sessionError.Length > 0 ? sessionError : LastNetworkError;
-    public string TransferProgress { get; private set; } = string.Empty;
+        public string TransferProgress { get => SaveState.TransferProgressValue; set => SaveState.TransferProgressValue = value; }
     public bool IsMultiplayerActive => hostSession?.IsActive == true || clientSession?.HandshakeComplete == true;
     public bool AllDowned => DarkwoodDownedPatch.AllDowned;
-    public RescueProgressMessage LastRescueProgress => lastRescueProgress;
+    public RescueProgressMessage LastRescueProgress => Combat?.LastRescueProgress ?? default;
     public bool TryGetKnownPlayerPosition(int playerId, out Vector3 position)
     {
         var myId = IsHost ? 0 : (clientSession?.PeerId ?? -1);
         if (playerId == myId) { var player = Player.Instance; if (player != null) { position = player.transform.position; return true; } position = Vector3.zero; return false; }
-        if (IsHost && remotePlayerPositions.TryGetValue(playerId, out position)) return true;
-        if (remotePlayers.TryGetPosition(playerId, out position)) return true;
+        if (IsHost && Players.RemotePositions.TryGetValue(playerId, out position)) return true;
+        if (Players.RemotePlayers.TryGetPosition(playerId, out position)) return true;
         position = Vector3.zero;
         return false;
     }
-    public event Action<string>? SceneChanged;
-    public event Action<ConnectionState>? StateChanged;
 
-    private readonly DarkwoodEntityScanner scanner = new DarkwoodEntityScanner();
+    internal readonly DarkwoodEntityScanner scanner = new DarkwoodEntityScanner();
     /// <summary>0.8.9 第二刀：会话上下文（角色/状态/身份/场景的权威状态源）。</summary>
     public SessionContext Session { get; } = new SessionContext();
-    private EntityRegistry<Component>? registry;
-    private ManualLogSource? log;
+    /// <summary>0.8.9：运行时实体服务（所有权拆分——所有临时生成对象的唯一入口）。</summary>
+    internal DarkwoodRuntimeEntityService RuntimeEntities { get; private set; } = null!;
+    /// <summary>0.8.9：战斗服务（血量/倒地/怪物伤害/攻击锚点/无敌/营救会话的唯一入口）。</summary>
+    internal DarkwoodCombatService Combat { get; private set; } = null!;
+    /// <summary>0.8.9：玩家服务（远端坐标/背包影子/Guest 档案的唯一入口）。</summary>
+    internal DarkwoodPlayerService Players { get; private set; } = null!;
+    /// <summary>0.8.9：存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
+    internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
+    internal EntityRegistry<Component>? registry;
+    internal ManualLogSource? log;
     private string lastScene = string.Empty;
     private bool registryDirty = true;
     private readonly HashSet<string> scaledHostInventoryKeys = new HashSet<string>(StringComparer.Ordinal);
     private bool hostLootScaleScanComplete;
     private bool hostLootScaleScanStarted;
     private Coroutine? hostLootScaleCoroutine;
-    private readonly Dictionary<int,ReadyMessage> pendingSnapshotRequests = new Dictionary<int,ReadyMessage>();
     private string lootScaleLedgerPath = string.Empty;
-    private HostHandshakeSession? hostSession;
-    private ClientHandshakeSession? clientSession;
+    internal HostHandshakeSession? hostSession;
+    internal ClientHandshakeSession? clientSession;
     private string telepathyPath = string.Empty;
     /// <summary>0.8.8 自测：Telepathy 传输 DLL 路径（供回环自测客户端复用）。</summary>
     public string TelepathyPath => telepathyPath;
-    private ConfigEntry<string>? addressConfig;
-    private ConfigEntry<int>? portConfig;
-    private ConfigEntry<int>? playerCountConfig;
     private bool f1WasDown;
     private bool f2WasDown;
     private bool f3WasDown;
-    private readonly DarkwoodEntityReplication replication = new DarkwoodEntityReplication();
+    internal readonly DarkwoodEntityReplication replication = new DarkwoodEntityReplication();
     /// <summary>0.8.9-alpha.1：实体 ID 反查（容器并发补偿用）。</summary>
     public bool TryGetEntityId(Component component,out EntityId id)=>replication.TryGetId(component,out id);
-    private readonly DarkwoodRemotePlayers remotePlayers = new DarkwoodRemotePlayers();
+
     private readonly Dictionary<int, Queue<OutgoingPacket>> outgoing = new Dictionary<int, Queue<OutgoingPacket>>();
-    private readonly HashSet<int> readyPeers = new HashSet<int>();
-    private ChunkTransferAssembler? incomingSave;
-    private SaveTransferManifest incomingSaveManifest;
-    private ChunkTransferAssembler? incomingSnapshot;
-    private WorldSnapshotManifest incomingSnapshotManifest;
-    private long serverTick;
-    /// <summary>0.8.8-alpha.2：运行时实体注册表（与持久实体注册表分离；ID 会话内单调递增）。</summary>
-    private readonly RuntimeEntityRegistry runtimeRegistry = new RuntimeEntityRegistry();
+    internal readonly HashSet<int> readyPeers = new HashSet<int>();
+
+    internal long serverTick;
+
     private float nextDelta;
     private float nextInventoryDelta;
-    /// <summary>0.8.8-alpha.3：主机侧运行时可搜刮容器映射（组件 → runtime ID）。</summary>
-    private readonly Dictionary<Inventory, ulong> runtimeInventoryIds = new Dictionary<Inventory, ulong>();
-    /// <summary>0.8.8-alpha.3：客户端侧运行时容器镜像（runtime ID → 实例化 Transform）。</summary>
-    private readonly Dictionary<ulong, Transform> runtimeInventoryMirrors = new Dictionary<ulong, Transform>();
+
     private float nextRuntimeScan;
     /// <summary>0.8.8-alpha.6：场景切换自动重连时刻（>0 表示待重连）。</summary>
     private float autoReconnectAt;
-    /// <summary>0.8.8-alpha.3：待触发的随机事件（runtime ID → Spawn 消息），等客户端进入范围才单播。</summary>
-    private readonly Dictionary<ulong, RuntimeEntitySpawnMessage> pendingRuntimeEvents = new Dictionary<ulong, RuntimeEntitySpawnMessage>();
-    /// <summary>0.8.8-alpha.4：主机侧运行时敌人映射（Character → runtime ID）。</summary>
-    private readonly Dictionary<Character, ulong> runtimeEnemyIds = new Dictionary<Character, ulong>();
-    /// <summary>0.8.8-alpha.4：客户端侧运行时敌人代理（runtime ID → Character）。</summary>
-    private readonly Dictionary<ulong, Character> runtimeEnemyMirrors = new Dictionary<ulong, Character>();
-    /// <summary>0.8.8-alpha.3：随机事件一次性派发跟踪（每个事件对每个玩家最多触发一次）。</summary>
-    private readonly RuntimeEventDispatch runtimeEventDispatch = new RuntimeEventDispatch();
-    /// <summary>0.8.8-alpha.3：随机事件动画触发范围（XZ 平面距离，米）。客户端进入该范围才触发。</summary>
-    private const float RuntimeEventTriggerRange = 35f;
+
     private float nextPose;
     private uint poseSequence;
     private string sessionError = string.Empty;
-    private readonly Dictionary<int,Guid> sentSaves = new Dictionary<int,Guid>();
-    private readonly Dictionary<int,Guid> sentSnapshots = new Dictionary<int,Guid>();
     private readonly ActionIdempotencyCache actionCache = new ActionIdempotencyCache();
     // The protocol response is cached alongside the abstract result so a retry can
     // be answered byte-for-byte without applying the game mutation a second time.
@@ -131,73 +115,21 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
     private readonly Dictionary<Guid,ActionRejectedMessage> cachedActionRejections = new Dictionary<Guid,ActionRejectedMessage>();
     private readonly Dictionary<Guid,int> cachedActionOwners = new Dictionary<Guid,int>();
     private readonly Dictionary<Guid,ActionRequestMessage> pendingActions = new Dictionary<Guid,ActionRequestMessage>();
-    private readonly Dictionary<int,Vector3> remotePlayerPositions = new Dictionary<int,Vector3>();
-    private readonly Dictionary<int,DarkwoodPlayerInventoryShadow> remoteInventories = new Dictionary<int,DarkwoodPlayerInventoryShadow>();
-    private readonly Dictionary<int,GuestProfileRecord> peerGuestRecords = new Dictionary<int,GuestProfileRecord>();
-    private readonly Dictionary<int,string> peerGuestKeys = new Dictionary<int,string>();
-    private DarkwoodGuestProfiles? guestProfiles;
-    private ConfigEntry<string>? playerNameConfig;
-    private ConfigEntry<string>? starterKitTier1Config;
-    private ConfigEntry<string>? starterKitTier2Config;
-    private ConfigEntry<string>? starterKitTier3Config;
-    private ConfigEntry<int>? starterKitTier2DayConfig;
-    private ConfigEntry<int>? starterKitTier3DayConfig;
-    private ConfigEntry<bool>? autoSelfTestConfig;
+
     /// <summary>0.8.8 自测：自动回环自测开关（配置 SelfTestAuto）。</summary>
     public bool AutoSelfTest => autoSelfTestConfig?.Value ?? false;
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
-    private readonly Dictionary<int,float> peerHealths = new Dictionary<int,float>();
-    private readonly Dictionary<int,float> peerMaxHealths = new Dictionary<int,float>();
-    private readonly Dictionary<int,bool> peerDowned = new Dictionary<int,bool>();
-    private readonly Dictionary<int,float> nextGuestHitAllowed = new Dictionary<int,float>();
-    private bool hostDownedLocal;
-    private bool allDownedHandled;
-    private float scheduledStopAt;
-    private float nextMonsterDamageScan;
-    private float nextHealthHeartbeat;
-    private float lastBroadcastHostHealth = float.MaxValue;
-    private float nextRescueBroadcast;
-    private float localInvulUntil;
-    private bool rescueLockedByMe;
-    private RescueSession? activeRescue;
-    private RescueProgressMessage lastRescueProgress;
-    private const float RescueDurationSeconds = 3f;
-    private const float RescueRange = 4f;
-    private const float ReviveHealthFraction = 0.1f;
-    private const float MonsterDamageScanInterval = 0.25f;
-    private const float MonsterHitCooldown = 0.5f;
-    private const float MonsterReach = 1.6f;
-    private const float ReviveInvulnerableSeconds = 3f;
-    private const float PostDownedEndingDelay = 2f;
-
-    private sealed class RescueSession
-    {
-        public int TargetId;
-        public int RescuerId;
-        public float StartedAt;
-    }
+    private float scheduledStopAt; // 0.8.9：Combat 服务通过 ScheduleStop 设置
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
-    private bool clientSnapshotReady;
-    private bool clientRegistryRequestSent;
-    private bool clientSnapshotManifestReceived;
-    private bool clientRegistryStabilized;
-    private float loadStartedAt;
-    private int lastLoadBucket;
-    private float nextRegistryRequestRetry;
-    private WorldSnapshotApplied? lastSnapshotApplied;
-    private float nextSnapshotAckRetry;
-    private int snapshotAckRetryCount;
-    private readonly Dictionary<int,float> nextAttackAllowed = new Dictionary<int,float>();
-    private readonly Dictionary<int,GameObject> remoteAttackAnchors = new Dictionary<int,GameObject>();
+
     /// <summary>FIX-007：快照/增量中无法绑定的实体 ID（主机运行时生成物，客户端世界无副本）。
     /// 对这些 ID 的后续库存/状态消息静默忽略，等待 0.8.8 的 Spawn 生命周期补发。</summary>
     private readonly HashSet<EntityId> missingEntities = new HashSet<EntityId>();
     private const float AttackCooldownSeconds = 0.35f;
-    private const float MeleeReach = 1.6f;
-    private const float MeleeConeDot = 0.3f;
+
 
     private sealed class OutgoingPacket
     {
@@ -211,33 +143,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
 
     private ProtocolIdentity Identity => new ProtocolIdentity(ProtocolVersions.Framework, Application.version);
 
-    public void Initialize(ManualLogSource logger)
-    {
-        log = logger;
-        remotePlayers.Logger = message => log?.LogInfo(message);
-        log.LogInfo("Darkwood 联机适配层已初始化（0.8）。");
-    }
 
-    public void Configure(ConfigFile config)
-    {
-        addressConfig = config.Bind("Network", "Address", "127.0.0.1", "Host address used by F2 client connect.");
-        portConfig = config.Bind("Network", "Port", 17777, "TCP port used by the standalone DMF 0.8 transport.");
-        playerCountConfig = config.Bind("Gameplay", "PlayerCount", 2, "Target player count and new shared-container loot multiplier.");
-        playerCountConfig.Value = Mathf.Clamp(playerCountConfig.Value, 1, 8);
-        playerNameConfig = config.Bind("Gameplay", "PlayerName", string.Empty, "访客身份（主机用它跨热加入保存你的物品）。留空自动生成唯一随机名。");
-        if (string.IsNullOrWhiteSpace(playerNameConfig.Value)) { playerNameConfig.Value = "Guest" + Guid.NewGuid().ToString("N").Substring(0, 4); playerNameConfig.ConfigFile.Save(); }
-        starterKitTier2DayConfig = config.Bind("Gameplay", "GuestStarterKitTier2Day", 3, "从第几天起发放第二档访客初始装备。");
-        starterKitTier3DayConfig = config.Bind("Gameplay", "GuestStarterKitTier3Day", 7, "从第几天起发放第三档访客初始装备。");
-        starterKitTier1Config = config.Bind("Gameplay", "GuestStarterKitTier1", "", "新访客首次加入的初始装备（分号分隔的 物品类型:数量；留空不发装备）。");
-        starterKitTier2Config = config.Bind("Gameplay", "GuestStarterKitTier2", "", "第二档访客初始装备（仅首次加入，按天数选档）。");
-        starterKitTier3Config = config.Bind("Gameplay", "GuestStarterKitTier3", "", "第三档访客初始装备（仅首次加入，按天数选档）。");
-        autoSelfTestConfig = config.Bind("Gameplay", "SelfTestAuto", false, "启动后自动执行回环自测：自动开主机 → 自动读档 → 主机 READY 后自动连接 127.0.0.1 回环客户端并跑完整协议链（本地验证用，正常联机请保持 false）。");
-        guestProfiles = new DarkwoodGuestProfiles(log, starterKitTier2DayConfig.Value, starterKitTier3DayConfig.Value, starterKitTier1Config.Value, starterKitTier2Config.Value, starterKitTier3Config.Value);
-        lootScaleLedgerPath = Path.Combine(Paths.ConfigPath, "DarkwoodMultiplayerFramework.loot-scale-ledger.txt");
-        LoadLootScaleLedger();
-        telepathyPath = Path.Combine(Paths.PluginPath, "Telepathy.dll");
-        log?.LogInfo($"联机传输已配置：{telepathyPath}，TCP 端口 {portConfig.Value}。");
-    }
 
     public void StartHost()
     {
@@ -248,7 +154,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         hostSession.PeerDisconnected += OnPeerDisconnected;
         hostSession.MessageReceived += OnHostMessage;
         hostSession.MaxPeers = Math.Max(0, ConfiguredPlayerCount - 1);
-        peerGuestKeys.Clear(); peerGuestRecords.Clear();
+        Players.PeerGuestKeys.Clear(); Players.PeerGuestRecords.Clear();
         hostSession.Start(Port);
         Session.Role = MultiplayerRole.Host;
         Session.SessionId = Guid.NewGuid();
@@ -266,7 +172,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         clientSession.HandshakeSucceeded += OnHandshakeSucceeded;
         clientSession.HandshakeFailed += OnHandshakeFailed;
         clientSession.MessageReceived += OnClientMessage;
-        clientSession.GuestKey = NormalizeGuestKey(playerNameConfig?.Value);
+        clientSession.GuestKey = DarkwoodPlayerService.NormalizeGuestKey(playerNameConfig?.Value);
         clientSession.Connect(addressConfig?.Value ?? "127.0.0.1", Port);
         Session.Role = MultiplayerRole.Client;
         Session.LocalPeerId = -1;
@@ -299,11 +205,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
 
     public void StopNetwork()
     {
-        if (hostSession != null && guestProfiles != null) foreach (var peer in readyPeers.ToArray()) PersistGuestProfile(peer);
+        if (hostSession != null) foreach (var peer in readyPeers.ToArray()) Players.Players.PersistGuestProfile(peer);
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); sentSaves.Clear(); sentSnapshots.Clear(); pendingSnapshotRequests.Clear(); pendingActions.Clear();remotePlayerPositions.Clear();remoteInventories.Clear();peerGuestKeys.Clear();peerGuestRecords.Clear();peerHealths.Clear();peerMaxHealths.Clear();peerDowned.Clear();nextGuestHitAllowed.Clear();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();missingEntities.Clear();incomingSave=null; incomingSnapshot=null; TransferProgress=string.Empty; clientSnapshotReady=false; clientRegistryRequestSent=false; clientSnapshotManifestReceived=false; clientRegistryStabilized=false; loadStartedAt=0f; lastLoadBucket=0; ClientSaveLoadPending=false; nextRegistryRequestRetry=0f; lastSnapshotApplied=null; nextSnapshotAckRetry=0f; snapshotAckRetryCount=0; nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; nextAttackAllowed.Clear(); DestroyAttackAnchors(); replication.RestoreSimulation(); remotePlayers.Clear(); ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; activeRescue=null; hostDownedLocal=false; allDownedHandled=false; scheduledStopAt=0f; nextMonsterDamageScan=0f; nextHealthHeartbeat=0f; lastBroadcastHostHealth=float.MaxValue; nextRescueBroadcast=0f; localInvulUntil=0f; rescueLockedByMe=false; lastRescueProgress=default; DarkwoodDownedPatch.Reset();
+        outgoing.Clear(); readyPeers.Clear(); pendingActions.Clear();Players.Reset();SaveState.Reset();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();missingEntities.Clear(); nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; replication.RestoreSimulation();  ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; scheduledStopAt=0f; Combat?.Reset();
  Session.Reset();
  SetState(ConnectionState.Disconnected);
  }
@@ -316,10 +222,18 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
             return;
         }
         Instance = this;
+        RuntimeEntities = new DarkwoodRuntimeEntityService(this); // 0.8.9：所有权拆分
+        Combat = new DarkwoodCombatService(this); // 0.8.9：所有权拆分
+        Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 0.8.9：所有权拆分
+        SaveState = new DarkwoodSaveTransferService(this); // 0.8.9：所有权拆分
+        Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;
         RegisterMessageHandlers(); // 0.8.9：消息路由处理器注册
         SceneManager.sceneLoaded += OnSceneLoaded;
     }
+
+    /// <summary>0.8.9：延迟停服（战斗服务的全员倒地结局回调）。</summary>
+    internal void ScheduleStop(float delay) => scheduledStopAt = Time.unscaledTime + delay;
 
     public void Update()
     {
@@ -327,7 +241,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         try { hostSession?.Tick(); clientSession?.Tick(); }
         catch (Exception error) { FailClient("TRANSPORT_TICK_FAILED",error); }
         PumpOutgoing();
-        remotePlayers.Tick();
+        Players.RemotePlayers.Tick();
         var scene = CurrentScene;
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 
@@ -340,9 +254,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         // 0.8.9 第七刀：主机/客户端周期逻辑分离（单一入口，不再 if/else 交错）。
         if (Session.IsHost) TickHost();
         else if (Session.IsClient) TickClient();
-        PollRescueHotkey();
+        Combat.PollRescueHotkey();
         if(scheduledStopAt>0f&&Time.unscaledTime>=scheduledStopAt){scheduledStopAt=0f;StopNetwork();}
-        if(localInvulUntil>0f&&Time.unscaledTime>=localInvulUntil){localInvulUntil=0f;var player=Player.Instance;if(player!=null)player.invulnerable=false;}
+        Combat.TickClient();
     }
 
     private void TickHost()
@@ -359,8 +273,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
             foreach(var inventory in replication.CaptureInventoryDeltas()) BroadcastInventory(inventory);
         }
         if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendHostPose();}
-        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())PersistGuestProfile(peer);}
-        if(hostSession!=null){ScanMonsterDamage();SyncHostHealth();TickRescue();ScanRuntimeLootContainers();}
+        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())Players.PersistGuestProfile(peer);}
+        if(hostSession!=null){Combat.TickHost();RuntimeEntities.TickHost();}
     }
 
     private void TickClient()
@@ -369,21 +283,21 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         TrySendClientRegistryReady();
         RetrySnapshotAcknowledgement();
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
-        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&loadStartedAt>0f&&Time.unscaledTime-loadStartedAt>300f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（300 秒未完成）。请检查主机存档是否损坏。"));
-        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;TransferProgress=$"正在加载存档…({percent}%)";var bucket=percent/10;if(bucket>lastLoadBucket){lastLoadBucket=bucket;LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-loadStartedAt:F0} 秒）。");}}}
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&SaveState.LoadStartedAt>0f&&Time.unscaledTime-SaveState.LoadStartedAt>300f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（300 秒未完成）。请检查主机存档是否损坏。"));
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;TransferProgress=$"正在加载存档…({percent}%)";var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.LastLoadBucket=bucket;LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-SaveState.LoadStartedAt:F0} 秒）。");}}}
         if(autoReconnectAt>0f&&Time.unscaledTime>=autoReconnectAt){autoReconnectAt=0f;log?.LogInfo("场景切换自动重连：正在重新连接主机……");ConnectClient();}
     }
 
     private void TrySendClientRegistryReady()
     {
-        if (clientSnapshotReady || clientSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
-        if (!clientRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
+        if (SaveState.ClientSnapshotReady || SaveState.ClientSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
+        if (!SaveState.ClientRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
         var lifecycle = clientSession.Session.Lifecycle;
         if (lifecycle.State == ConnectionState.LoadingSave) lifecycle.MoveTo(ConnectionState.BuildingRegistry);
         if (lifecycle.State != ConnectionState.BuildingRegistry && lifecycle.State != ConnectionState.ApplyingSnapshot) return;
-        if (clientRegistryRequestSent && Time.realtimeSinceStartup < nextRegistryRequestRetry) return;
-        clientRegistryRequestSent = true;
-        nextRegistryRequestRetry = Time.realtimeSinceStartup + 5f;
+        if (SaveState.ClientRegistryRequestSent && Time.realtimeSinceStartup < SaveState.NextRegistryRequestRetry) return;
+        SaveState.ClientRegistryRequestSent = true;
+        SaveState.NextRegistryRequestRetry = Time.realtimeSinceStartup + 5f;
         TransferProgress = "正在请求世界快照";
         log?.LogInfo($"客户端已发送注册表握手：{registry.Count} 个实体，摘要 {RegistryDigest}，场景 {CurrentScene}。");
         try
@@ -391,7 +305,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
             clientSession.Send(ProtocolMessageType.Ready, ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene, RegistryDigest)));
             if (lifecycle.State == ConnectionState.BuildingRegistry) lifecycle.MoveTo(ConnectionState.ApplyingSnapshot);
         }
-        catch (Exception error) { clientRegistryRequestSent = false; FailClient("REGISTRY_REQUEST_FAILED", error); }
+        catch (Exception error) { SaveState.ClientRegistryRequestSent = false; FailClient("REGISTRY_REQUEST_FAILED", error); }
     }
 
     public void OnDestroy()
@@ -417,11 +331,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
             var payload = ReplicationProtocolCodec.Encode(new SceneChangeMessage(scene));
             var notified = 0;
             foreach (var readyPeer in readyPeers.ToArray()) { Queue(readyPeer, ProtocolMessageType.SceneChange, payload); notified++; }
-            pendingRuntimeEvents.Clear();
-            runtimeInventoryIds.Clear();
-            runtimeEnemyIds.Clear();
-            runtimeEventDispatch.Clear();
-            runtimeRegistry.ClearAlive();
+            RuntimeEntities.OnSceneChanged(); // 0.8.9：所有权拆分——场景切换清理由服务自管
             if (notified > 0) log?.LogInfo($"主机场景已切换：{scene}，已通知 {notified} 个客户端自动重连。");
         }
         SceneChanged?.Invoke(scene);
@@ -447,44 +357,4 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         registryDirty = false;
         log?.LogInfo($"实体注册表已就绪：{next.Count} 个实体，{collisions} 个 ID 冲突，摘要 {RegistryDigest}，场景 {CurrentScene}。");
     }
-
-    private void SetState(ConnectionState next)
-    {
-        if (State == next) return;
-        State = next;
-        Session.State = next; // 0.8.9：SessionContext 同步
-        log?.LogInfo($"联机状态：{StateText(next)}。");
-        StateChanged?.Invoke(next);
-    }
-
-    private ConnectionState DetectState()
-    {
-        if (hostSession == null && clientSession == null) return ConnectionState.Disconnected;
-        if (hostSession != null) return hostSession.IsActive ? ConnectionState.Ready : ConnectionState.Connecting;
-        if (clientSession == null) return ConnectionState.Disconnected;
-        if (sessionError.Length>0||clientSession.Session.Lifecycle.State == ConnectionState.Failed) return ConnectionState.Failed;
-        if (!clientSession.HandshakeComplete) return clientSession.Session.Lifecycle.State;
-        if (Player.Instance == null) return ConnectionState.LoadingSave;
-        if (clientSession != null && !clientSnapshotReady) return clientSession.Session.Lifecycle.State;
-        if (registryDirty) return ConnectionState.BuildingRegistry;
-        return ConnectionState.Ready;
-    }
-
-    private static string StateText(ConnectionState state) => state switch
-    {
-        ConnectionState.Disconnected => "未连接",
-        ConnectionState.Connecting => "连接中",
-        ConnectionState.VersionChecking => "版本检查",
-        ConnectionState.SaveTransfer => "准备存档",
-        ConnectionState.LoadingSave => "加载存档",
-        ConnectionState.BuildingRegistry => "建立实体注册表",
-        ConnectionState.ApplyingSnapshot => "应用世界快照",
-        ConnectionState.Ready => "已就绪",
-        ConnectionState.Failed => "失败",
-        ConnectionState.Stopping => "停止中",
-        _ => state.ToString()
-    };
-
-    private bool IsNetworkConnected() => hostSession?.IsActive == true || clientSession?.HandshakeComplete == true;
-    private ushort Port => (ushort)Mathf.Clamp(portConfig?.Value ?? 17777, 1, 65535);
 }
