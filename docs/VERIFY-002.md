@@ -2,7 +2,7 @@
 
 ## 结论：PASS（回环全链路）+ 实机矩阵待测
 
-## 0.8.9-beta.2 重构验证（2026-08-17）
+## 0.8.9-beta.3 重构验证（2026-08-17）
 
 十刀架构重构（partial 拆分、SessionContext、MessageRouter、协议领域文件、Transport 真接口、Host/Client Tick 分离、Runtime Entity 生命周期模型、xUnit 项目）后复测：
 
