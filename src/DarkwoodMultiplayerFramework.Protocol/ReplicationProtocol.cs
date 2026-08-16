@@ -355,7 +355,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.8-beta.1";
+    public const string Framework = "0.8.8-beta.2";
 }
 
 public static class ReplicationProtocolCodec

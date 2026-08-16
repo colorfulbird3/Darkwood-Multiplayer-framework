@@ -1,4 +1,4 @@
-# Darkwood Multiplayer Framework 0.8.8-beta.1
+# Darkwood Multiplayer Framework 0.8.8-beta.2
 
 **0.8.8 开发线收官封版**：Runtime Entity 全链路 + 出生点修正 + 场景切换 + 本地回环自测。
 

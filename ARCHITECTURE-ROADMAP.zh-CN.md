@@ -1,12 +1,12 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.8-beta.1（2026-08-16）
+> 最后更新：0.8.8-beta.2（2026-08-16）
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.8-beta.1**（0.8.8 开发线收官：Runtime Entity 全链 + 出生点 + 场景切换 + 回环自测） |
+| 当前发布版本 | **0.8.8-beta.2**（0.8.8 开发线收官：Runtime Entity 全链 + 出生点 + 场景切换 + 回环自测） |
 | 真机验证 | **VERIFY-001 核心玩法矩阵通过**（0.8.7）；**VERIFY-002 回环自测全链路通过**（详见 `docs/VERIFY-002.md`）；0.8.8 新功能实机矩阵进行中 |
 | 下一开发版本 | 0.8.8-beta.2：Container Revision 并发冲突保护（防双客户端复制物品，0.8.7-beta.2 顺延并入） |
 | 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
@@ -18,7 +18,7 @@
         ↓
 0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换 + 回环自测（已完成）
         ↓
-0.8.8-beta.1            ← 0.8.8 封版（本版，VERIFY-002）
+0.8.8-beta.2            ← 0.8.8 封版（本版，VERIFY-002）
         ↓
 0.8.8-beta.2            ← Container Revision 并发冲突保护
         ↓
