@@ -14,7 +14,7 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 /// </summary>
 public sealed class DarkwoodCombatService
 {
-    private readonly DarkwoodAdapterRuntime runtime;
+    private readonly IMultiplayerRuntimeHost runtime;
 
     // ── 血量 / 倒地 ──
     private readonly Dictionary<int, float> peerHealths = new Dictionary<int, float>();
@@ -132,17 +132,17 @@ public sealed class DarkwoodCombatService
     // ── 血量心跳 / 怪物伤害 ──
     private void ScanMonsterDamage()
     {
-        if (runtime.hostSession == null || runtime.readyPeers.Count == 0 || runtime.registry == null || Time.unscaledTime < nextMonsterDamageScan) return;
+        if (!runtime.Session.IsHost || runtime.ReadyPeers.Count == 0 || Time.unscaledTime < nextMonsterDamageScan) return;
         nextMonsterDamageScan = Time.unscaledTime + MonsterDamageScanInterval;
-        foreach (var pair in runtime.replication.AllEntities)
+        foreach (var pair in runtime.Replication.AllEntities)
         {
             var monster = pair.Value as Character;
             if (monster == null || !monster.alive || !monster.gameObject.activeSelf || monster.aggressiveness == Aggressiveness.neutral) continue;
             var monsterPosition = monster.transform.position;
-            foreach (var peer in runtime.readyPeers.ToArray())
+            foreach (var peer in runtime.ReadyPeers.ToArray())
             {
                 if (peerDowned.TryGetValue(peer, out var downed) && downed) continue;
-                if (!runtime.Players.RemotePositions.TryGetValue(peer, out var guestPosition)) continue;
+                if (!runtime.Players.TryGetRemotePosition(peer, out var guestPosition)) continue;
                 if (SqrDistance(monsterPosition, guestPosition) > MonsterReach * MonsterReach) continue;
                 if (Time.unscaledTime < (nextGuestHitAllowed.TryGetValue(peer, out var allowed) ? allowed : 0f)) continue;
                 nextGuestHitAllowed[peer] = Time.unscaledTime + MonsterHitCooldown;
@@ -154,7 +154,7 @@ public sealed class DarkwoodCombatService
                 {
                     peerDowned[peer] = true;
                     BroadcastHealth(peer, 0f, maxHealth, true);
-                    runtime.log?.LogWarning($"玩家 {peer} 被怪物击倒。");
+                    runtime.LogWarning($"玩家 {peer} 被怪物击倒。");
                     CheckAllDowned();
                 }
                 else BroadcastHealth(peer, health, maxHealth, false);
@@ -164,7 +164,7 @@ public sealed class DarkwoodCombatService
 
     private void SyncHostHealth()
     {
-        if (runtime.hostSession == null || runtime.readyPeers.Count == 0) return;
+        if (!runtime.Session.IsHost || runtime.ReadyPeers.Count == 0) return;
         var player = Player.Instance;
         if (player == null) return;
         if (Mathf.Abs(lastBroadcastHostHealth - player.health) > 0.01f || Time.unscaledTime >= nextHealthHeartbeat)
@@ -177,9 +177,9 @@ public sealed class DarkwoodCombatService
 
     private void BroadcastHealth(int playerId, float health, float maxHealth, bool downed)
     {
-        if (runtime.hostSession == null) return;
+        if (!runtime.Session.IsHost) return;
         var payload = ReplicationProtocolCodec.Encode(new PlayerHealthMessage(playerId, health, maxHealth, downed));
-        foreach (var readyPeer in runtime.readyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.PlayerHealth, payload);
+        foreach (var readyPeer in runtime.ReadyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.PlayerHealth, payload);
     }
 
     // ── 倒地 / 复活 ──
@@ -187,7 +187,7 @@ public sealed class DarkwoodCombatService
     {
         if (DarkwoodDownedPatch.LocalDowned) return;
         DarkwoodDownedPatch.EnterLocalDowned();
-        runtime.log?.LogWarning("本地玩家倒地！等待队友营救……");
+        runtime.LogWarning("本地玩家倒地！等待队友营救……");
         if (runtime.Session.IsHost)
         {
             hostDownedLocal = true;
@@ -199,8 +199,8 @@ public sealed class DarkwoodCombatService
 
     public void ApplyIncomingPlayerHealth(PlayerHealthMessage health)
     {
-        var myId = runtime.clientSession?.PeerId ?? -1;
-        if (health.PlayerId != myId || runtime.clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
+        var myId = runtime.LocalPeerId;
+        if (health.PlayerId != myId || runtime.Session.State != ConnectionState.Ready) return;
         var player = Player.Instance;
         if (player == null) return;
         if (health.Downed || health.Health <= 0f)
@@ -225,22 +225,22 @@ public sealed class DarkwoodCombatService
         player.invulnerable = true;
         localInvulUntil = Time.unscaledTime + ReviveInvulnerableSeconds;
         if (runtime.Session.IsHost) hostDownedLocal = false;
-        runtime.log?.LogInfo($"已复活：生命 {health:F0}，体力回满，{ReviveInvulnerableSeconds:F0} 秒保护。");
+        runtime.LogInfo($"已复活：生命 {health:F0}，体力回满，{ReviveInvulnerableSeconds:F0} 秒保护。");
     }
 
     private void CheckAllDowned()
     {
-        if (runtime.hostSession == null || allDownedHandled) return;
+        if (!runtime.Session.IsHost || allDownedHandled) return;
         if (!hostDownedLocal) return;
-        foreach (var peer in runtime.readyPeers.ToArray())
+        foreach (var peer in runtime.ReadyPeers.ToArray())
         {
             if (!peerDowned.TryGetValue(peer, out var downed) || !downed) return;
         }
         allDownedHandled = true;
         DarkwoodDownedPatch.AllDowned = true;
-        runtime.log?.LogWarning("全员倒地——触发原版结局并结束联机会话。");
+        runtime.LogWarning("全员倒地——触发原版结局并结束联机会话。");
         var payload = ReplicationProtocolCodec.Encode(new AllDownedMessage());
-        foreach (var readyPeer in runtime.readyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.AllDowned, payload);
+        foreach (var readyPeer in runtime.ReadyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.AllDowned, payload);
         RunLocalVanillaEnding();
         runtime.ScheduleStop(PostDownedEndingDelay);
     }
@@ -249,7 +249,7 @@ public sealed class DarkwoodCombatService
     {
         if (DarkwoodDownedPatch.AllDowned) return;
         DarkwoodDownedPatch.AllDowned = true;
-        runtime.log?.LogWarning("全员倒地——触发原版结局并结束联机会话。");
+        runtime.LogWarning("全员倒地——触发原版结局并结束联机会话。");
         RunLocalVanillaEnding();
         runtime.ScheduleStop(PostDownedEndingDelay);
     }
@@ -269,22 +269,22 @@ public sealed class DarkwoodCombatService
                 if (enumerator != null) player.StartCoroutine(enumerator);
             }
         }
-        catch (Exception error) { runtime.log?.LogWarning("原版结局触发失败：" + error.Message); }
+        catch (Exception error) { runtime.LogWarning("原版结局触发失败：" + error.Message); }
     }
 
     // ── 营救 ──
     public void PollRescueHotkey()
     {
-        if (!runtime.IsMultiplayerActive || DarkwoodDownedPatch.AllDowned) return;
+        if (!runtime.Session.IsActive || DarkwoodDownedPatch.AllDowned) return;
         if (DarkwoodDownedPatch.LocalDowned) return;
         if (!Input.GetKeyDown(KeyCode.F4)) return;
         if (runtime.Session.IsHost) HandleRescueIntent(0, IsRescuing(0));
-        else if (runtime.clientSession != null) runtime.clientSession.Send(ProtocolMessageType.RescueRequest, ReplicationProtocolCodec.Encode(new RescueRequestMessage(runtime.clientSession.PeerId, IsRescuing(runtime.clientSession.PeerId))));
+        else runtime.SendToHost(ProtocolMessageType.RescueRequest, ReplicationProtocolCodec.Encode(new RescueRequestMessage(runtime.LocalPeerId, IsRescuing(runtime.LocalPeerId))));
     }
 
     public void HandleRescueIntent(int rescuerId, bool cancel)
     {
-        if (runtime.hostSession == null) return;
+        if (!runtime.Session.IsHost) return;
         if (cancel)
         {
             if (activeRescue != null && activeRescue.RescuerId == rescuerId) CancelRescue();
@@ -297,7 +297,7 @@ public sealed class DarkwoodCombatService
         }
         else
         {
-            if (!runtime.readyPeers.Contains(rescuerId)) return;
+            if (!runtime.ReadyPeers.Contains(rescuerId)) return;
             if (peerDowned.TryGetValue(rescuerId, out var rescuerDowned) && rescuerDowned) return;
         }
         var rescuerPosition = GetPlayerPosition(rescuerId);
@@ -308,11 +308,11 @@ public sealed class DarkwoodCombatService
             var sq = SqrDistance(rescuerPosition, GetPlayerPosition(0));
             if (sq <= bestSq) { bestSq = sq; bestTarget = 0; }
         }
-        foreach (var peer in runtime.readyPeers.ToArray())
+        foreach (var peer in runtime.ReadyPeers.ToArray())
         {
             if (peer == rescuerId) continue;
             if (!peerDowned.TryGetValue(peer, out var downed) || !downed) continue;
-            if (!runtime.Players.RemotePositions.TryGetValue(peer, out var position)) continue;
+            if (!runtime.Players.TryGetRemotePosition(peer, out var position)) continue;
             var sq = SqrDistance(rescuerPosition, position);
             if (sq <= bestSq) { bestSq = sq; bestTarget = peer; }
         }
@@ -320,7 +320,7 @@ public sealed class DarkwoodCombatService
         {
             var nearestSq = float.MaxValue;
             if (hostDownedLocal && rescuerId != 0) nearestSq = SqrDistance(rescuerPosition, GetPlayerPosition(0));
-            runtime.log?.LogInfo($"营救请求被拒绝：玩家 {rescuerId} 附近没有倒地的队友（最近倒地距离 {Mathf.Sqrt(nearestSq):F1} 米，有效范围 {RescueRange:F0} 米）。");
+            runtime.LogInfo($"营救请求被拒绝：玩家 {rescuerId} 附近没有倒地的队友（最近倒地距离 {Mathf.Sqrt(nearestSq):F1} 米，有效范围 {RescueRange:F0} 米）。");
             runtime.Queue(rescuerId, ProtocolMessageType.RescueProgress, ReplicationProtocolCodec.Encode(new RescueProgressMessage(rescuerId, rescuerId, 0f, false)));
             return;
         }
@@ -328,7 +328,7 @@ public sealed class DarkwoodCombatService
         nextRescueBroadcast = 0f;
         if (rescuerId == 0 && !DarkwoodDownedPatch.LocalDowned) { rescueLockedByMe = true; global::Core.forbidInputs = true; }
         BroadcastRescueProgress(bestTarget, rescuerId, 0f, true);
-        runtime.log?.LogInfo($"营救开始：玩家 {rescuerId} → 倒地玩家 {bestTarget}（{RescueDurationSeconds:F0} 秒）。");
+        runtime.LogInfo($"营救开始：玩家 {rescuerId} → 倒地玩家 {bestTarget}（{RescueDurationSeconds:F0} 秒）。");
     }
 
     private void TickRescue()
@@ -355,7 +355,7 @@ public sealed class DarkwoodCombatService
         }
         else
         {
-            if (!runtime.readyPeers.Contains(rescuer)) return true;
+            if (!runtime.ReadyPeers.Contains(rescuer)) return true;
             if (peerDowned.TryGetValue(rescuer, out var rescuerDowned) && rescuerDowned) return true;
         }
         if (target == 0)
@@ -375,7 +375,7 @@ public sealed class DarkwoodCombatService
         activeRescue = null;
         if (rescuer == 0) { rescueLockedByMe = false; if (!DarkwoodDownedPatch.LocalDowned) global::Core.forbidInputs = false; }
         BroadcastRescueProgress(target, rescuer, 0f, false);
-        runtime.log?.LogInfo("营救取消（进度归零，双方解锁）。");
+        runtime.LogInfo("营救取消（进度归零，双方解锁）。");
     }
 
     private void CompleteRescue()
@@ -402,13 +402,13 @@ public sealed class DarkwoodCombatService
             BroadcastHealth(target, health, maxHealth, false);
         }
         BroadcastRescueProgress(target, rescuer, 1f, false);
-        runtime.log?.LogInfo($"营救完成：玩家 {target} 复活（生命上限的 10%，体力回满）。");
+        runtime.LogInfo($"营救完成：玩家 {target} 复活（生命上限的 10%，体力回满）。");
     }
 
     public void HandleRescueProgress(RescueProgressMessage progress)
     {
         lastRescueProgress = progress;
-        var myId = runtime.clientSession?.PeerId ?? -1;
+        var myId = runtime.LocalPeerId;
         if (progress.RescuerId != myId) return;
         if (progress.Active && !rescueLockedByMe)
         {
@@ -426,7 +426,7 @@ public sealed class DarkwoodCombatService
     {
         var message = new RescueProgressMessage(targetId, rescuerId, progress, active);
         var payload = ReplicationProtocolCodec.Encode(message);
-        foreach (var readyPeer in runtime.readyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.RescueProgress, payload);
+        foreach (var readyPeer in runtime.ReadyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.RescueProgress, payload);
         if (runtime.Session.IsHost && active) lastRescueProgress = message;
     }
 
@@ -447,7 +447,7 @@ public sealed class DarkwoodCombatService
     public Component? ResolveMeleeTarget(Vector3 pose, Vector3 dir)
     {
         Component? best = null; var bestScore = float.MaxValue; var reachSq = MeleeReach * MeleeReach;
-        foreach (var pair in runtime.replication.AllEntities)
+        foreach (var pair in runtime.Replication.AllEntities)
         {
             var c = pair.Value; if (c == null) continue;
             var p = c.transform.position;
@@ -477,14 +477,14 @@ public sealed class DarkwoodCombatService
             else if (target is Window window) window.getHit(barricadeDamage, attacker);
             else if (target is Item item) item.getHit(barricadeDamage, attacker);
         }
-        catch (Exception error) { runtime.log?.LogWarning($"Authoritative melee damage application failed for {target.GetType().Name}: {error.Message}"); }
+        catch (Exception error) { runtime.LogWarning($"Authoritative melee damage application failed for {target.GetType().Name}: {error.Message}"); }
     }
 
     // ── 工具 ──
     private Vector3 GetPlayerPosition(int playerId)
     {
         if (playerId == 0) { var player = Player.Instance; return player != null ? player.transform.position : Vector3.zero; }
-        if (runtime.Players.RemotePositions.TryGetValue(playerId, out var position)) return position;
+        if (runtime.Players.TryGetRemotePosition(playerId, out var position)) return position;
         return Vector3.zero;
     }
 

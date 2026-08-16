@@ -68,7 +68,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!item.gameObject.activeSelf||item.destroyed||!item.isDroppedItem){RejectAction(peer,request,"NOT_PICKABLE",state.Revision);return;}
         var droppedInventory=DarkwoodDroppedItemAccessor.GetInventory(item);
         if(droppedInventory==null||droppedInventory.slots==null||droppedInventory.slots.Count==0||InvItemClass.isNull(droppedInventory.slots[0].invItem)){RejectAction(peer,request,"ITEM_EMPTY",state.Revision);return;}
-        if(!Players.RemoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
+        if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",state.Revision);return;}
         var source=droppedInventory.slots[0].invItem;var pickup=new PickupResultPayload(source.type,source.amount,source.durability,(int)source.modifierQuality,source.isRecipe);
         if(!shadow.CanAdd(source)){RejectAction(peer,request,"INVENTORY_FULL",state.Revision);return;}
         // The remote player's inventory is represented by a host-side shadow until
@@ -92,10 +92,10 @@ public sealed partial class DarkwoodAdapterRuntime
         AttackPayload attack;
         try{attack=ReplicationProtocolCodec.DecodeAttack(request.Payload);}
         catch(Exception error){RejectAction(peer,request,"INVALID_ATTACK_PAYLOAD",0);log?.LogWarning($"Attack payload rejected from peer {peer}: {error.Message}");return;}
-        if(!Players.RemotePositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
+        if(!Players.TryGetRemotePosition(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
         if(!Combat.TryConsumeAttack(peer,AttackCooldownSeconds)){RejectAction(peer,request,"RATE_LIMITED",0);return;}
         // FIX-011：信任模型——不再校验攻击位置与追踪姿势的距离；目标仍按客户端报告的方向解析。
-        if(!Players.RemoteInventories.TryGetValue(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
+        if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
         if(!shadow.TryPeek(attack.FromHotbar,attack.SlotIndex,-1,out var weapon)){RejectAction(peer,request,"PLAYER_SLOT_EMPTY",0);return;}
         // Damage is derived from the HOST's game data for the shadow weapon type; the client never sends damage values.
         InvItemClass weaponClass;
@@ -126,7 +126,7 @@ public sealed partial class DarkwoodAdapterRuntime
     {
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetComponent(id,out var component)||!(component is Door door)){RejectAction(peer,request,"DOOR_NOT_FOUND",0);return;}
-        if(!Players.RemotePositions.TryGetValue(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
+        if(!Players.TryGetRemotePosition(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
         // FIX-011：信任模型——距离/版本/封板判断全部移除，客户端本地已执行，主机直接执行并广播。
         door.openClose(Combat.GetAttackAnchor(peer,pose).transform);
         AcceptInteract(peer,request,id,door,0);

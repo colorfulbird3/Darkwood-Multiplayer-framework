@@ -52,7 +52,7 @@ public sealed partial class DarkwoodAdapterRuntime
             else
             {
                 var applied = ReplicationProtocolCodec.DecodeSaveTransferApplied(envelope.Payload);
-                if (!runtime.SaveState.SentSaves.TryGetValue(peer.PeerId, out var expected) || expected != applied.TransferId)
+                if (!runtime.SaveState.TryGetSentSave(peer.PeerId, out var expected) || expected != applied.TransferId)
                     throw new InvalidDataException("Save acknowledgement does not match active transfer.");
                 runtime.log?.LogInfo($"Peer {peer.PeerId} installed verified save {applied.TransferId}.");
             }
@@ -82,8 +82,8 @@ public sealed partial class DarkwoodAdapterRuntime
             {
                 var hostPosition = Player.Instance != null ? Player.Instance.transform.position : Vector3.zero;
                 var day = global::Core.currentProfile?.day ?? 0;
-                var record = runtime.Players.ResolveGuestProfile(peer.PeerId, runtime.Players.PeerGuestKeys.TryGetValue(peer.PeerId, out var guestKey) ? guestKey : null, day, hostPosition, out var spawn);
-                var shadow = runtime.Players.RemoteInventories[peer.PeerId];
+                var record = runtime.Players.ResolveGuestProfile(peer.PeerId, runtime.Players.TryGetGuestKey(peer.PeerId, out var guestKey) ? guestKey : null, day, hostPosition, out var spawn);
+                runtime.Players.TryGetInventory(peer.PeerId, out var shadow);
                 var hostMaxHealth = Player.Instance != null ? Player.Instance.maxHealth : 100f;
                 runtime.Combat.RegisterPeer(peer.PeerId, hostMaxHealth); // 0.8.9：血量状态归战斗服务
                 runtime.Queue(peer.PeerId, ProtocolMessageType.GuestProfile, ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(), spawn.x, spawn.y, spawn.z, record.Day, record.JoinCount, hostMaxHealth, hostMaxHealth, false)));
@@ -108,7 +108,7 @@ public sealed partial class DarkwoodAdapterRuntime
             if (!runtime.readyPeers.Contains(peer.PeerId) || pose.Scene != runtime.CurrentScene) return;
             runtime.Combat.SetPeerMaxHealth(peer.PeerId, pose.MaxHealth);
             pose = new PlayerPoseMessage(peer.PeerId, pose.Sequence, runtime.CurrentScene, pose.X, pose.Y, pose.Z, pose.Qx, pose.Qy, pose.Qz, pose.Qw, pose.MaxHealth, pose.Flags, pose.TorsoClip, pose.TorsoFrame, pose.LegsClip, pose.LegsFrame);
-            runtime.Players.RemotePositions[peer.PeerId] = new Vector3(pose.X, pose.Y, pose.Z);
+            runtime.Players.UpdateRemotePosition(peer.PeerId, new Vector3(pose.X, pose.Y, pose.Z));
             runtime.Players.RemotePlayers.Apply(pose, 0);
             var payload = ReplicationProtocolCodec.Encode(pose);
             foreach (var readyPeer in runtime.readyPeers.ToArray()) if (readyPeer != peer.PeerId) runtime.Queue(readyPeer, ProtocolMessageType.PlayerPose, payload);
@@ -183,10 +183,8 @@ public sealed partial class DarkwoodAdapterRuntime
         {
             if (envelope.MessageType == ProtocolMessageType.SaveTransferManifest)
             {
-                runtime.SaveState.IncomingSaveManifest = ReplicationProtocolCodec.DecodeSaveTransferManifest(envelope.Payload);
-                runtime.SaveState.IncomingSave = new ChunkTransferAssembler(runtime.SaveState.IncomingSaveManifest.TransferId, runtime.SaveState.IncomingSaveManifest.TotalBytes, runtime.SaveState.IncomingSaveManifest.ChunkCount, runtime.SaveState.IncomingSaveManifest.Sha256);
-                runtime.TransferProgress = $"正在接收存档：0/{runtime.SaveState.IncomingSave.ChunkCount}（0%）";
-                runtime.log?.LogInfo($"开始接收存档：{runtime.SaveState.IncomingSaveManifest.TotalBytes} 字节，{runtime.SaveState.IncomingSaveManifest.ChunkCount} 个数据块。");
+                runtime.SaveState.BeginSaveReceive(ReplicationProtocolCodec.DecodeSaveTransferManifest(envelope.Payload));
+                runtime.log?.LogInfo($"开始接收存档：{runtime.SaveState.PendingSaveManifest.TotalBytes} 字节，{runtime.SaveState.PendingSaveManifest.ChunkCount} 个数据块。");
             }
             else runtime.ReceiveSaveChunk(ReplicationProtocolCodec.DecodeSaveTransferChunk(envelope.Payload));
         }
@@ -205,13 +203,8 @@ public sealed partial class DarkwoodAdapterRuntime
             if (envelope.MessageType == ProtocolMessageType.WorldSnapshotManifest)
             {
                 var manifest = ReplicationProtocolCodec.DecodeWorldSnapshotManifest(envelope.Payload);
-                if (runtime.SaveState.ClientSnapshotManifestReceived) return;
-                runtime.SaveState.IncomingSnapshotManifest = manifest;
-                runtime.SaveState.IncomingSnapshot = new ChunkTransferAssembler(runtime.SaveState.IncomingSnapshotManifest.SnapshotId, runtime.SaveState.IncomingSnapshotManifest.TotalBytes, runtime.SaveState.IncomingSnapshotManifest.ChunkCount, runtime.SaveState.IncomingSnapshotManifest.Sha256, 64L * 1024 * 1024);
-                runtime.SaveState.ClientRegistryRequestSent = true;
-                runtime.SaveState.ClientSnapshotManifestReceived = true;
-                runtime.TransferProgress = $"正在接收世界快照：0/{runtime.SaveState.IncomingSnapshot.ChunkCount}（0%）";
-                runtime.log?.LogInfo($"开始接收世界快照：{runtime.SaveState.IncomingSnapshotManifest.TotalBytes} 字节，{runtime.SaveState.IncomingSnapshotManifest.ChunkCount} 个数据块。");
+                runtime.SaveState.BeginSnapshotReceive(manifest);
+                runtime.log?.LogInfo($"开始接收世界快照：{manifest.TotalBytes} 字节，{manifest.ChunkCount} 个数据块。");
             }
             else runtime.ReceiveSnapshotChunk(ReplicationProtocolCodec.DecodeWorldSnapshotChunk(envelope.Payload));
         }
@@ -337,12 +330,11 @@ public sealed partial class DarkwoodAdapterRuntime
                 case ProtocolMessageType.Ready:
                 {
                     var ready = ReplicationProtocolCodec.DecodeReady(envelope.Payload);
-                    if (ready.Scene != runtime.CurrentScene || ready.RegistryDigest != runtime.SaveState.IncomingSnapshotManifest.RegistryDigest)
+                    if (ready.Scene != runtime.CurrentScene || ready.RegistryDigest != runtime.SaveState.PendingSnapshotManifest.RegistryDigest)
                         throw new InvalidDataException("主机就绪确认与已应用的世界快照不一致。");
-                    runtime.SaveState.ClientSnapshotReady = true;
-                    runtime.SaveState.LastSnapshotApplied = null;
-                    runtime.SaveState.SnapshotAckRetryCount = 0;
-                    runtime.TransferProgress = "联机已就绪";
+                    runtime.SaveState.MarkSnapshotReady();
+                    runtime.SaveState.ClearSnapshotApplied();
+                    runtime.SaveState.SetProgress("联机已就绪");
                     if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.ApplyingSnapshot)
                         runtime.clientSession.Session.Lifecycle.MoveTo(ConnectionState.Ready);
                     runtime.log?.LogInfo($"客户端联机已就绪：场景 {ready.Scene}，注册表摘要 {ready.RegistryDigest}。");

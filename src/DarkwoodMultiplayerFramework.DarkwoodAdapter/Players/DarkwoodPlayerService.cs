@@ -13,10 +13,10 @@ public sealed class DarkwoodPlayerService
 {
     private readonly DarkwoodAdapterRuntime runtime;
 
-    internal readonly Dictionary<int, Vector3> RemotePositions = new Dictionary<int, Vector3>();
-    internal readonly Dictionary<int, DarkwoodPlayerInventoryShadow> RemoteInventories = new Dictionary<int, DarkwoodPlayerInventoryShadow>();
-    internal readonly Dictionary<int, string> PeerGuestKeys = new Dictionary<int, string>();
-    internal readonly Dictionary<int, GuestProfileRecord> PeerGuestRecords = new Dictionary<int, GuestProfileRecord>();
+    private readonly Dictionary<int, Vector3> remotePositions = new Dictionary<int, Vector3>();
+    private readonly Dictionary<int, DarkwoodPlayerInventoryShadow> remoteInventories = new Dictionary<int, DarkwoodPlayerInventoryShadow>();
+    private readonly Dictionary<int, string> peerGuestKeys = new Dictionary<int, string>();
+    private readonly Dictionary<int, GuestProfileRecord> peerGuestRecords = new Dictionary<int, GuestProfileRecord>();
 
     public DarkwoodRemotePlayers RemotePlayers { get; }
     private DarkwoodGuestProfiles? guestProfiles;
@@ -39,9 +39,9 @@ public sealed class DarkwoodPlayerService
         spawn = runtime.DefaultSpawnPoint(); // 0.8.8-alpha.5：客户端始终在游戏默认出生点出生
         var shadow = DarkwoodPlayerInventoryShadow.FromRecord(record, message => runtime.log?.LogWarning(message));
         if (record.JoinCount == 1) shadow.AddStarterKit(guestProfiles?.KitForDay(day), message => runtime.log?.LogWarning(message));
-        RemoteInventories[peer] = shadow;
-        PeerGuestRecords[peer] = record;
-        PeerGuestKeys[peer] = key;
+        remoteInventories[peer] = shadow;
+        peerGuestRecords[peer] = record;
+        peerGuestKeys[peer] = key;
         runtime.log?.LogInfo($"Peer {peer} guest profile resolved: {key}, day {record.Day}, join {record.JoinCount}, spawn ({spawn.x:F1},{spawn.y:F1},{spawn.z:F1}).");
         return record;
     }
@@ -49,8 +49,8 @@ public sealed class DarkwoodPlayerService
     public void PersistGuestProfile(int peer)
     {
         if (guestProfiles == null) return;
-        if (!PeerGuestKeys.TryGetValue(peer, out var key) || !PeerGuestRecords.TryGetValue(peer, out var record) || !RemoteInventories.TryGetValue(peer, out var shadow)) return;
-        var position = RemotePositions.TryGetValue(peer, out var pose) ? pose : new Vector3(record.X, record.Y, record.Z);
+        if (!peerGuestKeys.TryGetValue(peer, out var key) || !PeerGuestRecords.TryGetValue(peer, out var record) || !RemoteInventories.TryGetValue(peer, out var shadow)) return;
+        var position = remotePositions.TryGetValue(peer, out var pose) ? pose : new Vector3(record.X, record.Y, record.Z);
         var state = shadow.CaptureState();
         var updated = new GuestProfileRecord(record.GuestKey, record.Day, record.JoinCount, position.x, position.y, position.z, state.Backpack, state.Hotbar, DateTime.UtcNow.Ticks);
         guestProfiles.Save(runtime.HostSaveToken(), updated);
@@ -76,21 +76,38 @@ public sealed class DarkwoodPlayerService
         return key;
     }
 
+    // ── 0.8.9 收口：状态访问全部走方法（禁止外部直接摸字典）──
+    public IEnumerable<int> ConnectedPeers => remoteInventories.Keys;
+
+    public bool TryGetRemotePosition(int peer, out Vector3 position) => remotePositions.TryGetValue(peer, out position);
+    public void UpdateRemotePosition(int peer, Vector3 position) => remotePositions[peer] = position;
+    public bool RemoveRemotePosition(int peer) => remotePositions.Remove(peer);
+
+    internal bool TryGetInventory(int peer, out DarkwoodPlayerInventoryShadow inventory) => remoteInventories.TryGetValue(peer, out inventory!);
+    internal void SetInventory(int peer, DarkwoodPlayerInventoryShadow inventory) => remoteInventories[peer] = inventory;
+    public bool RemoveInventory(int peer) => remoteInventories.Remove(peer);
+
+    public bool TryGetGuestKey(int peer, out string key) => peerGuestKeys.TryGetValue(peer, out key!);
+    public void SetGuestKey(int peer, string key) => peerGuestKeys[peer] = key;
+    public bool TryGetGuestRecord(int peer, out GuestProfileRecord record) => peerGuestRecords.TryGetValue(peer, out record);
+    public void SetGuestRecord(int peer, GuestProfileRecord record) => peerGuestRecords[peer] = record;
+    public bool RemoveGuestData(int peer) => peerGuestKeys.Remove(peer) | peerGuestRecords.Remove(peer);
+
     public void OnPeerDisconnected(int peer)
     {
-        RemotePositions.Remove(peer);
-        RemoteInventories.Remove(peer);
+        remotePositions.Remove(peer);
+        remoteInventories.Remove(peer);
         RemotePlayers.Remove(peer);
-        PeerGuestKeys.Remove(peer);
-        PeerGuestRecords.Remove(peer);
+        peerGuestKeys.Remove(peer);
+        peerGuestRecords.Remove(peer);
     }
 
     public void Reset()
     {
-        RemotePositions.Clear();
-        RemoteInventories.Clear();
-        PeerGuestKeys.Clear();
-        PeerGuestRecords.Clear();
+        remotePositions.Clear();
+        remoteInventories.Clear();
+        peerGuestKeys.Clear();
+        peerGuestRecords.Clear();
         RemotePlayers.Clear();
     }
 }

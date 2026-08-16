@@ -163,7 +163,7 @@ public sealed class DarkwoodRuntimeEntityService
             var message = pair.Value;
             foreach (var readyPeer in runtime.readyPeers.ToArray())
             {
-                if (!runtime.Players.RemotePositions.TryGetValue(readyPeer, out var pose)) continue;
+                if (!runtime.Players.TryGetRemotePosition(readyPeer, out var pose)) continue;
                 var dx = pose.x - message.X; var dz = pose.z - message.Z;
                 if (dx * dx + dz * dz > TriggerRange * TriggerRange) continue;
                 if (!dispatch.TryMark(message.RuntimeEntityId, readyPeer)) continue;

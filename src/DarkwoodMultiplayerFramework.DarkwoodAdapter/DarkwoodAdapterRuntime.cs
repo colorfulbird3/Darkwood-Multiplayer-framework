@@ -21,8 +21,19 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 
 /// <summary>Darkwood-specific boundary. It owns scene/player discovery while protocol logic stays in src modules.</summary>
-public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
+public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayerRuntimeHost
 {
+    // ── IMultiplayerRuntimeHost：Service 最小依赖面（0.8.9 收口）──
+    IReadOnlyCollection<int> IMultiplayerRuntimeHost.ReadyPeers => readyPeers;
+    long IMultiplayerRuntimeHost.ServerTick => serverTick;
+    DarkwoodEntityReplication IMultiplayerRuntimeHost.Replication => replication;
+    DarkwoodPlayerService IMultiplayerRuntimeHost.Players => Players;
+    int IMultiplayerRuntimeHost.LocalPeerId => Session.LocalPeerId;
+    void IMultiplayerRuntimeHost.Queue(int peer, ProtocolMessageType type, byte[] payload) => Queue(peer, type, payload);
+    void IMultiplayerRuntimeHost.SendToHost(ProtocolMessageType type, byte[] payload) { if (clientSession != null) clientSession.Send(type, payload); }
+    void IMultiplayerRuntimeHost.ScheduleStop(float delay) => ScheduleStop(delay);
+    void IMultiplayerRuntimeHost.LogInfo(string message) => log?.LogInfo(message);
+    void IMultiplayerRuntimeHost.LogWarning(string message) => log?.LogWarning(message);
     public static DarkwoodAdapterRuntime? Instance { get; private set; }
     public bool ClientSaveLoadPending { get => SaveState.ClientSaveLoadPending; set => SaveState.ClientSaveLoadPending = value; }
     public static void LogMessage(string message) => Instance?.log?.LogInfo(message);
@@ -47,7 +58,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
     public long DuplicateActionCount => duplicateActions;
     public bool ApplyingAuthoritativeInventory => replication.ApplyingRemote;
     public string SessionError => sessionError.Length > 0 ? sessionError : LastNetworkError;
-        public string TransferProgress { get => SaveState.TransferProgressValue; set => SaveState.TransferProgressValue = value; }
+        public string TransferProgress => SaveState.TransferProgressValue; // 0.8.9：状态归服务，只读
     public bool IsMultiplayerActive => hostSession?.IsActive == true || clientSession?.HandshakeComplete == true;
     public bool AllDowned => DarkwoodDownedPatch.AllDowned;
     public RescueProgressMessage LastRescueProgress => Combat?.LastRescueProgress ?? default;
@@ -55,7 +66,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
     {
         var myId = IsHost ? 0 : (clientSession?.PeerId ?? -1);
         if (playerId == myId) { var player = Player.Instance; if (player != null) { position = player.transform.position; return true; } position = Vector3.zero; return false; }
-        if (IsHost && Players.RemotePositions.TryGetValue(playerId, out position)) return true;
+        if (IsHost && Players.TryGetRemotePosition(playerId, out position)) return true;
         if (Players.RemotePlayers.TryGetPosition(playerId, out position)) return true;
         position = Vector3.zero;
         return false;
@@ -154,7 +165,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         hostSession.PeerDisconnected += OnPeerDisconnected;
         hostSession.MessageReceived += OnHostMessage;
         hostSession.MaxPeers = Math.Max(0, ConfiguredPlayerCount - 1);
-        Players.PeerGuestKeys.Clear(); Players.PeerGuestRecords.Clear();
+        // 0.8.9：玩家状态清理归 Players.Reset()
         hostSession.Start(Port);
         Session.Role = MultiplayerRole.Host;
         Session.SessionId = Guid.NewGuid();
@@ -284,28 +295,28 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour
         RetrySnapshotAcknowledgement();
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
         if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&SaveState.LoadStartedAt>0f&&Time.unscaledTime-SaveState.LoadStartedAt>300f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（300 秒未完成）。请检查主机存档是否损坏。"));
-        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;TransferProgress=$"正在加载存档…({percent}%)";var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.LastLoadBucket=bucket;LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-SaveState.LoadStartedAt:F0} 秒）。");}}}
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;SaveState.SetProgress($"正在加载存档…({percent}%)");var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.MarkLoadBucket(bucket);LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-SaveState.LoadStartedAt:F0} 秒）。");}}}
         if(autoReconnectAt>0f&&Time.unscaledTime>=autoReconnectAt){autoReconnectAt=0f;log?.LogInfo("场景切换自动重连：正在重新连接主机……");ConnectClient();}
     }
 
     private void TrySendClientRegistryReady()
     {
-        if (SaveState.ClientSnapshotReady || SaveState.ClientSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
-        if (!SaveState.ClientRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
+        if (SaveState.IsSnapshotReady || SaveState.IsSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
+        if (!SaveState.IsRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
         var lifecycle = clientSession.Session.Lifecycle;
         if (lifecycle.State == ConnectionState.LoadingSave) lifecycle.MoveTo(ConnectionState.BuildingRegistry);
         if (lifecycle.State != ConnectionState.BuildingRegistry && lifecycle.State != ConnectionState.ApplyingSnapshot) return;
-        if (SaveState.ClientRegistryRequestSent && Time.realtimeSinceStartup < SaveState.NextRegistryRequestRetry) return;
-        SaveState.ClientRegistryRequestSent = true;
-        SaveState.NextRegistryRequestRetry = Time.realtimeSinceStartup + 5f;
-        TransferProgress = "正在请求世界快照";
+        if (SaveState.IsRegistryRequestSent && Time.realtimeSinceStartup < SaveState.NextRegistryRequestRetry) return;
+        SaveState.MarkRegistryRequestSent();
+        SaveState.MarkRegistryRequestRetry(Time.realtimeSinceStartup + 5f);
+        SaveState.SetProgress("正在请求世界快照");
         log?.LogInfo($"客户端已发送注册表握手：{registry.Count} 个实体，摘要 {RegistryDigest}，场景 {CurrentScene}。");
         try
         {
             clientSession.Send(ProtocolMessageType.Ready, ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene, RegistryDigest)));
             if (lifecycle.State == ConnectionState.BuildingRegistry) lifecycle.MoveTo(ConnectionState.ApplyingSnapshot);
         }
-        catch (Exception error) { SaveState.ClientRegistryRequestSent = false; FailClient("REGISTRY_REQUEST_FAILED", error); }
+        catch (Exception error) { SaveState.ClearRegistryRequestSent(); FailClient("REGISTRY_REQUEST_FAILED", error); }
     }
 
     public void OnDestroy()
