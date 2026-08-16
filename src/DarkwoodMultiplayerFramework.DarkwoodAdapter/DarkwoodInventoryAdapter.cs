@@ -34,4 +34,22 @@ public static class DarkwoodInventoryAdapter
         }
         inventory.refreshItems();
     }
+    /// <summary>0.8.9-alpha.1：从玩家背包移除指定物品（容器并发冲突补偿：拿走未生效的物品退回）。</summary>
+    public static void RemoveFromPlayerInventory(string type,int amount)
+    {
+        var player=Player.Instance;
+        if(player==null||string.IsNullOrEmpty(type)||amount<=0)return;
+        var inventory=player.GetComponent<Inventory>();
+        if(inventory==null||inventory.slots==null)return;
+        var remaining=amount;
+        for(var i=0;i<inventory.slots.Count&&remaining>0;i++)
+        {
+            var slot=inventory.slots[i];
+            if(slot==null||slot.invItem==null||slot.invItem.type!=type)continue;
+            var take=Math.Min(remaining,slot.invItem.amount);
+            slot.invItem.amount-=take;remaining-=take;
+            if(slot.invItem.amount<=0)slot.removeItem();else slot.invItem.refresh();
+        }
+        inventory.refreshItems();
+    }
 }

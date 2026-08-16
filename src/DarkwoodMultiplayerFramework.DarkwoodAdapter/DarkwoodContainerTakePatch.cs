@@ -16,13 +16,70 @@ internal static class DarkwoodContainerTakePatch
 {
     internal const string Mode = "TrustModeSharedContainers";
 
+    /// <summary>0.8.9-alpha.1：待确认的拿取记录（乐观锁冲突时用于背包补偿）。</summary>
+    internal readonly struct PendingTake
+    {
+        public PendingTake(EntityId container,string type,int amount){Container=container;Type=type;Amount=amount;}
+        public EntityId Container {get;} public string Type {get;} public int Amount {get;}
+    }
+    private static readonly List<PendingTake> pendingTakes = new List<PendingTake>();
+    private static readonly object pendingLock = new object();
+
     private static IEnumerable<MethodBase> TargetMethods()
     {
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemToPlayer), Type.EmptyTypes);
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemAllToPlayer), Type.EmptyTypes);
     }
 
-    private static void Postfix(InvSlot __instance)
+    private static void Prefix(InvSlot __instance, out PendingTake __state)
+    {
+        // 拿取前快照该槽内容（拿取后槽空即视为已拿走）。
+        var item = __instance?.invItem;
+        var inventory = __instance?.inventory;
+        var containerId = default(EntityId);
+        if (inventory != null)
+        {
+            var runtime = DarkwoodAdapterRuntime.Instance;
+            if (runtime != null) runtime.TryGetEntityId(inventory, out containerId);
+        }
+        __state = item != null && !string.IsNullOrEmpty(item.type)
+            ? new PendingTake(containerId, item.type, Math.Max(1, __instance.itemAmount))
+            : default;
+    }
+
+    private static void Postfix(InvSlot __instance, PendingTake __state)
+    {
+        if (!string.IsNullOrEmpty(__state.Type) && __state.Amount > 0)
+        {
+            var stillThere = __instance?.invItem;
+            if (stillThere == null) lock (pendingLock) pendingTakes.Add(__state); // 槽已清空 = 拿取生效
+        }
+        ReportIfShared(__instance?.inventory);
+    }
+
+    /// <summary>取出并清空指定容器的待确认拿取记录（冲突补偿用）。</summary>
+    internal static List<(string Type,int Amount)> DrainPendingTakes(EntityId container)
+    {
+        lock (pendingLock)
+        {
+            var taken = new List<(string,int)>();
+            for (var i = pendingTakes.Count - 1; i >= 0; i--)
+            {
+                if (!pendingTakes[i].Container.Equals(container)) continue;
+                taken.Add((pendingTakes[i].Type, pendingTakes[i].Amount));
+                pendingTakes.RemoveAt(i);
+            }
+            return taken;
+        }
+    }
+
+    /// <summary>主机已确认该容器的操作（正常更新到达）——清掉记录，无需补偿。</summary>
+    internal static void ClearPendingTakes(EntityId container)
+    {
+        lock (pendingLock) pendingTakes.RemoveAll(t => t.Container.Equals(container));
+    }
+
+    private static void PostfixReport(InvSlot __instance)
     {
         ReportIfShared(__instance?.inventory);
     }

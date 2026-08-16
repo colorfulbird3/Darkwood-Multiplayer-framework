@@ -78,6 +78,9 @@ var tests = new (string Name, Action Run)[]
     ("runtime event independent per peer", RuntimeEventPerPeerIndependent),
     ("runtime event clear on despawn", RuntimeEventClearOnDespawn),
     ("scene change roundtrip", SceneChangeRoundtrip),
+    ("container revision match advances", ContainerRevisionMatch),
+    ("container revision stale rejected", ContainerRevisionStale),
+    ("container revision concurrent ab", ContainerRevisionConcurrent),
     ("session full rejection", SessionFullRejection),
     ("session capacity", SessionCapacity),
     ("guest key loopback", GuestKeyLoopback),
@@ -453,8 +456,24 @@ static void RuntimeEventClearOnDespawn()
 }
 static void SceneChangeRoundtrip()
 {
-    var decoded=ReplicationProtocolCodec.DecodeSceneChange(ReplicationProtocolCodec.Encode(new SceneChangeMessage("chapter2")));
-    Require(decoded.Scene=="chapter2");
+    var message = new SceneChangeMessage("chapter2");
+    Require(ReplicationProtocolCodec.DecodeSceneChange(ReplicationProtocolCodec.Encode(message)).Scene == "chapter2");
+}
+static void ContainerRevisionMatch()
+{
+    Require(ContainerRevisionGate.TryAdvance(6, 5, out var next) && next == 6);
+}
+static void ContainerRevisionStale()
+{
+    Require(!ContainerRevisionGate.TryAdvance(6, 6, out _));   // A 已推进，B 仍基于旧版本
+    Require(!ContainerRevisionGate.TryAdvance(5, 6, out _));   // 更旧
+}
+static void ContainerRevisionConcurrent()
+{
+    ulong current = 5;
+    Require(ContainerRevisionGate.TryAdvance(6, current, out var nextA) && nextA == 6); current = nextA; // A 先到，接受
+    Require(!ContainerRevisionGate.TryAdvance(6, current, out _)); // B 后到，基于 5 的上报被拒
+    Require(ContainerRevisionGate.TryAdvance(7, current, out var nextB) && nextB == 7); // B 重试（基于 6）被接受
 }
 static void SessionFullRejection()
 {
