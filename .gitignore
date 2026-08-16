@@ -13,3 +13,6 @@ legacy-build.log
 *.user
 *.suo
 BepInEx/LogOutput.log
+
+tests/**/obj/
+tests/**/bin/
