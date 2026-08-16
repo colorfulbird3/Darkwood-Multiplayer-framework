@@ -1,6 +1,16 @@
-# VERIFY-002 — 0.8.8-beta.1 验证记录
+# VERIFY-002 — 0.8.8/0.8.9 验证记录
 
 ## 结论：PASS（回环全链路）+ 实机矩阵待测
+
+## 0.8.9-beta.1 重构验证（2026-08-17）
+
+十刀架构重构（partial 拆分、SessionContext、MessageRouter、协议领域文件、Transport 真接口、Host/Client Tick 分离、Runtime Entity 生命周期模型、xUnit 项目）后复测：
+
+- 构建 0 警告 / 0 错误
+- SelfTests 81/81（原有全套协议/组件测试保留）
+- xUnit 8/8（tests/DarkwoodMultiplayerFramework.UnitTests：乐观锁 / ID 纪律 / 生命周期 / codec / SessionContext）
+- 回环自测全链路通过（握手 → 存档 1,022,925 字节 SHA-256 → 快照 895 字节 → 档案 → READY，9 秒）
+- 消息路由无"未注册类型"警告（25 种消息全部被 handler 认领）
 
 ## 已验证据
 
