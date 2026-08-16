@@ -114,7 +114,7 @@ public sealed partial class DarkwoodAdapterRuntime
         // 此处挂到的是主菜单场景的实例，LoadScene 后随场景销毁；Load() 跑在 chapter1 场景的
         // 新实例上，回调永远不触发（实测：加载卡 92%、timeScale 无人恢复、界面永不隐藏）。
         // 改由 DarkwoodLoadFinishedPatch 在 SaveManager.Load 入口挂到 __instance。
-        TransferProgress="正在加载存档";SaveState.MarkLoadStarted(Time.unscaledTime);
+        SaveState.SetProgress("正在加载存档");SaveState.MarkLoadStarted(Time.unscaledTime);
         // FIX-002：initLoadGame() 内部先跑 initNewGame()，会把 Core.loadingGame 重置为 false，
         // WorldGenerator.Start 因此走“生成新世界”分支（教学梦境，约 8 个实体），且
         // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
@@ -187,7 +187,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!hostLootScaleScanComplete)
         {
             SaveState.SetPendingSnapshotRequest(peer,ready);
-            TransferProgress="正在按联机人数准备共享柜子";
+            SaveState.SetProgress("正在按联机人数准备共享容器");
             log?.LogInfo($"Peer {peer} handshake is valid; delaying world snapshot until shared-container preparation completes.");
             return;
         }
@@ -223,11 +223,11 @@ public sealed partial class DarkwoodAdapterRuntime
                 else{DarkwoodLootScalingPatch.ScaleExistingInventory(inventory,ConfiguredPlayerCount);scaled++;}
             }
             processed++;
-            if((processed%8)==0){TransferProgress=$"正在准备共享柜子：{processed}/{inventories.Count}";yield return null;}
+            if((processed%8)==0){SaveState.SetProgress($"正在准备共享容器：{processed}/{inventories.Count}");yield return null;}
         }
         hostLootScaleScanComplete=true;hostLootScaleScanStarted=false;hostLootScaleCoroutine=null;
         if(scaled>0)SaveLootScaleLedger();
-        TransferProgress=string.Empty;
+        SaveState.SetProgress(string.Empty);
         log?.LogInfo($"已按 {ConfiguredPlayerCount} 人完成共享柜子准备：扫描 {inventories.Count} 个，扩容 {scaled} 个，迁移旧账本 {migrated} 个。");
         foreach(var request in SaveState.DrainPendingSnapshotRequests())
         {
@@ -280,10 +280,9 @@ public sealed partial class DarkwoodAdapterRuntime
     private void SendSnapshotAcknowledgement()
     {
         if(SaveState.LastSnapshotApplied==null||clientSession==null)return;
-        SaveState.SnapshotAckRetryCount++;
+        SaveState.RecordSnapshotAckSent(Time.realtimeSinceStartup);
         clientSession.Send(ProtocolMessageType.WorldSnapshotApplied,ReplicationProtocolCodec.Encode(SaveState.LastSnapshotApplied.Value));
-        SaveState.NextSnapshotAckRetry=Time.realtimeSinceStartup+2f;
-        TransferProgress=$"快照已应用，等待主机确认（第 {SaveState.SnapshotAckRetryCount} 次）";
+        SaveState.SetProgress($"快照已应用，等待主机确认（第 {SaveState.SnapshotAckRetryCount} 次）");
         if(SaveState.SnapshotAckRetryCount>1)log?.LogWarning($"主机 Ready 确认尚未到达，正在重发快照应用确认：第 {SaveState.SnapshotAckRetryCount} 次。");
     }
 

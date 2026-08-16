@@ -90,7 +90,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 {
                     bulkSent=true;
                     var sent=p.ChunkIndex+1;var percent=(int)(sent*100f/p.ChunkCount);
-                    TransferProgress=$"正在向玩家 {peer} 发送{p.TransferLabel}：{sent}/{p.ChunkCount}（{percent}%）";
+                    SaveState.SetProgress($"正在向玩家 {peer} 发送{p.TransferLabel}：{sent}/{p.ChunkCount}（{percent}%）");
                     var interval=Math.Max(1,p.ChunkCount/10);
                     if(sent==1||sent==p.ChunkCount||(sent%interval)==0)log?.LogInfo(TransferProgress);
                 }

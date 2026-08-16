@@ -57,7 +57,7 @@ public sealed class DarkwoodCombatService
         public float StartedAt;
     }
 
-    public DarkwoodCombatService(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
+    internal DarkwoodCombatService(IMultiplayerRuntimeHost runtime) => this.runtime = runtime;
 
     public bool HostDownedLocal => hostDownedLocal;
     public bool IsRescuing(int playerId) => activeRescue != null && activeRescue.RescuerId == playerId;

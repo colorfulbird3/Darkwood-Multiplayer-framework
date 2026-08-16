@@ -114,4 +114,27 @@ public class FaultInjectingTransportTests
         fake.RaiseData(new byte[] { 1 });
         Assert.Equal(1, received);
     }
+
+    [Fact]
+    public void Disconnected_FiresOnlyOnce_EvenIfInnerFiresTwice()
+    {
+        var transport = Wrap(new FaultOptions(), out var fake);
+        var disconnected = 0;
+        transport.Disconnected += () => disconnected++;
+        fake.RaiseDisconnected(); // inner Stop 路径
+        fake.RaiseDisconnected(); // Telepathy Tick 里的后续事件
+        Assert.Equal(1, disconnected);
+    }
+
+    [Fact]
+    public void Reconnect_ReArmsDisconnectedGuard()
+    {
+        var transport = Wrap(new FaultOptions(), out var fake);
+        var disconnected = 0;
+        transport.Disconnected += () => disconnected++;
+        fake.RaiseDisconnected();
+        transport.Connect("127.0.0.1", 17777);
+        fake.RaiseDisconnected();
+        Assert.Equal(2, disconnected);
+    }
 }

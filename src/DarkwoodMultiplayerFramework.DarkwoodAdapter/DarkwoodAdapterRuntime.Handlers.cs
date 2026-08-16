@@ -75,7 +75,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 return;
             }
             var applied = ReplicationProtocolCodec.DecodeWorldSnapshotApplied(envelope.Payload);
-            if (!runtime.SaveState.SentSnapshots.TryGetValue(peer.PeerId, out var expected) || expected != applied.SnapshotId || applied.Scene != runtime.CurrentScene || applied.RegistryDigest != runtime.RegistryDigest)
+            if (!runtime.SaveState.TryGetSentSnapshot(peer.PeerId, out var expected) || expected != applied.SnapshotId || applied.Scene != runtime.CurrentScene || applied.RegistryDigest != runtime.RegistryDigest)
                 throw new InvalidDataException("Snapshot acknowledgement does not match active snapshot.");
             var firstReady = runtime.readyPeers.Add(peer.PeerId);
             if (firstReady)

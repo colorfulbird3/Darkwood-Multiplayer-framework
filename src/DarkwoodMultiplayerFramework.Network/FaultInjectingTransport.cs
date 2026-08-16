@@ -36,7 +36,14 @@ public sealed class FaultInjectingTransport : ITransport
         this.options = options ?? new FaultOptions();
         inner.Connected += () => Connected?.Invoke();
         inner.DataReceived += data => DataReceived?.Invoke(data);
-        inner.Disconnected += () => Disconnected?.Invoke();
+        // 0.8.9 closeout fix：inner.Stop() 后 Telepathy 的 Disconnected 可能再触发，
+        // 防重入保证 Disconnected 只广播一次。
+        inner.Disconnected += () =>
+        {
+            if (disconnectFired) return;
+            disconnectFired = true;
+            Disconnected?.Invoke();
+        };
     }
 
     public bool IsConnected => inner.IsConnected;
@@ -46,7 +53,11 @@ public sealed class FaultInjectingTransport : ITransport
     public event Action? Disconnected;
     public long SentCount => Interlocked.Read(ref sentCount);
 
-    public void Connect(string address, ushort port) => inner.Connect(address, port);
+    public void Connect(string address, ushort port)
+    {
+        disconnectFired = false; // 重连后重新武装
+        inner.Connect(address, port);
+    }
 
     public void Send(ArraySegment<byte> payload, TransportChannel channel = TransportChannel.ReliableGameplay)
     {

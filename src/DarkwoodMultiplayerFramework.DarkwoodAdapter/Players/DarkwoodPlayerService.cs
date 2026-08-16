@@ -49,7 +49,7 @@ public sealed class DarkwoodPlayerService
     public void PersistGuestProfile(int peer)
     {
         if (guestProfiles == null) return;
-        if (!peerGuestKeys.TryGetValue(peer, out var key) || !PeerGuestRecords.TryGetValue(peer, out var record) || !RemoteInventories.TryGetValue(peer, out var shadow)) return;
+        if (!peerGuestKeys.TryGetValue(peer, out var key) || !peerGuestRecords.TryGetValue(peer, out var record) || !remoteInventories.TryGetValue(peer, out var shadow)) return;
         var position = remotePositions.TryGetValue(peer, out var pose) ? pose : new Vector3(record.X, record.Y, record.Z);
         var state = shadow.CaptureState();
         var updated = new GuestProfileRecord(record.GuestKey, record.Day, record.JoinCount, position.x, position.y, position.z, state.Backpack, state.Hotbar, DateTime.UtcNow.Ticks);

@@ -24,7 +24,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if (sessionError.Length>0||clientSession.Session.Lifecycle.State == ConnectionState.Failed) return ConnectionState.Failed;
         if (!clientSession.HandshakeComplete) return clientSession.Session.Lifecycle.State;
         if (Player.Instance == null) return ConnectionState.LoadingSave;
-        if (clientSession != null && !SaveState.ClientSnapshotReady) return clientSession.Session.Lifecycle.State;
+        if (clientSession != null && !SaveState.IsSnapshotReady) return clientSession.Session.Lifecycle.State;
         if (registryDirty) return ConnectionState.BuildingRegistry;
         return ConnectionState.Ready;
     }

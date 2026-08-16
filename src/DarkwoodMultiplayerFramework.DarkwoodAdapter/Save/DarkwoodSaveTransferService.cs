@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using DarkwoodMultiplayerFramework.Core;
 using DarkwoodMultiplayerFramework.Network;
 using DarkwoodMultiplayerFramework.Protocol;
 
@@ -45,10 +47,10 @@ public sealed class DarkwoodSaveTransferService
     public bool TryGetSentSnapshot(int peer, out Guid snapshotId) => sentSnapshots.TryGetValue(peer, out snapshotId);
     public void SetPendingSnapshotRequest(int peer, ReadyMessage ready) => pendingSnapshotRequests[peer] = ready;
     public bool TryGetPendingSnapshotRequest(int peer, out ReadyMessage ready) => pendingSnapshotRequests.TryGetValue(peer, out ready);
-    public ReadyMessage[] DrainPendingSnapshotRequests()
+    public KeyValuePair<int, ReadyMessage>[] DrainPendingSnapshotRequests()
     {
-        var array = new ReadyMessage[pendingSnapshotRequests.Count];
-        pendingSnapshotRequests.Values.CopyTo(array, 0);
+        var array = new KeyValuePair<int, ReadyMessage>[pendingSnapshotRequests.Count];
+        ((ICollection<KeyValuePair<int, ReadyMessage>>)pendingSnapshotRequests).CopyTo(array, 0);
         pendingSnapshotRequests.Clear();
         return array;
     }
@@ -127,6 +129,7 @@ public sealed class DarkwoodSaveTransferService
     public void MarkSnapshotReady() => clientSnapshotReady = true;
     public bool IsSnapshotReady => clientSnapshotReady;
 
+    public void RecordSnapshotAckSent(float realtimeNow) { snapshotAckRetryCount++; nextSnapshotAckRetry = realtimeNow + 2f; }
     public void RecordSnapshotApplied(WorldSnapshotApplied? applied)
     {
         lastSnapshotApplied = applied;
