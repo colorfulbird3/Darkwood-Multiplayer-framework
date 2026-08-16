@@ -1,6 +1,5 @@
-# Private local source and reverse-engineering references.
+# Private local reverse-engineering references.
 # These directories must never be committed or uploaded.
-src/
 legacy-reference/
 legacy-reference-first-pass/
 .tools/

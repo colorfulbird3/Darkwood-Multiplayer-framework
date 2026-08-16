@@ -1,0 +1,96 @@
+using System;
+using System.Collections.Generic;
+using DarkwoodMultiplayerFramework.Protocol;
+using UnityEngine;
+
+namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
+
+/// <summary>
+/// 0.8.9 所有权拆分：玩家服务——拥有远端玩家在线状态（坐标/背包影子/Guest 身份档案）。
+/// Guest Profile 持久化（跨热加入身份数据）与在线状态同归本服务管理。
+/// </summary>
+public sealed class DarkwoodPlayerService
+{
+    private readonly DarkwoodAdapterRuntime runtime;
+
+    internal readonly Dictionary<int, Vector3> RemotePositions = new Dictionary<int, Vector3>();
+    internal readonly Dictionary<int, DarkwoodPlayerInventoryShadow> RemoteInventories = new Dictionary<int, DarkwoodPlayerInventoryShadow>();
+    internal readonly Dictionary<int, string> PeerGuestKeys = new Dictionary<int, string>();
+    internal readonly Dictionary<int, GuestProfileRecord> PeerGuestRecords = new Dictionary<int, GuestProfileRecord>();
+
+    public DarkwoodRemotePlayers RemotePlayers { get; }
+    private DarkwoodGuestProfiles? guestProfiles;
+
+    public DarkwoodPlayerService(DarkwoodAdapterRuntime runtime, DarkwoodRemotePlayers remotePlayers)
+    {
+        this.runtime = runtime;
+        RemotePlayers = remotePlayers;
+    }
+
+    public void AttachGuestProfiles(DarkwoodGuestProfiles profiles) => guestProfiles = profiles;
+
+    /// <summary>主机：为新就绪玩家解析 Guest 档案（热加入）+ 影子背包 + 出生点。</summary>
+    public GuestProfileRecord ResolveGuestProfile(int peer, string? guestKey, int day, Vector3 hostPosition, out Vector3 spawn)
+    {
+        var key = NormalizeGuestKey(guestKey);
+        var record = new GuestProfileRecord(key, day, 1, 0f, 0f, 0f, Array.Empty<InventorySlotWire>(), Array.Empty<InventorySlotWire>(), DateTime.UtcNow.Ticks);
+        spawn = hostPosition;
+        if (guestProfiles != null) record = guestProfiles.Resolve(runtime.HostSaveToken(), key, day, hostPosition, out spawn);
+        spawn = runtime.DefaultSpawnPoint(); // 0.8.8-alpha.5：客户端始终在游戏默认出生点出生
+        var shadow = DarkwoodPlayerInventoryShadow.FromRecord(record, message => runtime.log?.LogWarning(message));
+        if (record.JoinCount == 1) shadow.AddStarterKit(guestProfiles?.KitForDay(day), message => runtime.log?.LogWarning(message));
+        RemoteInventories[peer] = shadow;
+        PeerGuestRecords[peer] = record;
+        PeerGuestKeys[peer] = key;
+        runtime.log?.LogInfo($"Peer {peer} guest profile resolved: {key}, day {record.Day}, join {record.JoinCount}, spawn ({spawn.x:F1},{spawn.y:F1},{spawn.z:F1}).");
+        return record;
+    }
+
+    public void PersistGuestProfile(int peer)
+    {
+        if (guestProfiles == null) return;
+        if (!PeerGuestKeys.TryGetValue(peer, out var key) || !PeerGuestRecords.TryGetValue(peer, out var record) || !RemoteInventories.TryGetValue(peer, out var shadow)) return;
+        var position = RemotePositions.TryGetValue(peer, out var pose) ? pose : new Vector3(record.X, record.Y, record.Z);
+        var state = shadow.CaptureState();
+        var updated = new GuestProfileRecord(record.GuestKey, record.Day, record.JoinCount, position.x, position.y, position.z, state.Backpack, state.Hotbar, DateTime.UtcNow.Ticks);
+        guestProfiles.Save(runtime.HostSaveToken(), updated);
+    }
+
+    /// <summary>客户端：应用访客档案（出生点/背包/血量）。</summary>
+    public void ApplyGuestProfile(GuestProfileMessage profile)
+    {
+        var player = Player.Instance;
+        if (player == null) throw new InvalidOperationException("客户端玩家尚未就绪。");
+        player.transform.position = new Vector3(profile.X, profile.Y, profile.Z);
+        foreach (var body in player.GetComponentsInChildren<Rigidbody>(true)) { body.velocity = Vector3.zero; body.angularVelocity = Vector3.zero; }
+        DarkwoodAdapterRuntime.ApplyPlayerInventory(profile.Inventory);
+        if (!profile.Downed && profile.Health > 0f) player.setHealth(profile.Health);
+        runtime.log?.LogInfo($"已应用访客档案：出生点 ({profile.X:F1},{profile.Y:F1},{profile.Z:F1})，第 {profile.Day} 天，第 {profile.JoinCount} 次加入。");
+    }
+
+    internal static string NormalizeGuestKey(string? value)
+    {
+        var key = (value ?? string.Empty).Trim();
+        if (key.Length == 0) return "player";
+        while (System.Text.Encoding.UTF8.GetByteCount(key) > 64 && key.Length > 1) key = key.Substring(0, key.Length - 1);
+        return key;
+    }
+
+    public void OnPeerDisconnected(int peer)
+    {
+        RemotePositions.Remove(peer);
+        RemoteInventories.Remove(peer);
+        RemotePlayers.Remove(peer);
+        PeerGuestKeys.Remove(peer);
+        PeerGuestRecords.Remove(peer);
+    }
+
+    public void Reset()
+    {
+        RemotePositions.Clear();
+        RemoteInventories.Clear();
+        PeerGuestKeys.Clear();
+        PeerGuestRecords.Clear();
+        RemotePlayers.Clear();
+    }
+}

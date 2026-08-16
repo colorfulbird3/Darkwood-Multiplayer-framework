@@ -1,8 +1,5 @@
 <Project>
   <PropertyGroup>
-    <LocalBuildRoot>F:\Private Blog\DMF Local Build</LocalBuildRoot>
-    <BaseIntermediateOutputPath>$(LocalBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(LocalBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
-    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;src-staging\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>
