@@ -5,16 +5,29 @@ using DarkwoodMultiplayerFramework.Core;
 
 namespace DarkwoodMultiplayerFramework.Network;
 
-public enum DeliveryMode { Reliable, UnreliableSequenced }
+/// <summary>
+/// 0.8.9 第五/六刀：逻辑消息通道。当前 Telepathy 全走可靠 TCP；
+/// 分级为未来 Transport（UDP/KCP）预留——Realtime 换不可靠通道时上层不改。
+/// </summary>
+public enum TransportChannel { Control, ReliableGameplay, Realtime, Bulk }
+
+[System.Flags]
+public enum TransportCapabilities { Reliable = 1, Unreliable = 2 }
 
 public interface ITransport : IDisposable
 {
     bool IsConnected { get; }
+    /// <summary>本传输实际提供的能力（Telepathy：仅 Reliable）。</summary>
+    TransportCapabilities Capabilities { get; }
     event Action? Connected;
     event Action<ArraySegment<byte>>? DataReceived;
     event Action? Disconnected;
     void Connect(string address, ushort port);
-    void Send(ArraySegment<byte> payload, DeliveryMode mode = DeliveryMode.Reliable);
+    /// <summary>
+    /// 发送。若请求的通道需要的能力超出本传输（例如 Realtime 需要 Unreliable 而
+    /// 本传输只有 Reliable），显式降级为可靠发送并只警告一次——不再假装支持。
+    /// </summary>
+    void Send(ArraySegment<byte> payload, TransportChannel channel = TransportChannel.ReliableGameplay);
     void Tick(int processLimit = 100);
     void Stop();
 }
@@ -57,12 +70,19 @@ public sealed class TelepathyClientTransport : ITransport
         getNextMessage = type.GetMethod("GetNextMessage") ?? throw new MissingMethodException(type.FullName, "GetNextMessage");
     }
     public bool IsConnected => (bool)(type.GetProperty("Connected")?.GetValue(client) ?? false);
+    public TransportCapabilities Capabilities => TransportCapabilities.Reliable;
+    private bool warnedRealtimeFallback;
     public event Action? Connected;
     public event Action<ArraySegment<byte>>? DataReceived;
     public event Action? Disconnected;
     public void Connect(string address, ushort port) => Invoke("Connect", address, (int)port);
-    public void Send(ArraySegment<byte> payload, DeliveryMode mode = DeliveryMode.Reliable)
+    public void Send(ArraySegment<byte> payload, TransportChannel channel = TransportChannel.ReliableGameplay)
     {
+        if (channel == TransportChannel.Realtime && !warnedRealtimeFallback)
+        {
+            warnedRealtimeFallback = true;
+            Console.WriteLine("[DMF] Transport only supports Reliable; Realtime messages fall back to TCP (expected until UDP transport lands).");
+        }
         var bytes = new byte[payload.Count];
         Array.Copy(payload.Array!, payload.Offset, bytes, 0, payload.Count);
         Invoke("Send", bytes);

@@ -75,7 +75,8 @@ public static class DarkwoodDownedPatch
                 if (attacker == null) continue;
                 try
                 {
-                    attacker.setBehaviour(Character.Behaviour.idle, true);
+                    // 0.8.8-beta.5：倒地时让攻击者逃离（escaping）而不是 idle——此前 idle 让怪物定在原地（用户反馈）。
+                    attacker.setBehaviour(Character.Behaviour.escaping, true);
                     attacker.aggressiveness = Aggressiveness.neutral;
                     attacker.removeFromPlayerAttackers();
                 }

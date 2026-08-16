@@ -15,7 +15,16 @@ public sealed class DarkwoodRemotePlayers
     public Action<string>? Logger {get;set;}
     public void Apply(PlayerPoseMessage pose,int localId)
     {
-        if(pose.PlayerId==localId||pose.Scene!=UnityEngine.SceneManagement.SceneManager.GetActiveScene().name)return;var player=Player.Instance;if(player==null)return;if(!avatars.TryGetValue(pose.PlayerId,out var avatar)){avatar=Create(pose.PlayerId,player);avatars[pose.PlayerId]=avatar;}if(pose.Sequence<=avatar.Sequence)return;avatar.Sequence=pose.Sequence;avatar.Target=new Vector3(pose.X,pose.Y,pose.Z);avatar.Rotation=new Quaternion(pose.Qx,pose.Qy,pose.Qz,pose.Qw);avatar.LastSeen=Time.unscaledTime;avatar.Root.SetActive(true);if((pose.Flags&PlayerPoseFlags.Downed)==0){ApplyClip(avatar.Torso,pose.TorsoClip,pose.TorsoFrame);ApplyClip(avatar.Legs,pose.LegsClip,(pose.Flags&3)==0?0:pose.LegsFrame);}
+        if(pose.PlayerId==localId||pose.Scene!=UnityEngine.SceneManagement.SceneManager.GetActiveScene().name)return;
+        var player=Player.Instance;
+        if(player==null)return;
+        if(!avatars.TryGetValue(pose.PlayerId,out var avatar))
+        {
+            // 0.8.8-beta.4：创建失败时打日志且不登记，下一帧重试；避免异常路径下的重复创建。
+            try { avatar = Create(pose.PlayerId, player); avatars[pose.PlayerId] = avatar; }
+            catch (Exception error) { Logger?.Invoke($"远端模型创建失败：玩家 {pose.PlayerId}：{error.Message}"); return; }
+        }
+        if(pose.Sequence<=avatar.Sequence)return;avatar.Sequence=pose.Sequence;avatar.Target=new Vector3(pose.X,pose.Y,pose.Z);avatar.Rotation=new Quaternion(pose.Qx,pose.Qy,pose.Qz,pose.Qw);avatar.LastSeen=Time.unscaledTime;avatar.Root.SetActive(true);if((pose.Flags&PlayerPoseFlags.Downed)==0){ApplyClip(avatar.Torso,pose.TorsoClip,pose.TorsoFrame);ApplyClip(avatar.Legs,pose.LegsClip,(pose.Flags&3)==0?0:pose.LegsFrame);}
     }
     public bool TryGetPosition(int playerId,out Vector3 position)
     {

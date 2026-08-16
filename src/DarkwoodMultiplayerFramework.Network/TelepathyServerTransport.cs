@@ -27,7 +27,7 @@ public sealed class TelepathyServerTransport : IDisposable
         var result = serverType.GetMethod("Start")!.Invoke(server, new object[] { (int)port });
         if (result is bool started && !started) throw new InvalidOperationException("Telepathy server is already active.");
     }
-    public void Send(int connectionId, ArraySegment<byte> payload)
+    public void Send(int connectionId, ArraySegment<byte> payload, TransportChannel channel = TransportChannel.ReliableGameplay)
     {
         var bytes = new byte[payload.Count]; Array.Copy(payload.Array!, payload.Offset, bytes, 0, payload.Count);
         serverType.GetMethod("Send")!.Invoke(server, new object[] { connectionId, bytes });

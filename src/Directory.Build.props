@@ -1,9 +1,8 @@
 <Project>
   <PropertyGroup>
-    <!-- 构建输出使用各工程的默认 obj/ bin/ 目录。
-         如需把输出集中到统一目录，可在本文件中追加：
-         <BaseIntermediateOutputPath>你的路径\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-         <BaseOutputPath>你的路径\bin\$(MSBuildProjectName)\</BaseOutputPath> -->
+    <LocalBuildRoot>F:\Private Blog\DMF Local Build</LocalBuildRoot>
+    <BaseIntermediateOutputPath>$(LocalBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(LocalBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;src-staging\**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

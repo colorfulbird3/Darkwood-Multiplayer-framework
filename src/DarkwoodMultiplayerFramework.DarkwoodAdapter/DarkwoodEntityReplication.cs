@@ -33,6 +33,17 @@ public sealed class DarkwoodEntityReplication
 
     /// <summary>0.8.8-alpha.4：移除运行时实体的注册（Despawn 后不再参与 delta）。</summary>
     public void UnregisterRuntimeEntity(EntityId id){entities.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
+    /// <summary>0.8.8-beta.5：枚举全部注册实体（持久销毁检测用；调用方不得在遍历时修改）。</summary>
+    public IEnumerable<KeyValuePair<EntityId,Component>> Entities(){foreach(var pair in entities)yield return pair;}
+    /// <summary>0.8.8-beta.5：实体已被游戏销毁（夹子拆除/物品拾取等）——构造 Despawn 状态并移出注册表。</summary>
+    public EntityStateWire ForceDespawn(EntityId id)
+    {
+        if(!entities.ContainsKey(id))throw new InvalidOperationException("Entity does not exist.");
+        var nextRevision=last.TryGetValue(id,out var known)?known.Revision+1:++revision;
+        var wire=new EntityStateWire(id.Value,id.IsPersistent,known.Kind,known.X,known.Y,known.Z,known.Qx,known.Qy,known.Qz,known.Qw,known.Health,known.StateA,known.StateB,(byte)(known.Flags&~16),known.Animation,known.Frame,nextRevision);
+        entities.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);
+        return wire;
+    }
     public void ApplyDespawns(IEnumerable<EntityStateWire> states){foreach(var s in states){var id=new EntityId(s.Value,s.Persistent);if(!entities.TryGetValue(id,out var component))continue;if(component is Character character)frozen.Remove(character);component.gameObject.SetActive(false);targets.Remove(id);last.Remove(id);lastInventories.Remove(id);}}
     public bool TryGetComponent(EntityId id,out Component component)=>entities.TryGetValue(id,out component!);
     /// <summary>Captures and commits fresh revisions for the given components (immediate authoritative broadcast helper).</summary>

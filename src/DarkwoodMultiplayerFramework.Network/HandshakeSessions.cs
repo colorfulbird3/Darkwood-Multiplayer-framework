@@ -55,7 +55,7 @@ public sealed class ClientHandshakeSession : IDisposable
     {
         if (Session.Lifecycle.State != ConnectionState.Connecting) return;
         Session.Lifecycle.MoveTo(ConnectionState.VersionChecking);
-        Send(ProtocolMessageType.ClientHello, Session.SessionId, HandshakeProtocolCodec.Encode(new ClientHello(Session.Identity, GuestKey ?? string.Empty)));
+        Send(ProtocolMessageType.ClientHello, Session.SessionId, HandshakeProtocolCodec.Encode(new ClientHello(Session.Identity, GuestKey ?? string.Empty)), TransportChannel.Control);
     }
     private void OnData(ArraySegment<byte> packet)
     {
@@ -92,15 +92,15 @@ public sealed class ClientHandshakeSession : IDisposable
         if (Session.Lifecycle.State == ConnectionState.Stopping) Session.Lifecycle.MoveTo(ConnectionState.Disconnected);
         else if (Session.Lifecycle.State != ConnectionState.Disconnected && Session.Lifecycle.State != ConnectionState.Failed) Fail("TRANSPORT_DISCONNECTED");
     }
-    private void Send(ProtocolMessageType type, Guid sessionId, byte[] payload)
+    private void Send(ProtocolMessageType type, Guid sessionId, byte[] payload, TransportChannel channel)
     {
         var envelope = new ProtocolEnvelope(ProtocolVersions.EnvelopeProtocol, type, ProtocolFlags.Reliable, ++sequence, sessionId, payload);
-        transport.Send(new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)), DeliveryMode.Reliable);
+        transport.Send(new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)), channel);
     }
-    public void Send(ProtocolMessageType type, byte[] payload)
+    public void Send(ProtocolMessageType type, byte[] payload, TransportChannel channel = TransportChannel.ReliableGameplay)
     {
         if (!HandshakeComplete || HostSessionId == Guid.Empty) throw new InvalidOperationException("Handshake is not complete.");
-        Send(type, HostSessionId, payload);
+        Send(type, HostSessionId, payload, channel);
     }
     private static void RequireMatchingEnvelope(ProtocolEnvelope envelope, ProtocolIdentity identity)
     {
@@ -186,14 +186,14 @@ public sealed class HostHandshakeSession : IDisposable
         finally { if (peers.TryGetValue(connectionId, out var peer)) peer.Ready=false; PeerRejected?.Invoke(connectionId,error); }
     }
     private void OnDisconnected(int connectionId) { peers.Remove(connectionId); PeerDisconnected?.Invoke(connectionId); }
-    private void Send(int connectionId, ProtocolMessageType type, byte[] payload)
+    private void Send(int connectionId, ProtocolMessageType type, byte[] payload, TransportChannel channel = TransportChannel.Control)
     {
         var envelope = new ProtocolEnvelope(ProtocolVersions.EnvelopeProtocol, type, ProtocolFlags.Reliable, ++sequence, SessionId, payload);
-        transport.Send(connectionId, new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)));
+        transport.Send(connectionId, new ArraySegment<byte>(ProtocolEnvelopeCodec.Encode(envelope)), channel);
     }
-    public void SendMessage(int connectionId, ProtocolMessageType type, byte[] payload)
+    public void SendMessage(int connectionId, ProtocolMessageType type, byte[] payload, TransportChannel channel = TransportChannel.ReliableGameplay)
     {
         if (!peers.TryGetValue(connectionId,out var peer) || !peer.Ready) throw new InvalidOperationException("Peer handshake is not complete.");
-        Send(connectionId,type,payload);
+        Send(connectionId,type,payload,channel);
     }
 }

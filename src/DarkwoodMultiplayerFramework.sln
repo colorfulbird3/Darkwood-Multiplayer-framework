@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramewor
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.DarkwoodAdapter", "DarkwoodMultiplayerFramework.DarkwoodAdapter\DarkwoodMultiplayerFramework.DarkwoodAdapter.csproj", "{ADEDB49C-B5FB-41DA-85C0-8D0DAA722E92}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkwoodMultiplayerFramework.UnitTests", "..\tests\DarkwoodMultiplayerFramework.UnitTests\DarkwoodMultiplayerFramework.UnitTests.csproj", "{5173EF21-B81B-4523-AD08-B41718621A94}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -78,5 +80,9 @@ Global
 		{ADEDB49C-B5FB-41DA-85C0-8D0DAA722E92}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ADEDB49C-B5FB-41DA-85C0-8D0DAA722E92}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{ADEDB49C-B5FB-41DA-85C0-8D0DAA722E92}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5173EF21-B81B-4523-AD08-B41718621A94}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5173EF21-B81B-4523-AD08-B41718621A94}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5173EF21-B81B-4523-AD08-B41718621A94}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5173EF21-B81B-4523-AD08-B41718621A94}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
