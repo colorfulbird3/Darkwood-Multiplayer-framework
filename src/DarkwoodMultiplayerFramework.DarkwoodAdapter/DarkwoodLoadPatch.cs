@@ -51,7 +51,7 @@ public static class DarkwoodGraphDeserializePatch
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || !runtime.ClientSaveLoadPending) return true;
-        // 0.8.8-alpha.3 诊断：区分“场景 Awake 阶段”与“Load 入口后的 JSON/兼容检查/GC 阶段”耗时，
+        // 诊断：区分“场景 Awake 阶段”与“Load 入口后的 JSON/兼容检查/GC 阶段”耗时，
         // 用于定位 alpha.2 实机“Load 入口触发后卡 0%”的卡段。
         var phase = DarkwoodLoadFinishedPatch.EntryRealtime > 0f
             ? $"——Load 入口后 {Time.realtimeSinceStartup - DarkwoodLoadFinishedPatch.EntryRealtime:F1} 秒（入口到导航图阶段耗时）"
@@ -72,7 +72,7 @@ public static class DarkwoodGraphDeserializePatch
 [HarmonyPatch(typeof(SaveManager), "Load", new[]{ typeof(bool), typeof(bool) })]
 public static class DarkwoodLoadFinishedPatch
 {
-    /// <summary>0.8.8-alpha.3 诊断：Load 入口的 unscaled 时间戳（分段计时）。0 = 尚未触发。</summary>
+    /// <summary>诊断：Load 入口的 unscaled 时间戳（分段计时）。0 = 尚未触发。</summary>
     internal static float EntryRealtime;
 
     public static void Prefix(SaveManager __instance)

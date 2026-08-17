@@ -7,7 +7,7 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 所有权拆分：Darkwood 游戏对象 ↔ 网络状态 的转换适配器。
+/// 所有权拆分：Darkwood 游戏对象 ↔ 网络状态 的转换适配器。
 /// 只回答"Darkwood Character/Door/Window/Item/Inventory 有哪些字段、怎么读写"；
 /// 何时 Capture、哪些变化、Revision、Target、插值 由 DarkwoodEntityReplication 负责。
 /// </summary>

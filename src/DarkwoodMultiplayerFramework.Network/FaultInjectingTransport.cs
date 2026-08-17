@@ -20,7 +20,7 @@ public sealed class FaultOptions
 }
 
 /// <summary>
-/// 0.8.9 可靠性：故障注入传输——包装任意 ITransport，在发送路径注入
+/// 可靠性：故障注入传输——包装任意 ITransport，在发送路径注入
 /// 丢包/延迟/重复/断开/损坏，用于在真机之前逼出网络故障处理缺陷。
 /// </summary>
 public sealed class FaultInjectingTransport : ITransport
@@ -36,7 +36,7 @@ public sealed class FaultInjectingTransport : ITransport
         this.options = options ?? new FaultOptions();
         inner.Connected += () => Connected?.Invoke();
         inner.DataReceived += data => DataReceived?.Invoke(data);
-        // 0.8.9 closeout fix：inner.Stop() 后 Telepathy 的 Disconnected 可能再触发，
+        // closeout fix：inner.Stop() 后 Telepathy 的 Disconnected 可能再触发，
         // 防重入保证 Disconnected 只广播一次。
         inner.Disconnected += () =>
         {

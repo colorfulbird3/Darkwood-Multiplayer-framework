@@ -36,7 +36,7 @@ public static class DarkwoodDownedPatch
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsMultiplayerActive) return true;
         if (AllDowned) return true; // vanilla ending is running
-        runtime.Combat.OnLocalPlayerDowned(); // 0.8.9：倒地状态归战斗服务
+        runtime.Combat.OnLocalPlayerDowned(); // 倒地状态归战斗服务
         return false; // skip the vanilla death sequence
     }
 
@@ -75,7 +75,7 @@ public static class DarkwoodDownedPatch
                 if (attacker == null) continue;
                 try
                 {
-                    // 0.8.8-beta.5：倒地时让攻击者逃离（escaping）而不是 idle——此前 idle 让怪物定在原地（用户反馈）。
+                    // 倒地时让攻击者逃离（escaping）而不是 idle——此前 idle 让怪物定在原地（用户反馈）。
                     attacker.setBehaviour(Character.Behaviour.escaping, true);
                     attacker.aggressiveness = Aggressiveness.neutral;
                     attacker.removeFromPlayerAttackers();

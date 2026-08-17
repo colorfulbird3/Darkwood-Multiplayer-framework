@@ -54,8 +54,8 @@ public sealed partial class DarkwoodAdapterRuntime
     private void OnPeerDisconnected(int connectionId)
     {
         Players.PersistGuestProfile(connectionId);
-        Combat.OnPeerDisconnected(connectionId); // 0.8.9：血量/倒地/攻击/营救清理归战斗服务
-        outgoing.Remove(connectionId);readyPeers.Remove(connectionId);SaveState.OnPeerDisconnected(connectionId);Players.OnPeerDisconnected(connectionId); // 0.8.9：远端状态清理归玩家服务
+        Combat.OnPeerDisconnected(connectionId); // 血量/倒地/攻击/营救清理归战斗服务
+        outgoing.Remove(connectionId);readyPeers.Remove(connectionId);SaveState.OnPeerDisconnected(connectionId);Players.OnPeerDisconnected(connectionId); // 远端状态清理归玩家服务
     }
 
     private void OnHostMessage(int peer,ProtocolEnvelope envelope)
@@ -84,7 +84,7 @@ public sealed partial class DarkwoodAdapterRuntime
         var profile=global::Core.currentProfile;
         if(profile==null||!profile.Active)
         {
-            // 0.8.8 自测：quickLoadGame 等路径不会激活档案——从档案列表恢复（主机侧通用健壮性）。
+            // 自测：quickLoadGame 等路径不会激活档案——从档案列表恢复（主机侧通用健壮性）。
             var state=manager.loadGameProfiles();
             if(state?.profiles!=null){global::Core.profiles=state.profiles;profile=state.profiles.FirstOrDefault(p=>p!=null&&p.Active);if(profile!=null){global::Core.currentProfile=profile;manager.updateFilePaths();log?.LogWarning("主机档案未激活，已从档案列表恢复当前档案。");}}
         }

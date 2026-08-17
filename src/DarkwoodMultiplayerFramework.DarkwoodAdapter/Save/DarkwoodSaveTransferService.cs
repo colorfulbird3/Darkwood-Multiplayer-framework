@@ -8,7 +8,7 @@ using DarkwoodMultiplayerFramework.Protocol;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 所有权拆分 + 收口：存档/快照传输服务——拥有传输状态与就绪标志，
+/// 所有权拆分 + 收口：存档/快照传输服务——拥有传输状态与就绪标志，
 /// 并以行为方法暴露（Begin/Accept/Finish/Mark），禁止外部直接改字段。
 /// </summary>
 public sealed class DarkwoodSaveTransferService

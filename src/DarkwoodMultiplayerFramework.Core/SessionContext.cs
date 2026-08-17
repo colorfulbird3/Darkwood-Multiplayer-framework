@@ -1,7 +1,7 @@
 namespace DarkwoodMultiplayerFramework.Core;
 
 /// <summary>
-/// 0.8.9 第二刀：会话上下文——会话维度的权威状态（角色/状态/身份/场景）。
+/// 第二刀：会话上下文——会话维度的权威状态（角色/状态/身份/场景）。
 /// 取代散落的 hostSession != null / clientSession != null 隐式判断；
 /// 各服务一律通过 context.Session.IsHost / IsClient 阅读，不再摸会话对象。
 /// </summary>

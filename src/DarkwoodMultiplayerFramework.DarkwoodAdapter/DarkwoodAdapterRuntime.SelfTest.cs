@@ -39,7 +39,7 @@ public sealed partial class DarkwoodAdapterRuntime
 
     internal void Queue(int peer,ProtocolMessageType type,byte[] payload,string transferLabel="",int chunkIndex=-1,int chunkCount=0){if(!outgoing.TryGetValue(peer,out var queue))outgoing[peer]=queue=new Queue<OutgoingPacket>();queue.Enqueue(new OutgoingPacket{Type=type,Payload=payload,TransferLabel=transferLabel,ChunkIndex=chunkIndex,ChunkCount=chunkCount});}
 
-    /// <summary>0.8.9 第六刀：消息类型 → 逻辑通道。当前 Transport 仅可靠，分级为未来 UDP/KCP 预留。</summary>
+    /// <summary>第六刀：消息类型 → 逻辑通道。当前 Transport 仅可靠，分级为未来 UDP/KCP 预留。</summary>
     private static TransportChannel ChannelFor(ProtocolMessageType type)
     {
         switch(type)
@@ -80,7 +80,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 }
                 catch(Exception error)
                 {
-                    // 0.8.8-beta.4：TCP 半开/写超时后主动清理（此前僵尸连接导致主机持续重发并卡广播）。
+                    // TCP 半开/写超时后主动清理（此前僵尸连接导致主机持续重发并卡广播）。
                     log?.LogWarning($"向玩家 {peer} 发送失败（连接不可用）：{error.Message}——清理该玩家会话。");
                     outgoing.Remove(peer);
                     OnPeerDisconnected(peer);

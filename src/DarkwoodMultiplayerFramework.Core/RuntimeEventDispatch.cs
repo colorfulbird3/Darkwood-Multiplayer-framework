@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace DarkwoodMultiplayerFramework.Core;
 
 /// <summary>
-/// 0.8.8-alpha.3：运行时随机事件的一次性派发跟踪（距离门控的"已触发"侧）。
+/// 运行时随机事件的一次性派发跟踪（距离门控的"已触发"侧）。
 /// 语义：每个事件对每个玩家最多派发一次（乌鸦等一次性动画触发后，
 /// 同一客户端离开再进入范围不再触发）；不同玩家互相独立。
 /// 事件移除（Despawn）时清掉它的记录。

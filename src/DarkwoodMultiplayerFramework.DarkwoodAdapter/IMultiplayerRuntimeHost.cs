@@ -6,7 +6,7 @@ using DarkwoodMultiplayerFramework.Protocol;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 收口：Service 对 Runtime 的最小依赖面。
+/// 收口：Service 对 Runtime 的最小依赖面。
 /// 领域服务只允许通过本接口访问会话/就绪玩家/发送/日志——
 /// 不再直接持有整个 DarkwoodAdapterRuntime。
 /// </summary>

@@ -8,7 +8,7 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.8：进程内回环自测客户端。在一个游戏实例内（主机开服后）按 F7 启动，
+/// 进程内回环自测客户端。在一个游戏实例内（主机开服后）按 F7 启动，
 /// 用 Telepathy 连接 127.0.0.1 回环到本机主机，重放完整联机协议链：
 /// 握手 → 存档传输（真实主机存档，SHA-256 校验后丢弃，不写盘不加载游戏）
 /// → 访客档案 → 注册表/快照（权威快照，校验后丢弃）→ READY。
@@ -66,7 +66,7 @@ public sealed class DarkwoodSelfTestClient : MonoBehaviour
         TickAutoMode();
     }
 
-    /// <summary>0.8.8 自测：自动回环自测（配置 SelfTestAuto=true 时由 Plugin 调用）。
+    /// <summary>自测：自动回环自测（配置 SelfTestAuto=true 时由 Plugin 调用）。
     /// 流程：3 秒后开主机 → 自动读档 → 主机 READY → 回环客户端全链路 → 判定。</summary>
     public void AutoStart()
     {

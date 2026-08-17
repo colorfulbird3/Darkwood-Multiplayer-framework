@@ -16,7 +16,7 @@ internal static class DarkwoodContainerTakePatch
 {
     internal const string Mode = "TrustModeSharedContainers";
 
-    /// <summary>0.8.9-alpha.1：待确认的拿取记录（乐观锁冲突时用于背包补偿）。</summary>
+    /// <summary>待确认的拿取记录（乐观锁冲突时用于背包补偿）。</summary>
     internal readonly struct PendingTake
     {
         public PendingTake(EntityId container,string type,int amount){Container=container;Type=type;Amount=amount;}

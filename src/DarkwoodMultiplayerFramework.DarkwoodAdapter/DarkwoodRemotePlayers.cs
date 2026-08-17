@@ -20,7 +20,7 @@ public sealed class DarkwoodRemotePlayers
         if(player==null)return;
         if(!avatars.TryGetValue(pose.PlayerId,out var avatar))
         {
-            // 0.8.8-beta.4：创建失败时打日志且不登记，下一帧重试；避免异常路径下的重复创建。
+            // 创建失败时打日志且不登记，下一帧重试；避免异常路径下的重复创建。
             try { avatar = Create(pose.PlayerId, player); avatars[pose.PlayerId] = avatar; }
             catch (Exception error) { Logger?.Invoke($"远端模型创建失败：玩家 {pose.PlayerId}：{error.Message}"); return; }
         }

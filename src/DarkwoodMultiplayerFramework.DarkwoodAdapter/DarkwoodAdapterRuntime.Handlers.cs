@@ -85,7 +85,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 var record = runtime.Players.ResolveGuestProfile(peer.PeerId, runtime.Players.TryGetGuestKey(peer.PeerId, out var guestKey) ? guestKey : null, day, hostPosition, out var spawn);
                 runtime.Players.TryGetInventory(peer.PeerId, out var shadow);
                 var hostMaxHealth = Player.Instance != null ? Player.Instance.maxHealth : 100f;
-                runtime.Combat.RegisterPeer(peer.PeerId, hostMaxHealth); // 0.8.9：血量状态归战斗服务
+                runtime.Combat.RegisterPeer(peer.PeerId, hostMaxHealth); // 血量状态归战斗服务
                 runtime.Queue(peer.PeerId, ProtocolMessageType.GuestProfile, ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(), spawn.x, spawn.y, spawn.z, record.Day, record.JoinCount, hostMaxHealth, hostMaxHealth, false)));
                 runtime.Players.PersistGuestProfile(peer.PeerId);
             }
@@ -261,14 +261,14 @@ public sealed partial class DarkwoodAdapterRuntime
                 {
                     var spawn = ReplicationProtocolCodec.DecodeRuntimeEntitySpawn(envelope.Payload);
                     if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.Ready && spawn.Scene == runtime.CurrentScene)
-                        runtime.RuntimeEntities.HandleSpawn(spawn); // 0.8.9：镜像生命周期归服务
+                        runtime.RuntimeEntities.HandleSpawn(spawn); // 镜像生命周期归服务
                     break;
                 }
                 case ProtocolMessageType.RuntimeEntityDespawn:
                 {
                     var despawn = ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(envelope.Payload);
                     if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.Ready)
-                        runtime.RuntimeEntities.HandleDespawn(despawn); // 0.8.9：镜像销毁归服务
+                        runtime.RuntimeEntities.HandleDespawn(despawn); // 镜像销毁归服务
                     break;
                 }
             }

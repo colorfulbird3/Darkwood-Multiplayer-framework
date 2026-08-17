@@ -25,17 +25,17 @@ public sealed class DarkwoodEntityReplication
     public bool TryGetInventoryState(EntityId id,out InventoryStateMessage state){if(entities.TryGetValue(id,out var component)&&component is Inventory inventory){state=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision:0);return true;}state=default;return false;}
     public InventoryStateMessage CaptureAuthoritativeInventory(EntityId id){if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory))throw new InvalidOperationException("Inventory entity does not exist.");var message=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision+1:++revision);lastInventories[id]=message;return message;}
 
-    /// <summary>0.8.8-alpha.3：为运行时容器（不在 entities 注册表内）捕获库存状态，用于 RuntimeEntitySpawn 的 InitialState。</summary>
+    /// <summary>为运行时容器（不在 entities 注册表内）捕获库存状态，用于 RuntimeEntitySpawn 的 InitialState。</summary>
     public InventoryStateMessage CaptureInventoryState(Inventory inventory,ulong value){if(inventory==null)throw new ArgumentNullException(nameof(inventory));return DarkwoodEntityStateAdapter.CaptureInventory(new EntityId(value,false),inventory,++revision);}
 
-    /// <summary>0.8.8-alpha.4：把运行时实体（敌人代理等）注册进 entities，使其自动纳入 15Hz delta 捕获/应用。</summary>
+    /// <summary>把运行时实体（敌人代理等）注册进 entities，使其自动纳入 15Hz delta 捕获/应用。</summary>
     public void RegisterRuntimeEntity(EntityId id,Component component){if(entities.ContainsKey(id))return;entities[id]=component;}
 
-    /// <summary>0.8.8-alpha.4：移除运行时实体的注册（Despawn 后不再参与 delta）。</summary>
+    /// <summary>移除运行时实体的注册（Despawn 后不再参与 delta）。</summary>
     public void UnregisterRuntimeEntity(EntityId id){entities.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
-    /// <summary>0.8.8-beta.5：枚举全部注册实体（持久销毁检测用；调用方不得在遍历时修改）。</summary>
+    /// <summary>枚举全部注册实体（持久销毁检测用；调用方不得在遍历时修改）。</summary>
     public IEnumerable<KeyValuePair<EntityId,Component>> Entities(){foreach(var pair in entities)yield return pair;}
-    /// <summary>0.8.8-beta.5：实体已被游戏销毁（夹子拆除/物品拾取等）——构造 Despawn 状态并移出注册表。</summary>
+    /// <summary>实体已被游戏销毁（夹子拆除/物品拾取等）——构造 Despawn 状态并移出注册表。</summary>
     public EntityStateWire ForceDespawn(EntityId id)
     {
         if(!entities.ContainsKey(id))throw new InvalidOperationException("Entity does not exist.");

@@ -3,7 +3,7 @@ using DarkwoodMultiplayerFramework.Protocol;
 
 namespace DarkwoodMultiplayerFramework.Entities;
 
-/// <summary>0.8.9 第八刀：运行时实体生命周期状态。</summary>
+/// <summary>第八刀：运行时实体生命周期状态。</summary>
 public enum RuntimeEntityLifecycleState
 {
     /// <summary>已登记待触发（范围门控事件，客户端尚未收到 Spawn）。</summary>
@@ -15,7 +15,7 @@ public enum RuntimeEntityLifecycleState
 }
 
 /// <summary>
-/// 0.8.8-alpha.2：Runtime Entity 注册表（与 Persistent Registry 分离）。
+/// Runtime Entity 注册表（与 Persistent Registry 分离）。
 /// ID 纪律：Allocate() 在整个会话内单调递增、绝不复用——即使实体已被移除，
 /// 它的 ID 也不会分配给新对象，因此晚到的 Despawn 包永远不会误杀新生实体。
 /// ClearAlive() 仅清空存活集合（场景切换用），计数器继续递增。
@@ -45,7 +45,7 @@ public sealed class RuntimeEntityRegistry
     /// <summary>移除（Despawn）。ID 不存在时返回 false（despawn unknown id 容错）。</summary>
     public bool Remove(ulong id) => _alive.Remove(id);
 
-    /// <summary>0.8.9：更新生命周期状态（Pending→Spawned→Despawned）。</summary>
+    /// <summary>更新生命周期状态（Pending→Spawned→Despawned）。</summary>
     public bool UpdateState(ulong id, RuntimeEntityLifecycleState state)
     {
         if (!_alive.TryGetValue(id, out var record)) return false;
@@ -53,7 +53,7 @@ public sealed class RuntimeEntityRegistry
         return true;
     }
 
-    /// <summary>0.8.9：绑定本地实例（客户端镜像 / 主机源对象）。</summary>
+    /// <summary>绑定本地实例（客户端镜像 / 主机源对象）。</summary>
     public bool TryAttachInstance(ulong id, object instance)
     {
         if (!_alive.TryGetValue(id, out var record)) return false;
@@ -85,9 +85,9 @@ public readonly struct RuntimeEntityRecord
     public string PrototypeId { get; }
     public string Scene { get; }
     public long ServerTick { get; }
-    /// <summary>0.8.9：生命周期状态。</summary>
+    /// <summary>生命周期状态。</summary>
     public RuntimeEntityLifecycleState State { get; }
-    /// <summary>0.8.9：本地实例（客户端镜像 Transform/Character，或主机源组件）。</summary>
+    /// <summary>本地实例（客户端镜像 Transform/Character，或主机源组件）。</summary>
     public object? LocalInstance { get; }
 
     public RuntimeEntityRecord WithState(RuntimeEntityLifecycleState state) =>

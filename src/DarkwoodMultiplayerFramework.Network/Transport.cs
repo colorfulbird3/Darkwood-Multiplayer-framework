@@ -6,7 +6,7 @@ using DarkwoodMultiplayerFramework.Core;
 namespace DarkwoodMultiplayerFramework.Network;
 
 /// <summary>
-/// 0.8.9 第五/六刀：逻辑消息通道。当前 Telepathy 全走可靠 TCP；
+/// 第五/六刀：逻辑消息通道。当前 Telepathy 全走可靠 TCP；
 /// 分级为未来 Transport（UDP/KCP）预留——Realtime 换不可靠通道时上层不改。
 /// </summary>
 public enum TransportChannel { Control, ReliableGameplay, Realtime, Bulk }

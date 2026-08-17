@@ -58,7 +58,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     public long DuplicateActionCount => duplicateActions;
     public bool ApplyingAuthoritativeInventory => replication.ApplyingRemote;
     public string SessionError => sessionError.Length > 0 ? sessionError : LastNetworkError;
-        public string TransferProgress => SaveState.TransferProgressValue; // 0.8.9：状态归服务，只读
+        public string TransferProgress => SaveState.TransferProgressValue; // 状态归服务，只读
     public bool IsMultiplayerActive => hostSession?.IsActive == true || clientSession?.HandshakeComplete == true;
     public bool AllDowned => DarkwoodDownedPatch.AllDowned;
     public RescueProgressMessage LastRescueProgress => Combat?.LastRescueProgress ?? default;
@@ -73,15 +73,15 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     }
 
     internal readonly DarkwoodEntityScanner scanner = new DarkwoodEntityScanner();
-    /// <summary>0.8.9 第二刀：会话上下文（角色/状态/身份/场景的权威状态源）。</summary>
+    /// <summary>第二刀：会话上下文（角色/状态/身份/场景的权威状态源）。</summary>
     public SessionContext Session { get; } = new SessionContext();
-    /// <summary>0.8.9：运行时实体服务（所有权拆分——所有临时生成对象的唯一入口）。</summary>
+    /// <summary>运行时实体服务（所有权拆分——所有临时生成对象的唯一入口）。</summary>
     internal DarkwoodRuntimeEntityService RuntimeEntities { get; private set; } = null!;
-    /// <summary>0.8.9：战斗服务（血量/倒地/怪物伤害/攻击锚点/无敌/营救会话的唯一入口）。</summary>
+    /// <summary>战斗服务（血量/倒地/怪物伤害/攻击锚点/无敌/营救会话的唯一入口）。</summary>
     internal DarkwoodCombatService Combat { get; private set; } = null!;
-    /// <summary>0.8.9：玩家服务（远端坐标/背包影子/Guest 档案的唯一入口）。</summary>
+    /// <summary>玩家服务（远端坐标/背包影子/Guest 档案的唯一入口）。</summary>
     internal DarkwoodPlayerService Players { get; private set; } = null!;
-    /// <summary>0.8.9：存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
+    /// <summary>存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
     internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
     internal EntityRegistry<Component>? registry;
     internal ManualLogSource? log;
@@ -95,13 +95,13 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     internal HostHandshakeSession? hostSession;
     internal ClientHandshakeSession? clientSession;
     private string telepathyPath = string.Empty;
-    /// <summary>0.8.8 自测：Telepathy 传输 DLL 路径（供回环自测客户端复用）。</summary>
+    /// <summary>自测：Telepathy 传输 DLL 路径（供回环自测客户端复用）。</summary>
     public string TelepathyPath => telepathyPath;
     private bool f1WasDown;
     private bool f2WasDown;
     private bool f3WasDown;
     internal readonly DarkwoodEntityReplication replication = new DarkwoodEntityReplication();
-    /// <summary>0.8.9-alpha.1：实体 ID 反查（容器并发补偿用）。</summary>
+    /// <summary>实体 ID 反查（容器并发补偿用）。</summary>
     public bool TryGetEntityId(Component component,out EntityId id)=>replication.TryGetId(component,out id);
 
     private readonly Dictionary<int, Queue<OutgoingPacket>> outgoing = new Dictionary<int, Queue<OutgoingPacket>>();
@@ -113,7 +113,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private float nextInventoryDelta;
 
     private float nextRuntimeScan;
-    /// <summary>0.8.8-alpha.6：场景切换自动重连时刻（>0 表示待重连）。</summary>
+    /// <summary>场景切换自动重连时刻（>0 表示待重连）。</summary>
     private float autoReconnectAt;
 
     private float nextPose;
@@ -127,11 +127,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private readonly Dictionary<Guid,int> cachedActionOwners = new Dictionary<Guid,int>();
     private readonly Dictionary<Guid,ActionRequestMessage> pendingActions = new Dictionary<Guid,ActionRequestMessage>();
 
-    /// <summary>0.8.8 自测：自动回环自测开关（配置 SelfTestAuto）。</summary>
+    /// <summary>自测：自动回环自测开关（配置 SelfTestAuto）。</summary>
     public bool AutoSelfTest => autoSelfTestConfig?.Value ?? false;
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
-    private float scheduledStopAt; // 0.8.9：Combat 服务通过 ScheduleStop 设置
+    private float scheduledStopAt; // Combat 服务通过 ScheduleStop 设置
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -165,7 +165,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         hostSession.PeerDisconnected += OnPeerDisconnected;
         hostSession.MessageReceived += OnHostMessage;
         hostSession.MaxPeers = Math.Max(0, ConfiguredPlayerCount - 1);
-        // 0.8.9：玩家状态清理归 Players.Reset()
+        // 玩家状态清理归 Players.Reset()
         hostSession.Start(Port);
         Session.Role = MultiplayerRole.Host;
         Session.SessionId = Guid.NewGuid();
@@ -233,17 +233,17 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
             return;
         }
         Instance = this;
-        RuntimeEntities = new DarkwoodRuntimeEntityService(this); // 0.8.9：所有权拆分
-        Combat = new DarkwoodCombatService(this); // 0.8.9：所有权拆分
-        Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 0.8.9：所有权拆分
-        SaveState = new DarkwoodSaveTransferService(this); // 0.8.9：所有权拆分
+        RuntimeEntities = new DarkwoodRuntimeEntityService(this); // 所有权拆分
+        Combat = new DarkwoodCombatService(this); // 所有权拆分
+        Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 所有权拆分
+        SaveState = new DarkwoodSaveTransferService(this); // 所有权拆分
         Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;
-        RegisterMessageHandlers(); // 0.8.9：消息路由处理器注册
+        RegisterMessageHandlers(); // 消息路由处理器注册
         SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
-    /// <summary>0.8.9：延迟停服（战斗服务的全员倒地结局回调）。</summary>
+    /// <summary>延迟停服（战斗服务的全员倒地结局回调）。</summary>
     internal void ScheduleStop(float delay) => scheduledStopAt = Time.unscaledTime + delay;
 
     public void Update()
@@ -262,7 +262,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
             RebuildRegistry();
             SetState(DetectState());
         }
-        // 0.8.9 第七刀：主机/客户端周期逻辑分离（单一入口，不再 if/else 交错）。
+        // 第七刀：主机/客户端周期逻辑分离（单一入口，不再 if/else 交错）。
         if (Session.IsHost) TickHost();
         else if (Session.IsClient) TickClient();
         Combat.PollRescueHotkey();
@@ -335,14 +335,14 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         registry = null;
         RegistryDigest = string.Empty;
         hostLootScaleScanComplete = false;
-        // 0.8.8-alpha.6：场景切换——主机通知所有客户端自动重连（重连走完整握手+新场景存档加载），
+        // 场景切换——主机通知所有客户端自动重连（重连走完整握手+新场景存档加载），
         // 并重置运行时实体状态（新场景是全新的运行时世界；Runtime ID 计数器继续单调递增、绝不复用）。
         if (hostSession != null && (scene.Equals("chapter1", StringComparison.Ordinal) || scene.Equals("chapter2", StringComparison.Ordinal)))
         {
             var payload = ReplicationProtocolCodec.Encode(new SceneChangeMessage(scene));
             var notified = 0;
             foreach (var readyPeer in readyPeers.ToArray()) { Queue(readyPeer, ProtocolMessageType.SceneChange, payload); notified++; }
-            RuntimeEntities.OnSceneChanged(); // 0.8.9：所有权拆分——场景切换清理由服务自管
+            RuntimeEntities.OnSceneChanged(); // 所有权拆分——场景切换清理由服务自管
             if (notified > 0) log?.LogInfo($"主机场景已切换：{scene}，已通知 {notified} 个客户端自动重连。");
         }
         SceneChanged?.Invoke(scene);

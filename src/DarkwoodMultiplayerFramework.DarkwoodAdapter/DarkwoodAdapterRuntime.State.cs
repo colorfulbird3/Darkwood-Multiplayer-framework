@@ -12,7 +12,7 @@ public sealed partial class DarkwoodAdapterRuntime
     {
         if (State == next) return;
         State = next;
-        Session.State = next; // 0.8.9：SessionContext 同步
+        Session.State = next; // SessionContext 同步
         log?.LogInfo($"联机状态：{StateText(next)}。");
         StateChanged?.Invoke(next);
     }

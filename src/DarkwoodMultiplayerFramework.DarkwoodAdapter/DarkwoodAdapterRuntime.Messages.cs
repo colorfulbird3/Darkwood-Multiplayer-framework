@@ -43,7 +43,7 @@ public sealed partial class DarkwoodAdapterRuntime
         catch(Exception error){log?.LogWarning($"Failed to publish host container mutation for {id}: {error.Message}");}
     }
 
-    /// <summary>0.8.8-alpha.5：游戏默认出生点（playerBase 的 playerSpawn，与单机新游戏出生一致）。取不到时回退主机玩家位置。</summary>
+    /// <summary>游戏默认出生点（playerBase 的 playerSpawn，与单机新游戏出生一致）。取不到时回退主机玩家位置。</summary>
     internal Vector3 DefaultSpawnPoint()
     {
         try
@@ -60,6 +60,6 @@ public sealed partial class DarkwoodAdapterRuntime
         return player!=null?player.transform.position:Vector3.zero;
     }
 
-    /// <summary>0.8.8-alpha.4：客户端实例化运行时敌人代理。AI 冻结（远端代理），注册进 entities 以接收 15Hz delta（位置/血量/动画/死亡）。</summary>
+    /// <summary>客户端实例化运行时敌人代理。AI 冻结（远端代理），注册进 entities 以接收 15Hz delta（位置/血量/动画/死亡）。</summary>
 }
 

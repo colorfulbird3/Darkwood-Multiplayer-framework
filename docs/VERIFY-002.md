@@ -4,7 +4,7 @@
 
 ## 0.8.9-beta.3 重构验证（2026-08-17）
 
-十刀架构重构（partial 拆分、SessionContext、MessageRouter、协议领域文件、Transport 真接口、Host/Client Tick 分离、Runtime Entity 生命周期模型、xUnit 项目）后复测：
+0.8.9 重构（partial 拆分、SessionContext、MessageRouter、协议领域文件、传输抽象、服务拆分、xUnit 项目）后复测：
 
 - 构建 0 警告 / 0 错误
 - SelfTests 81/81（原有全套协议/组件测试保留）
@@ -16,7 +16,7 @@
 
 ### 1. 回环自测全链路（本机实测，2026-08-16）
 
-配置 `SelfTestAuto=true` 启动游戏，自动执行完整联机协议链：
+配置 `SelfTestAuto=true` 启动游戏，自动执行联机协议链：
 
 ```
 0s  启动 → 3s 自动开主机（监听 17777）→ 5s 自动读档 → 6s 主机 READY

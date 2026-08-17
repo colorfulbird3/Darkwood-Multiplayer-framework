@@ -24,7 +24,7 @@ public sealed partial class DarkwoodAdapterRuntime
     public void Initialize(ManualLogSource logger)
     {
         log = logger;
-        if (Players != null) Players.RemotePlayers.Logger = message => log?.LogInfo(message); // 0.8.9：服务在 Awake 构造（Initialize 可能先于 Awake 执行）
+        if (Players != null) Players.RemotePlayers.Logger = message => log?.LogInfo(message); // 服务在 Awake 构造（Initialize 可能先于 Awake 执行）
         log.LogInfo("Darkwood 联机适配层已初始化（0.8）。");
     }
     public void Configure(ConfigFile config)

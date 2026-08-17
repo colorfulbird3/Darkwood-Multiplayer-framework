@@ -6,7 +6,7 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 所有权拆分：玩家服务——拥有远端玩家在线状态（坐标/背包影子/Guest 身份档案）。
+/// 所有权拆分：玩家服务——拥有远端玩家在线状态（坐标/背包影子/Guest 身份档案）。
 /// Guest Profile 持久化（跨热加入身份数据）与在线状态同归本服务管理。
 /// </summary>
 public sealed class DarkwoodPlayerService
@@ -36,7 +36,7 @@ public sealed class DarkwoodPlayerService
         var record = new GuestProfileRecord(key, day, 1, 0f, 0f, 0f, Array.Empty<InventorySlotWire>(), Array.Empty<InventorySlotWire>(), DateTime.UtcNow.Ticks);
         spawn = hostPosition;
         if (guestProfiles != null) record = guestProfiles.Resolve(runtime.HostSaveToken(), key, day, hostPosition, out spawn);
-        spawn = runtime.DefaultSpawnPoint(); // 0.8.8-alpha.5：客户端始终在游戏默认出生点出生
+        spawn = runtime.DefaultSpawnPoint(); // 客户端始终在游戏默认出生点出生
         var shadow = DarkwoodPlayerInventoryShadow.FromRecord(record, message => runtime.log?.LogWarning(message));
         if (record.JoinCount == 1) shadow.AddStarterKit(guestProfiles?.KitForDay(day), message => runtime.log?.LogWarning(message));
         remoteInventories[peer] = shadow;

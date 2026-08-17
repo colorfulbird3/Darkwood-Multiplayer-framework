@@ -90,7 +90,7 @@ public readonly struct AttackPayload
     public float PosX {get;} public float PosZ {get;}
 }
 
-/// <summary>0.8.8-alpha.1：运行时实体类别。扩展时递增框架版本（无向下兼容）。</summary>
+/// <summary>运行时实体类别。扩展时递增框架版本（无向下兼容）。</summary>
 
 public readonly struct InteractPayload
 {

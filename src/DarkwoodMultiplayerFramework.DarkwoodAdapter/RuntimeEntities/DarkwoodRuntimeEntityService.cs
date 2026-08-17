@@ -9,7 +9,7 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 所有权拆分：运行时实体服务——拥有全部"游戏运行过程中临时生成的对象"
+/// 所有权拆分：运行时实体服务——拥有全部"游戏运行过程中临时生成的对象"
 /// （随机事件容器、掉落物、动态敌人）。外部只能调用公开方法，不直接接触内部字典。
 /// 主机：扫描登记 + 范围门控单播 + 消失 Despawn；客户端：镜像实例化/销毁。
 /// </summary>

@@ -9,7 +9,7 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 所有权拆分：战斗服务——拥有血量 / 倒地 / 怪物伤害 / 攻击锚点 / 无敌时间 / 营救会话。
+/// 所有权拆分：战斗服务——拥有血量 / 倒地 / 怪物伤害 / 攻击锚点 / 无敌时间 / 营救会话。
 /// 所有 Combat/Rescue 状态从 Runtime 迁入；外部只能通过公开方法交互。
 /// </summary>
 public sealed class DarkwoodCombatService

@@ -3,7 +3,7 @@ using DarkwoodMultiplayerFramework.Protocol;
 namespace DarkwoodMultiplayerFramework.Network;
 
 /// <summary>
-/// 0.8.9 第三刀：消息来源上下文。
+/// 第三刀：消息来源上下文。
 /// </summary>
 public readonly struct PeerContext
 {
@@ -20,7 +20,7 @@ public readonly struct PeerContext
 }
 
 /// <summary>
-/// 0.8.9 第三刀：网络消息处理器。按领域实现，注册进 NetworkMessageRouter，
+/// 第三刀：网络消息处理器。按领域实现，注册进 NetworkMessageRouter，
 /// 取代 OnHostMessage / OnClientMessage 的巨型 if-else 链。
 /// </summary>
 public interface INetworkMessageHandler

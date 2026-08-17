@@ -4,7 +4,7 @@ using DarkwoodMultiplayerFramework.Protocol;
 namespace DarkwoodMultiplayerFramework.Network;
 
 /// <summary>
-/// 0.8.9 第三刀：消息路由器。处理器注册制——新增消息类型时注册新 handler，
+/// 第三刀：消息路由器。处理器注册制——新增消息类型时注册新 handler，
 /// 不再修改中央 switch。
 /// </summary>
 public sealed class NetworkMessageRouter

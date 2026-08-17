@@ -18,7 +18,7 @@ public enum RuntimeEntityKind : byte
     LootContainer = 4,
 }
 
-/// <summary>0.8.8-alpha.1：运行时实体移除原因。</summary>
+/// <summary>运行时实体移除原因。</summary>
 public enum RuntimeEntityDespawnReason : byte
 {
     Unknown = 0,
@@ -33,7 +33,7 @@ public enum RuntimeEntityDespawnReason : byte
 }
 
 /// <summary>
-/// 0.8.8-alpha.1：Runtime Entity 生成广播。RuntimeEntityId 只能由 Host 分配，
+/// Runtime Entity 生成广播。RuntimeEntityId 只能由 Host 分配，
 /// 会话内单调递增、绝不复用（销毁的 ID 不再分配给新对象）。
 /// InitialState 预留给 alpha.3+ 的实体专属初始状态（当前可为空）。
 /// </summary>
@@ -51,7 +51,7 @@ public readonly struct RuntimeEntitySpawnMessage
     public long ServerTick {get;}
 }
 
-/// <summary>0.8.8-alpha.1：Runtime Entity 移除广播。</summary>
+/// <summary>Runtime Entity 移除广播。</summary>
 public readonly struct RuntimeEntityDespawnMessage
 {
     public RuntimeEntityDespawnMessage(ulong runtimeEntityId,long serverTick,RuntimeEntityDespawnReason reason)
@@ -61,4 +61,4 @@ public readonly struct RuntimeEntityDespawnMessage
     public RuntimeEntityDespawnReason Reason {get;}
 }
 
-/// <summary>0.8.8-alpha.6：主机场景切换通知（客户端收到后自动重连并重新加载新场景存档）。</summary>
+/// <summary>主机场景切换通知（客户端收到后自动重连并重新加载新场景存档）。</summary>
