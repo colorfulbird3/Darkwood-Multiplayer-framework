@@ -1,6 +1,6 @@
 # Darkwood Multiplayer Framework 0.8.9-beta.4
 
-0.8.9 世界层权威同步（第 2-6 刀全量）。**一切世界状态变更的最终裁决者只有 Host。**
+0.8.9 世界层权威同步（第 2-6 刀全量）。**Drop / Pickup / Container 已收口到 Host Authority；ItemActivate / Window 等部分交互仍保留信任模型（客户端先执行后上报）。**
 
 ## 第 2 刀：Drop + Pickup 全 Host Authority
 
@@ -29,6 +29,15 @@
 
 - 重复请求防护（`ActionIdempotencyCache`）+ 3 个 xUnit 幂等测试。
 - 已有机制确认在位：乱序 revision 丢弃、Despawn 幂等（未登记忽略）、快照/晚加入、自动重连、扫描器降级为审计器。
+
+## 修订（发布后评审修复）
+
+- ContainerPut 参数顺序错位（数量/目标槽传反）——已修正。
+- ContainerTake 复制物品风险（请求 2 个实际给整槽）——已按 amount 裁剪再入背包。
+- Take Prefix 未真正拦截原版（客户端本地执行 + Host 再执行 = 复制）——已改为 `bool Prefix` 明确 return false。
+- Drop 事务化：先创建掉落物 + 分配 ID，成功后才扣库存；失败销毁临时对象并拒绝。
+- Snapshot ACK 重试计数双增（1→3→5）——已修正为仅发送时计数。
+- FaultInjectingTransport 重连未清发送计数——已修正。
 
 ## 测试
 
