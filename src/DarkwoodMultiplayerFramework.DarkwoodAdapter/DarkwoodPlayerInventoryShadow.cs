@@ -13,7 +13,7 @@ internal sealed class DarkwoodPlayerInventoryShadow
         {Type=type;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;MaxAmount=maxAmount;Stackable=stackable;}
         public string Type {get;} public int Amount {get;} public float Durability {get;} public int Quality {get;} public bool Recipe {get;} public int MaxAmount {get;} public bool Stackable {get;}
     }
-    private sealed class Slot { public string Type=string.Empty; public int Amount; public float Durability; public int Quality; public bool Recipe; public int MaxAmount=1; public bool Stackable; }
+    internal sealed class Slot { public string Type=string.Empty; public int Amount; public float Durability; public int Quality; public bool Recipe; public int MaxAmount=1; public bool Stackable; }
     private readonly List<Slot> backpack=new List<Slot>();
     private readonly List<Slot> hotbar=new List<Slot>();
 
@@ -128,5 +128,5 @@ internal sealed class DarkwoodPlayerInventoryShadow
     private IEnumerable<Slot> AllSlots(){foreach(var slot in backpack)yield return slot;foreach(var slot in hotbar)yield return slot;}
     private static InvItemClass ToItemClass(Slot slot)=>new InvItemClass(slot.Type,slot.Durability,slot.Amount,(InvItem.ModifierQuality)slot.Quality,slot.Recipe);
     private static void Clear(Slot slot){slot.Type=string.Empty;slot.Amount=0;slot.Durability=0;slot.Quality=0;slot.Recipe=false;slot.MaxAmount=1;slot.Stackable=false;}
-    private static InventorySlotWire[] ToWire(List<Slot> source){var result=new InventorySlotWire[source.Count];for(var i=0;i<source.Count;i++){var s=source[i];result[i]=new InventorySlotWire(s.Type,s.Amount,s.Durability,s.Quality,s.Recipe);}return result;}
+    internal static InventorySlotWire[] ToWire(List<Slot> source){var result=new InventorySlotWire[source.Count];for(var i=0;i<source.Count;i++){var s=source[i];result[i]=new InventorySlotWire(s.Type,s.Amount,s.Durability,s.Quality,s.Recipe);}return result;}
 }

@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\DarkwoodMultiplayerFramework.Core\DarkwoodMultiplayerFramework.Core.csproj" />
+    <ProjectReference Include="..\..\src\DarkwoodMultiplayerFramework.Actions\DarkwoodMultiplayerFramework.Actions.csproj" />
     <ProjectReference Include="..\..\src\DarkwoodMultiplayerFramework.Protocol\DarkwoodMultiplayerFramework.Protocol.csproj" />
     <ProjectReference Include="..\..\src\DarkwoodMultiplayerFramework.Entities\DarkwoodMultiplayerFramework.Entities.csproj" />
     <ProjectReference Include="..\..\src\DarkwoodMultiplayerFramework.Network\DarkwoodMultiplayerFramework.Network.csproj" />

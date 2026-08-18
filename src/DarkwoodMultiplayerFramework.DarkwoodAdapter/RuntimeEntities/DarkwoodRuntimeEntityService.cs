@@ -24,6 +24,7 @@ public sealed class DarkwoodRuntimeEntityService
     private readonly Dictionary<ulong, RuntimeEntitySpawnMessage> pendingEvents = new Dictionary<ulong, RuntimeEntitySpawnMessage>();
     private readonly RuntimeEventDispatch dispatch = new RuntimeEventDispatch();
     private float nextScan;
+    private float lastPoseWarnAt;
     /// <summary>随机事件动画触发范围（XZ 平面距离，米）。</summary>
     private const float TriggerRange = 35f;
 
@@ -91,6 +92,7 @@ public sealed class DarkwoodRuntimeEntityService
                 var message = BuildSpawn(RuntimeEntityKind.LootContainer, inventory.name, inventory.transform.position, inventory.transform.rotation, initialState);
                 if (message.RuntimeEntityId == 0) continue;
                 hostInventories[inventory] = message.RuntimeEntityId;
+                runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(message.RuntimeEntityId,false),Root=inventory.gameObject,Primary=inventory,Inventory=inventory,Item=inventory.GetComponentInChildren<Item>(),Kind=WorldEntityKind.LootContainer});
                 pendingEvents[message.RuntimeEntityId] = message;
                 runtime.log?.LogInfo($"主机登记随机事件容器（待客户端进入范围触发）：ID {message.RuntimeEntityId}，prefab {inventory.name}，位置 ({message.X:F0},{message.Y:F0},{message.Z:F0})。");
             }
@@ -105,6 +107,7 @@ public sealed class DarkwoodRuntimeEntityService
                 var droppedMessage = BuildSpawn(RuntimeEntityKind.DroppedItem, dropped.name, dropped.transform.position, dropped.transform.rotation, droppedInitialState);
                 if (droppedMessage.RuntimeEntityId == 0) continue;
                 hostInventories[dropped] = droppedMessage.RuntimeEntityId;
+                runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(droppedMessage.RuntimeEntityId,false),Root=dropped.gameObject,Primary=dropped,Inventory=dropped,Item=dropped.GetComponentInChildren<Item>(),Kind=WorldEntityKind.DroppedItem});
                 pendingEvents[droppedMessage.RuntimeEntityId] = droppedMessage;
                 runtime.log?.LogInfo($"主机登记掉落物（待客户端进入范围触发）：ID {droppedMessage.RuntimeEntityId}，位置 ({droppedMessage.X:F0},{droppedMessage.Y:F0},{droppedMessage.Z:F0})。");
             }
@@ -118,7 +121,7 @@ public sealed class DarkwoodRuntimeEntityService
                 var enemyMessage = BuildSpawn(RuntimeEntityKind.Enemy, prefabName, character.transform.position, character.transform.rotation);
                 if (enemyMessage.RuntimeEntityId == 0) continue;
                 hostEnemies[character] = enemyMessage.RuntimeEntityId;
-                runtime.replication.RegisterRuntimeEntity(new EntityId(enemyMessage.RuntimeEntityId, false), character);
+                runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(enemyMessage.RuntimeEntityId,false),Root=character.gameObject,Primary=character,Character=character,Item=character.GetComponentInChildren<Item>(),Kind=WorldEntityKind.Enemy});
                 pendingEvents[enemyMessage.RuntimeEntityId] = enemyMessage;
                 runtime.log?.LogInfo($"主机登记运行时敌人（待客户端进入范围触发）：ID {enemyMessage.RuntimeEntityId}，prefab {prefabName}，位置 ({enemyMessage.X:F0},{enemyMessage.Y:F0},{enemyMessage.Z:F0})。");
             }
@@ -163,15 +166,26 @@ public sealed class DarkwoodRuntimeEntityService
             var message = pair.Value;
             foreach (var readyPeer in runtime.readyPeers.ToArray())
             {
-                if (!runtime.Players.TryGetRemotePosition(readyPeer, out var pose)) continue;
+                if (!runtime.Players.TryGetRemotePosition(readyPeer, out var pose))
+                {
+                    // 诊断（限频 10 秒）：客户端位置缺失 = Spawn 广播静默跳过
+                    if (Time.unscaledTime - lastPoseWarnAt > 10f)
+                    {
+                        lastPoseWarnAt = Time.unscaledTime;
+                        runtime.log?.LogWarning($"玩家 {readyPeer} 位置未知（主机未收到其姿态），跳过运行时实体 Spawn 广播：ID {message.RuntimeEntityId}，类型 {message.Kind}。");
+                    }
+                    continue;
+                }
                 var dx = pose.x - message.X; var dz = pose.z - message.Z;
                 if (dx * dx + dz * dz > TriggerRange * TriggerRange) continue;
                 if (!dispatch.TryMark(message.RuntimeEntityId, readyPeer)) continue;
                 SendSpawnTo(readyPeer, message);
-                runtime.log?.LogInfo($"客户端 {readyPeer} 进入随机事件范围，触发动画：ID {message.RuntimeEntityId}，prefab {message.PrototypeId}。");
+                runtime.log?.LogInfo($"已向客户端 {readyPeer} 发送运行时实体：ID {message.RuntimeEntityId}，类型 {message.Kind}，prefab {message.PrototypeId}，距离 {(float)Math.Sqrt(dx*dx+dz*dz):F1} 米。");
             }
         }
     }
+
+    public int PendingCount => pendingEvents.Count;
 
     /// <summary>场景切换：清空全部运行时实体状态（ID 计数器继续单调递增）。</summary>
     public void OnSceneChanged()
@@ -194,7 +208,7 @@ public sealed class DarkwoodRuntimeEntityService
         registry.Register(new RuntimeEntityRecord(spawn.RuntimeEntityId, spawn.Kind, spawn.PrototypeId, spawn.Scene, spawn.ServerTick, RuntimeEntityLifecycleState.Spawned));
         runtime.log?.LogInfo($"客户端已登记运行时实体：ID {spawn.RuntimeEntityId}，类型 {spawn.Kind}，原型 {spawn.PrototypeId}。");
         if (spawn.Kind == RuntimeEntityKind.LootContainer) SpawnLootContainerMirror(spawn);
-        else if (spawn.Kind == RuntimeEntityKind.DroppedItem) SpawnLootContainerMirror(spawn);
+        else if (spawn.Kind == RuntimeEntityKind.DroppedItem) SpawnDroppedItemMirror(spawn);
         else if (spawn.Kind == RuntimeEntityKind.Enemy) SpawnEnemyMirror(spawn);
     }
 
@@ -231,10 +245,40 @@ public sealed class DarkwoodRuntimeEntityService
                 DarkwoodInventoryAdapter.Apply(inventory, slots);
             }
             foreach (var col in go.GetComponentsInChildren<Collider>(true)) col.enabled = false;
+            runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(spawn.RuntimeEntityId,false),Root=go,Primary=inventory,Inventory=inventory,Item=go.GetComponentInChildren<Item>(),Kind=spawn.Kind==RuntimeEntityKind.Enemy?WorldEntityKind.Enemy:(spawn.Kind==RuntimeEntityKind.DroppedItem?WorldEntityKind.DroppedItem:WorldEntityKind.LootContainer)});
             clientInventoryMirrors[spawn.RuntimeEntityId] = go.transform;
             runtime.log?.LogInfo($"客户端已实例化运行时容器镜像：ID {spawn.RuntimeEntityId}，prefab {spawn.PrototypeId}，槽位 {(inventory != null ? inventory.slots.Count : 0)}。");
         }
         catch (Exception error) { runtime.log?.LogWarning($"实例化运行时容器失败（{spawn.PrototypeId}）：{error.Message}"); }
+    }
+
+    private void SpawnDroppedItemMirror(RuntimeEntitySpawnMessage spawn)
+    {
+        try
+        {
+            var go = global::Core.AddPrefab("Items/DroppedItem", new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+            if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
+            var dropped = go.GetComponent<Inventory>();
+            if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
+            if (spawn.InitialState.Length > 0)
+            {
+                var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
+                if (state.Slots.Length > 0)
+                {
+                    var s = state.Slots[0];
+                    var slot = dropped.slots[0];
+                    slot.inventory = dropped;
+                    slot.createItem(new InvItemClass(s.Type, s.Durability, s.Amount, (InvItem.ModifierQuality)s.Quality, s.Recipe));
+                }
+            }
+            // 保留碰撞器：镜像可被点击拾取（Pickup Patch 拦截并转发 Host）
+            var item = go.GetComponentInChildren<Item>();
+            if (item != null) item.isDroppedItem = true;
+            runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(spawn.RuntimeEntityId,false),Root=go,Primary=dropped,Inventory=dropped,Item=item,Kind=WorldEntityKind.DroppedItem});
+            clientInventoryMirrors[spawn.RuntimeEntityId] = go.transform;
+            runtime.log?.LogInfo($"客户端已实例化掉落物镜像：ID {spawn.RuntimeEntityId}，类型 {spawn.PrototypeId}，可交互。");
+        }
+        catch (Exception error) { runtime.log?.LogWarning($"实例化掉落物镜像失败（{spawn.PrototypeId}）：{error.Message}"); }
     }
 
     private void SpawnEnemyMirror(RuntimeEntitySpawnMessage spawn)

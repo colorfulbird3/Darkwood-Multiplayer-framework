@@ -38,7 +38,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9-beta.3";
+    public const string Framework = "0.8.9-beta.4";
 }
 
 public static class ReplicationProtocolCodec
@@ -76,6 +76,8 @@ public static class ReplicationProtocolCodec
     public static RescueProgressMessage DecodeRescueProgress(byte[] p)=>Read(p,r=>new RescueProgressMessage(r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadBoolean()));
     public static byte[] Encode(AllDownedMessage m)=>Array.Empty<byte>();
     public static AllDownedMessage DecodeAllDowned(byte[] p)=>Read(p,r=>new AllDownedMessage());
+    public static byte[] Encode(DropItemPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.Amount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);});
+    public static DropItemPayload DecodeDropItem(byte[] p)=>Read(p,r=>new DropItemPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle()));
     public static byte[] Encode(ActionRequestMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write(m.PlayerId);w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.ExpectedRevision);WriteBytes(w,m.Payload,ActionPayloadMax);});
     public static ActionRequestMessage DecodeActionRequest(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var player=r.ReadInt32();var kind=ReadActionKind(r);return new ActionRequestMessage(id,player,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadBytes(r,ActionPayloadMax));});
     public static byte[] Encode(ActionResultMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.Revision);WriteBytes(w,m.Payload,ActionPayloadMax);});

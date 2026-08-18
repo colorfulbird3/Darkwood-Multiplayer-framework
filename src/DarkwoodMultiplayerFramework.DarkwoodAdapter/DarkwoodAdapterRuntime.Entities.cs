@@ -56,6 +56,10 @@ public sealed partial class DarkwoodAdapterRuntime
             case ActionKindWire.DoorInteract: HandleDoorInteractRequest(peer,request);return;
             case ActionKindWire.WindowInteract: HandleWindowInteractRequest(peer,request);return;
             case ActionKindWire.ItemActivate: HandleItemActivateRequest(peer,request);return;
+            case ActionKindWire.DropItem: HandleDropRequest(peer,request);return;
+            case ActionKindWire.ContainerTake: HandleContainerTakeRequest(peer,request);return;
+            case ActionKindWire.ContainerPut: HandleContainerPutRequest(peer,request);return;
+            case ActionKindWire.ItemInteract: HandleItemInteractRequest(peer,request);return;
             default: RejectAction(peer,request,"UNSUPPORTED_ACTION",0);return;
         }
     }
@@ -63,7 +67,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandlePickupRequest(int peer,ActionRequestMessage request)
     {
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
-        if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){RejectAction(peer,request,"ENTITY_NOT_FOUND",0);return;}
+        if(!replication.TryGetItem(id,out var item)){RejectAction(peer,request,"ENTITY_NOT_FOUND",0);return;}
         if(!replication.TryGetState(id,out var state)){RejectAction(peer,request,"ENTITY_STATE_MISSING",0);return;}
         if(!item.gameObject.activeSelf||item.destroyed||!item.isDroppedItem){RejectAction(peer,request,"NOT_PICKABLE",state.Revision);return;}
         var droppedInventory=DarkwoodDroppedItemAccessor.GetInventory(item);
@@ -85,6 +89,94 @@ public sealed partial class DarkwoodAdapterRuntime
         Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
         var delta=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,Array.Empty<EntityStateWire>(),new[]{despawn}));foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.EntityDelta,delta);
         log?.LogInfo($"Pickup accepted {request.RequestId}: peer {peer}, {pickup.ItemType} x{pickup.Amount}, target {id}, revision {despawn.Revision}.");
+    }
+
+    private void HandleItemInteractRequest(int peer,ActionRequestMessage request)
+    {
+        var id=new EntityId(request.TargetValue,request.TargetPersistent);
+        if(!replication.TryGetItem(id,out var item)){RejectAction(peer,request,"ITEM_NOT_FOUND",0);return;}
+        var interact=ReplicationProtocolCodec.DecodeInteract(request.Payload);
+        item.searched = interact.ValueA != 0;
+        AcceptInteract(peer,request,id,item,0);
+        log?.LogInfo($"主机已应用物品交互 {request.RequestId}：玩家 {peer}，物品 {id}，searched={item.searched}。");
+    }
+
+    private void HandleContainerTakeRequest(int peer,ActionRequestMessage request)
+    {
+        ContainerTakePayload payload;
+        try{payload=ReplicationProtocolCodec.DecodeContainerTake(request.Payload);}
+        catch(Exception error){RejectAction(peer,request,"INVALID_TAKE_PAYLOAD",0);log?.LogWarning($"ContainerTake payload rejected from peer {peer}: {error.Message}");return;}
+        var id=new EntityId(request.TargetValue,request.TargetPersistent);
+        if(!replication.TryGetInventory(id,out var container)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
+        if(!DarkwoodEntityStateAdapter.IsShared(container)){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
+        if(payload.SlotIndex<0||payload.SlotIndex>=container.slots.Count){RejectAction(peer,request,"SLOT_OUT_OF_RANGE",0);return;}
+        var slot=container.slots[payload.SlotIndex];
+        if(InvItemClass.isNull(slot.invItem)){RejectAction(peer,request,"SLOT_EMPTY",0);return;}
+        var amount=Math.Min(payload.Amount,slot.invItem.amount);
+        if(amount<=0){RejectAction(peer,request,"INVALID_AMOUNT",0);return;}
+        if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
+        var item=new InvItemClass(slot.invItem);
+        if(!shadow.CanAdd(item)){RejectAction(peer,request,"INVENTORY_FULL",0);return;}
+        // 权威事务：容器扣 → 玩家 shadow 加
+        slot.invItem.amount-=amount;
+        if(slot.invItem.amount<=0)slot.removeItem();
+        slot.inventory?.refreshItems();
+        shadow.Add(item);
+        // 立即广播权威容器状态（全部客户端）
+        var state=replication.CaptureAuthoritativeInventory(id);
+        BroadcastInventory(state);
+        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,state.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
+        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(state.Revision),string.Empty)));acceptedActions++;
+        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
+        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
+        log?.LogInfo($"ContainerTake accepted {request.RequestId}: peer {peer}, {item.type} x{amount}, container {id}, slot {payload.SlotIndex}.");
+    }
+
+    private void HandleContainerPutRequest(int peer,ActionRequestMessage request)
+    {
+        ContainerPutPayload payload;
+        try{payload=ReplicationProtocolCodec.DecodeContainerPut(request.Payload);}
+        catch(Exception error){RejectAction(peer,request,"INVALID_PUT_PAYLOAD",0);log?.LogWarning($"ContainerPut payload rejected from peer {peer}: {error.Message}");return;}
+        var id=new EntityId(request.TargetValue,request.TargetPersistent);
+        if(!replication.TryGetInventory(id,out var container)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
+        if(!DarkwoodEntityStateAdapter.IsShared(container)){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
+        if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
+        if(!shadow.TryPeek(payload.Hotbar,payload.SlotIndex,payload.Amount,out var source)){RejectAction(peer,request,"PLAYER_SLOT_EMPTY",0);return;}
+        if(!shadow.Remove(payload.Hotbar,payload.SlotIndex,payload.Amount)){RejectAction(peer,request,"INSUFFICIENT_AMOUNT",0);return;}
+        var item=new InvItemClass(source.Type,source.Durability,source.Amount,(InvItem.ModifierQuality)source.Quality,source.Recipe);
+        // 放入容器目标槽（同类堆叠，否则覆盖空槽）
+        var targetSlot=payload.DestinationSlotIndex;
+        if(targetSlot<0||targetSlot>=container.slots.Count){targetSlot=0;}
+        var dest=container.slots[targetSlot];
+        if(!InvItemClass.isNull(dest.invItem)&&string.Equals(dest.invItem.type,item.type,StringComparison.Ordinal)&&dest.invItem.baseClass!=null&&dest.invItem.baseClass.stackable)
+        {
+            dest.invItem.amount+=item.amount;dest.invItem.refresh();
+        }
+        else
+        {
+            dest.inventory=container;
+            dest.createItem(item);
+        }
+        container.refreshItems();
+        var state=replication.CaptureAuthoritativeInventory(id);
+        BroadcastInventory(state);
+        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,state.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
+        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(state.Revision),string.Empty)));acceptedActions++;
+        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
+        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
+        log?.LogInfo($"ContainerPut accepted {request.RequestId}: peer {peer}, {item.type} x{payload.Amount}, container {id}, slot {targetSlot}.");
+    }
+
+    private void HandleDropRequest(int peer,ActionRequestMessage request)
+    {
+        DropItemPayload payload;
+        try{payload=ReplicationProtocolCodec.DecodeDropItem(request.Payload);}
+        catch(Exception error){RejectAction(peer,request,"INVALID_DROP_PAYLOAD",0);log?.LogWarning($"Drop payload rejected from peer {peer}: {error.Message}");return;}
+        var result=World.DropItem(peer,payload,request,(p,req,code,rev)=>RejectAction(p,req,code,rev));
+        if(result==null)return;
+        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(result.Value.Revision),string.Empty)));acceptedActions++;
+        cachedActionResults[request.RequestId]=result.Value;cachedActionOwners[request.RequestId]=peer;
+        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result.Value));
     }
 
     private void HandleAttackRequest(int peer,ActionRequestMessage request)
@@ -147,7 +239,11 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleItemActivateRequest(int peer,ActionRequestMessage request)
     {
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
-        if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){RejectAction(peer,request,"ITEM_NOT_FOUND",0);return;}
+        if(!replication.TryGetComponent(id,out var component)||!(component is Item item)){
+            var itemCount=0;foreach(var pair in replication.Entities())if(pair.Value is Item)itemCount++;
+            log?.LogWarning($"ITEM_NOT_FOUND：请求 {id.Value:X16}:{(id.IsPersistent?1:0)}，主机注册表 {registry?.Count ?? 0} 实体（其中 Item {itemCount} 个），kind={request.Kind}，revision={request.ExpectedRevision}。");
+            RejectAction(peer,request,"ITEM_NOT_FOUND",0);return;
+        }
         // FIX-011：信任模型——客户端本地已执行 activate() 并报告 isOn 结果状态；
         // 主机直接应用该状态（不调用 activate()，避免在主机弹出容器 UI）并广播。
         var interact=ReplicationProtocolCodec.DecodeInteract(request.Payload);

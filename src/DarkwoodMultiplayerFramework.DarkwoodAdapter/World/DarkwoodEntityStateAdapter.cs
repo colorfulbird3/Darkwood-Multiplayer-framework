@@ -19,7 +19,7 @@ public static class DarkwoodEntityStateAdapter
         float h = 0; int a = 0, b = 0; byte f = 0; string anim = ""; int frame = 0; byte kind = Kind(c);
         if (c is Character ch)
         {
-            h = ch.health; f = Flags(ch.alive, ch.gameObject.activeSelf, ch.attacking, ch.walking, ch.running);
+            h = ch.health; f = Flags(ch.alive, ch.gameObject.activeSelf, ch.attacking, ch.walking, ch.running, ch.inBearTrap);
             if (ch.animator != null && ch.animator.CurrentClip != null) { anim = ch.animator.CurrentClip.name; frame = ch.animator.CurrentFrame; }
         }
         else if (c is Door d)
@@ -50,7 +50,7 @@ public static class DarkwoodEntityStateAdapter
             // authoritative InventoryState broadcast.
             if (ch.alive && !Flag(s.Flags, 0) && !deadCharacters.Contains(ch)) { deadCharacters.Add(ch); frozen.Remove(ch); ch.enabled = true; try { ch.die2(); } catch (Exception) { ch.gameObject.SetActive(false); } if (ch.gameObject.activeSelf) ch.enabled = false; }
             if (!deadCharacters.Contains(ch) && frozen.Add(ch)) { ch.enabled = false; if (ch.AIpath != null) ch.AIpath.enabled = false; }
-            ch.health = s.Health; ch.Health = s.Health; ch.alive = Flag(s.Flags, 0); ch.walking = Flag(s.Flags, 3); ch.running = Flag(s.Flags, 4); ch.gameObject.SetActive(Flag(s.Flags, 1)); if (immediate) { ch.transform.position = p; ch.transform.rotation = q; }
+            ch.health = s.Health; ch.Health = s.Health; ch.alive = Flag(s.Flags, 0); ch.walking = Flag(s.Flags, 3); ch.running = Flag(s.Flags, 4); ch.attacking = Flag(s.Flags, 2); ch.inBearTrap = Flag(s.Flags, 5); ch.gameObject.SetActive(Flag(s.Flags, 1)); if (immediate) { ch.transform.position = p; ch.transform.rotation = q; }
         }
         else if (c is Door d)
         {
@@ -93,6 +93,6 @@ public static class DarkwoodEntityStateAdapter
 
     public static byte Kind(Component c) => c is Character ? (byte)1 : c is Door ? (byte)2 : c is Window ? (byte)3 : c is Item ? (byte)4 : c is Inventory ? (byte)5 : (byte)0;
 
-    public static byte Flags(bool a, bool b, bool c, bool d, bool e = false) => (byte)((a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) | (d ? 8 : 0) | (e ? 16 : 0));
+    public static byte Flags(bool a, bool b, bool c, bool d, bool e = false, bool f = false) => (byte)((a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) | (d ? 8 : 0) | (e ? 16 : 0) | (f ? 32 : 0));
     public static bool Flag(byte f, int bit) => (f & (1 << bit)) != 0;
 }

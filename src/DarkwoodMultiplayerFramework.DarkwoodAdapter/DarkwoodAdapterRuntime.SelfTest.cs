@@ -21,7 +21,7 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 public sealed partial class DarkwoodAdapterRuntime
 {
-    private void BroadcastInventory(InventoryStateMessage inventory){var payload=ReplicationProtocolCodec.Encode(inventory);foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.InventoryState,payload);}
+    internal void BroadcastInventory(InventoryStateMessage inventory){var payload=ReplicationProtocolCodec.Encode(inventory);foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.InventoryState,payload);}
 
     private static DarkwoodInventorySlot[] ToDarkwoodSlots(InventorySlotWire[] slots)
     {

@@ -12,7 +12,23 @@ public enum ActionKindWire : byte
     Attack = 4,
     DoorInteract = 5,
     WindowInteract = 6,
-    ItemActivate = 7
+    ItemActivate = 7,
+    DropItem = 8,
+    ItemInteract = 9,
+    ContainerMove = 10,
+    DeployItem = 11
+}
+
+/// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>
+public readonly struct DropItemPayload
+{
+    public DropItemPayload(bool fromHotbar,int slotIndex,int amount,float x,float y,float z,float qx,float qy,float qz,float qw)
+    {FromHotbar=fromHotbar;SlotIndex=slotIndex;Amount=amount;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;}
+    public bool FromHotbar { get; }
+    public int SlotIndex { get; }
+    public int Amount { get; }
+    public float X { get; } public float Y { get; } public float Z { get; }
+    public float Qx { get; } public float Qy { get; } public float Qz { get; } public float Qw { get; }
 }
 
 public readonly struct ActionRequestMessage

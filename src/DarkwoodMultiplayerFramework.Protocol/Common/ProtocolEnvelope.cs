@@ -23,6 +23,7 @@ public enum ProtocolMessageType : ushort
     PlayerHealth = 35,
     RescueRequest = 36,
     RescueProgress = 37,
+    PlayerInventoryState = 39,
     AllDowned = 38,
     ActionRequest = 50,
     ActionResult = 51,

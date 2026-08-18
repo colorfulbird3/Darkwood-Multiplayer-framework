@@ -65,7 +65,8 @@ public sealed partial class DarkwoodAdapterRuntime
         public HostSnapshotHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
         public bool Handles(ProtocolMessageType type) =>
-            type == ProtocolMessageType.Ready || type == ProtocolMessageType.WorldSnapshotApplied;
+            type == ProtocolMessageType.WorldSnapshotApplied ||
+            (type == ProtocolMessageType.Ready && runtime.IsHost);
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -100,7 +101,7 @@ public sealed partial class DarkwoodAdapterRuntime
         private readonly DarkwoodAdapterRuntime runtime;
         public HostPlayerHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
-        public bool Handles(ProtocolMessageType type) => type == ProtocolMessageType.PlayerPose;
+        public bool Handles(ProtocolMessageType type) => type == ProtocolMessageType.PlayerPose && runtime.IsHost;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -131,7 +132,7 @@ public sealed partial class DarkwoodAdapterRuntime
         private readonly DarkwoodAdapterRuntime runtime;
         public HostInventoryHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
-        public bool Handles(ProtocolMessageType type) => type == ProtocolMessageType.InventoryState;
+        public bool Handles(ProtocolMessageType type) => type == ProtocolMessageType.InventoryState && runtime.IsHost;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -281,14 +282,16 @@ public sealed partial class DarkwoodAdapterRuntime
         public ClientPlayerHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
         public bool Handles(ProtocolMessageType type) =>
-            type == ProtocolMessageType.PlayerPose || type == ProtocolMessageType.PlayerHealth;
+            type == ProtocolMessageType.PlayerPose || type == ProtocolMessageType.PlayerHealth || type == ProtocolMessageType.PlayerInventoryState;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
             if (envelope.MessageType == ProtocolMessageType.PlayerPose)
                 runtime.Players.RemotePlayers.Apply(ReplicationProtocolCodec.DecodePlayerPose(envelope.Payload), runtime.clientSession?.PeerId ?? -1);
-            else
+            else if (envelope.MessageType == ProtocolMessageType.PlayerHealth)
                 runtime.Combat.ApplyIncomingPlayerHealth(ReplicationProtocolCodec.DecodePlayerHealth(envelope.Payload));
+            else
+                ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(envelope.Payload));
         }
     }
 

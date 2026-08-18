@@ -8,6 +8,17 @@ src-staging/
 artifacts-local/
 legacy-build.log
 
+# Agent context files — must never be committed or uploaded.
+AGENTS.md
+CLAUDE.md
+HERMES.md
+SOUL.md
+.hermes.md
+.hermes/
+.claude/
+.cursorrules
+prompts/
+
 .vs/
 *.user
 *.suo

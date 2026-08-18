@@ -29,6 +29,7 @@ internal static class DarkwoodContainerTakePatch
     {
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemToPlayer), Type.EmptyTypes);
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemAllToPlayer), Type.EmptyTypes);
+        yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemTo), new[] { typeof(Inventory) });
     }
 
     private static void Prefix(InvSlot __instance, out PendingTake __state)
@@ -45,16 +46,46 @@ internal static class DarkwoodContainerTakePatch
         __state = item != null && !string.IsNullOrEmpty(item.type)
             ? new PendingTake(containerId, item.type, Math.Max(1, __instance.itemAmount))
             : default;
+
+        // 第 3 刀：客户端不再本地执行共享容器操作——改发 ContainerTake/Put Intent
+        var runtime2 = DarkwoodAdapterRuntime.Instance;
+        if (runtime2 == null || runtime2.State != ConnectionState.Ready || !runtime2.IsMultiplayerActive) return;
+        var isShared = inventory != null && DarkwoodEntityStateAdapter.IsShared(inventory);
+        if (!isShared) return;
+        if (runtime2.IsClient)
+        {
+            var targetContainer = Traverse.Create(__instance).Field("_transferTarget").GetValue<Inventory>();
+            if (targetContainer == null && __instance.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
+            {
+                // transferItemToPlayer：容器→玩家
+                runtime2.TryRequestContainerTake(__instance);
+            }
+            else if (targetContainer != null && DarkwoodEntityStateAdapter.IsShared(targetContainer))
+            {
+                // transferItemTo：玩家→容器
+                runtime2.TryRequestContainerPut(__instance, targetContainer, 0);
+            }
+            else if (__instance.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
+            {
+                runtime2.TryRequestContainerTake(__instance);
+            }
+            __state = default;
+        }
     }
 
     private static void Postfix(InvSlot __instance, PendingTake __state)
     {
-        if (!string.IsNullOrEmpty(__state.Type) && __state.Amount > 0)
+        // 第 3 刀：客户端被拦截（Prefix return false 未执行）；Host 本地原版执行后立即广播权威容器状态
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || runtime.State != ConnectionState.Ready) return;
+        if (runtime.IsHost && __instance?.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
         {
-            var stillThere = __instance?.invItem;
-            if (stillThere == null) lock (pendingLock) pendingTakes.Add(__state); // 槽已清空 = 拿取生效
+            if (runtime.TryGetEntityId(__instance.inventory, out var id))
+            {
+                try { runtime.BroadcastInventory(runtime.CaptureAuthoritativeInventoryForHost(id)); }
+                catch { /* 容器已销毁 */ }
+            }
         }
-        ReportIfShared(__instance?.inventory);
     }
 
     /// <summary>取出并清空指定容器的待确认拿取记录（冲突补偿用）。</summary>
@@ -81,7 +112,6 @@ internal static class DarkwoodContainerTakePatch
 
     private static void PostfixReport(InvSlot __instance)
     {
-        ReportIfShared(__instance?.inventory);
     }
 
     internal static void ReportIfShared(Inventory? inventory)
@@ -91,7 +121,6 @@ internal static class DarkwoodContainerTakePatch
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || runtime.State != ConnectionState.Ready) return;
         if (runtime.IsHost) runtime.NotifyHostContainerChanged(inventory);
-        else runtime.ReportSharedContainerChanged(inventory);
     }
 }
 
@@ -103,6 +132,19 @@ internal static class DarkwoodContainerPutPatch
     {
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemTo), new[] { typeof(Inventory) });
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemAllTo), new[] { typeof(Inventory) });
+    }
+
+    private static bool Prefix(InvSlot __instance, Inventory _destInv)
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
+        if (!DarkwoodEntityStateAdapter.IsShared(_destInv)) return true;
+        if (runtime.IsClient)
+        {
+            runtime.TryRequestContainerPut(__instance, _destInv, 0);
+            return false;
+        }
+        return true;
     }
 
     private static void Postfix(Inventory _destInv)
@@ -119,6 +161,19 @@ internal static class DarkwoodContainerGrabPatch
     {
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.grabItem), Type.EmptyTypes);
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.controllerPickUpItem), Type.EmptyTypes);
+    }
+
+    private static bool Prefix(InvSlot __instance)
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
+        if (__instance?.inventory == null || !DarkwoodEntityStateAdapter.IsShared(__instance.inventory)) return true;
+        if (runtime.IsClient)
+        {
+            runtime.TryRequestContainerTake(__instance);
+            return false;
+        }
+        return true;
     }
 
     private static void Postfix(InvSlot __instance)

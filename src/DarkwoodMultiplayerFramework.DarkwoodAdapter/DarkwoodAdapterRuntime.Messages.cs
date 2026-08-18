@@ -21,6 +21,46 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 public sealed partial class DarkwoodAdapterRuntime
 {
+    public bool TryRequestContainerTake(InvSlot slot)
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
+        if(!TryGetEntityId(slot.inventory,out var containerId))return false;
+        var slotIndex=slot.inventory!=null?slot.inventory.slots.IndexOf(slot):-1;
+        if(slotIndex<0)return false;
+        var payload=new ContainerTakePayload(slotIndex,Math.Max(1,slot.itemAmount));
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerTake,containerId.Value,containerId.IsPersistent,0,ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId]=request;
+        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"ContainerTake request {request.RequestId} sent: container {containerId}, slot {slotIndex}, amount {payload.Amount}.");
+        return true;
+    }
+
+    public bool TryRequestContainerPut(InvSlot slot,Inventory targetContainer,int targetSlot)
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
+        if(!TryGetEntityId(targetContainer,out var containerId))return false;
+        var fromHotbar=slot.inventory!=null&&slot.inventory.invType==Inventory.InvType.hotbar;
+        var sourceSlot=slot.inventory!=null?slot.inventory.slots.IndexOf(slot):-1;
+        if(sourceSlot<0)return false;
+        var payload=new ContainerPutPayload(fromHotbar,sourceSlot,Math.Max(1,slot.itemAmount),targetSlot);
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerPut,containerId.Value,containerId.IsPersistent,0,ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId]=request;
+        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"ContainerPut request {request.RequestId} sent: container {containerId}, slot {sourceSlot}->{targetSlot}, amount {payload.Amount}.");
+        return true;
+    }
+
+    public bool TryRequestDrop(InvSlot slot)
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
+        var payload=DarkwoodDropPatch.BuildPayload(slot);
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.DropItem,0,false,0,ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId]=request;
+        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"Drop request {request.RequestId} sent: hotbar={payload.FromHotbar}, slot={payload.SlotIndex}, amount={payload.Amount}.");
+        return true;
+    }
+
     public bool TryRequestItemActivate(Item item)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||item==null)return false;

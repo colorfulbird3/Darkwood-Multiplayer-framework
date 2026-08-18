@@ -83,6 +83,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     internal DarkwoodPlayerService Players { get; private set; } = null!;
     /// <summary>存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
     internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
+    internal DarkwoodWorldAuthorityService World { get; private set; } = null!;
     internal EntityRegistry<Component>? registry;
     internal ManualLogSource? log;
     private string lastScene = string.Empty;
@@ -131,7 +132,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     public bool AutoSelfTest => autoSelfTestConfig?.Value ?? false;
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
-    private float scheduledStopAt; // Combat 服务通过 ScheduleStop 设置
+    private float scheduledStopAt;
+    private float nextRegistryAudit; // Combat 服务通过 ScheduleStop 设置
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -174,6 +176,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Session.Error = string.Empty;
         Session.IsMultiplayerActive = true;
         log?.LogInfo($"主机正在监听 TCP 端口 {Port}（访客上限 {hostSession.MaxPeers}，联机人数 {ConfiguredPlayerCount}）。");
+        StartCoroutine(DelayedRegistryRebuild(90f)); // 世界生成完成后重建注册表（修复主机注册表 1762 vs 客户端 3253 实体缺失）
     }
 
     public void ConnectClient()
@@ -236,7 +239,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         RuntimeEntities = new DarkwoodRuntimeEntityService(this); // 所有权拆分
         Combat = new DarkwoodCombatService(this); // 所有权拆分
         Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 所有权拆分
-        SaveState = new DarkwoodSaveTransferService(this); // 所有权拆分
+        SaveState = new DarkwoodSaveTransferService(this);
+        World = new DarkwoodWorldAuthorityService(this, RuntimeEntities);
         Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;
         RegisterMessageHandlers(); // 消息路由处理器注册
@@ -270,8 +274,24 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Combat.TickClient();
     }
 
+    internal DarkwoodMultiplayerFramework.Protocol.InventoryStateMessage CaptureAuthoritativeInventoryForHost(DarkwoodMultiplayerFramework.Core.EntityId id) => replication.CaptureAuthoritativeInventory(id);
+
+    private System.Collections.IEnumerator DelayedRegistryRebuild(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (hostSession == null || registry == null) yield break;
+        registryDirty = true;
+        log?.LogInfo("注册表延迟重建：等待世界生成完成后重新扫描，补齐运行中生成的实体。");
+    }
+
     private void TickHost()
     {
+        // 诊断：30 秒注册表巡检（确认主机世界是否仍在加载/实体数是否增长）
+        if (Time.unscaledTime >= nextRegistryAudit)
+        {
+            nextRegistryAudit = Time.unscaledTime + 30f;
+            log?.LogInfo($"主机注册表巡检：{registry?.Count ?? 0} 实体 / 共享容器 {replication.SharedInventoryCount} / 运行时实体 {RuntimeEntities.PendingCount}。");
+        }
         if(hostSession!=null&&!registryDirty&&registry!=null)EnsureHostExistingLootScaled();
         if (hostSession != null && readyPeers.Count>0 && !registryDirty && Time.unscaledTime>=nextDelta)
         {
@@ -294,7 +314,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         TrySendClientRegistryReady();
         RetrySnapshotAcknowledgement();
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
-        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&SaveState.LoadStartedAt>0f&&Time.unscaledTime-SaveState.LoadStartedAt>300f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（300 秒未完成）。请检查主机存档是否损坏。"));
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&SaveState.LoadStartedAt>0f&&Time.unscaledTime-SaveState.LoadStartedAt>900f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（900 秒未完成）。主机存档过大或客户端过慢时请观察加载进度是否持续前进。"));
         if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;SaveState.SetProgress($"正在加载存档…({percent}%)");var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.MarkLoadBucket(bucket);LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-SaveState.LoadStartedAt:F0} 秒）。");}}}
         if(autoReconnectAt>0f&&Time.unscaledTime>=autoReconnectAt){autoReconnectAt=0f;log?.LogInfo("场景切换自动重连：正在重新连接主机……");ConnectClient();}
     }
