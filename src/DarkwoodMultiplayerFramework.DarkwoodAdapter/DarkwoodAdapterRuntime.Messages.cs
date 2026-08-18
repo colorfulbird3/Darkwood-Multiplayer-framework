@@ -42,7 +42,7 @@ public sealed partial class DarkwoodAdapterRuntime
         var fromHotbar=slot.inventory!=null&&slot.inventory.invType==Inventory.InvType.hotbar;
         var sourceSlot=slot.inventory!=null?slot.inventory.slots.IndexOf(slot):-1;
         if(sourceSlot<0)return false;
-        var payload=new ContainerPutPayload(fromHotbar,sourceSlot,Math.Max(1,slot.itemAmount),targetSlot);
+        var payload=new ContainerPutPayload(fromHotbar,sourceSlot,targetSlot,Math.Max(1,slot.itemAmount));
         var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerPut,containerId.Value,containerId.IsPersistent,0,ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));

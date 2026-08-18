@@ -32,7 +32,7 @@ internal static class DarkwoodContainerTakePatch
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.transferItemTo), new[] { typeof(Inventory) });
     }
 
-    private static void Prefix(InvSlot __instance, out PendingTake __state)
+    private static bool Prefix(InvSlot __instance, out PendingTake __state)
     {
         // 拿取前快照该槽内容（拿取后槽空即视为已拿走）。
         var item = __instance?.invItem;
@@ -47,11 +47,11 @@ internal static class DarkwoodContainerTakePatch
             ? new PendingTake(containerId, item.type, Math.Max(1, __instance.itemAmount))
             : default;
 
-        // 第 3 刀：客户端不再本地执行共享容器操作——改发 ContainerTake/Put Intent
+        // 第 3 刀：客户端不再本地执行共享容器操作——改发 ContainerTake/Put Intent，并阻止原版 mutation
         var runtime2 = DarkwoodAdapterRuntime.Instance;
-        if (runtime2 == null || runtime2.State != ConnectionState.Ready || !runtime2.IsMultiplayerActive) return;
+        if (runtime2 == null || runtime2.State != ConnectionState.Ready || !runtime2.IsMultiplayerActive) return true;
         var isShared = inventory != null && DarkwoodEntityStateAdapter.IsShared(inventory);
-        if (!isShared) return;
+        if (!isShared) return true;
         if (runtime2.IsClient)
         {
             var targetContainer = Traverse.Create(__instance).Field("_transferTarget").GetValue<Inventory>();
@@ -70,7 +70,9 @@ internal static class DarkwoodContainerTakePatch
                 runtime2.TryRequestContainerTake(__instance);
             }
             __state = default;
+            return false; // 阻止原版本地 mutation——否则客户端拿一份 + 主机再拿一份（复制）
         }
+        return true; // Host：原版执行，Postfix 立即广播
     }
 
     private static void Postfix(InvSlot __instance, PendingTake __state)

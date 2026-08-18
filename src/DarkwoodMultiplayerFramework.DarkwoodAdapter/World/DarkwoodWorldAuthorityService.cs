@@ -28,9 +28,10 @@ public sealed class DarkwoodWorldAuthorityService
     public ActionResultMessage? DropItem(int peer, DropItemPayload payload, ActionRequestMessage request, Action<int, ActionRequestMessage, string, ulong> reject)
     {
         InvItemClass item;
+        System.Func<InvSlot, InvSlot>? hostSlot = null;
         if (peer == 0)
         {
-            // Host 本地玩家：真实背包槽位
+            // Host 本地玩家：真实背包槽位（先读后扣，事务化）
             var player = Player.Instance;
             if (player?.Inventory == null || player.Hotbar == null) { reject(peer, request, "PLAYER_INVENTORY_MISSING", 0); return null; }
             var slots = payload.FromHotbar ? player.Hotbar.slots : player.Inventory.slots;
@@ -39,9 +40,6 @@ public sealed class DarkwoodWorldAuthorityService
             if (slot == null || InvItemClass.isNull(slot.invItem)) { reject(peer, request, "PLAYER_SLOT_EMPTY", 0); return null; }
             item = new InvItemClass(slot.invItem);
             if (item.amount < payload.Amount) { reject(peer, request, "INSUFFICIENT_AMOUNT", 0); return null; }
-            slot.invItem.amount -= payload.Amount;
-            if (slot.invItem.amount <= 0) slot.removeItem();
-            slot.inventory?.refreshItems();
         }
         else
         {
@@ -49,17 +47,43 @@ public sealed class DarkwoodWorldAuthorityService
             if (!runtime.Players.TryGetInventory(peer, out var shadow)) { reject(peer, request, "PLAYER_INVENTORY_MISSING", 0); return null; }
             if (!shadow.TryPeek(payload.FromHotbar, payload.SlotIndex, payload.Amount, out var source)) { reject(peer, request, "PLAYER_SLOT_EMPTY", 0); return null; }
             item = new InvItemClass(source.Type, source.Durability, source.Amount, (InvItem.ModifierQuality)source.Quality, source.Recipe);
-            if (!shadow.Remove(payload.FromHotbar, payload.SlotIndex, payload.Amount)) { reject(peer, request, "INSUFFICIENT_AMOUNT", 0); return null; }
         }
 
         var position = new Vector3(payload.X, payload.Y, payload.Z);
         var rotation = new Quaternion(payload.Qx, payload.Qy, payload.Qz, payload.Qw);
+
+        // 事务顺序：先创建世界对象 + 分配 ID，全部成功后才扣库存（失败不丢物品）
         var dropped = CreateDroppedItem(item, position, rotation);
         if (dropped == null) { reject(peer, request, "DROP_CREATE_FAILED", 0); return null; }
 
-        // 分配 RuntimeEntityId + 注册 binding + 立即广播 Spawn（不依赖扫描器）
         var runtimeId = runtimeEntities.BroadcastSpawn(RuntimeEntityKind.DroppedItem, "Items/DroppedItem", position, rotation, ReplicationProtocolCodec.Encode(runtime.Replication.CaptureInventoryState(dropped, 0)));
-        if (runtimeId == 0) { reject(peer, request, "DROP_ID_ALLOC_FAILED", 0); return null; }
+        if (runtimeId == 0)
+        {
+            UnityEngine.Object.Destroy(dropped.gameObject);
+            reject(peer, request, "DROP_ID_ALLOC_FAILED", 0);
+            return null;
+        }
+
+        // 创建成功 → 扣库存（扣减失败防御性回滚：销毁已创建的掉落物）
+        if (peer == 0)
+        {
+            var player = Player.Instance;
+            var slots = payload.FromHotbar ? player.Hotbar.slots : player.Inventory.slots;
+            var slot = slots[payload.SlotIndex];
+            slot.invItem.amount -= payload.Amount;
+            if (slot.invItem.amount <= 0) slot.removeItem();
+            slot.inventory?.refreshItems();
+        }
+        else
+        {
+            if (!runtime.Players.TryGetInventory(peer, out var shadow) || !shadow.Remove(payload.FromHotbar, payload.SlotIndex, payload.Amount))
+            {
+                UnityEngine.Object.Destroy(dropped.gameObject);
+                runtimeEntities.BroadcastDespawn(runtimeId, RuntimeEntityDespawnReason.Destroyed);
+                reject(peer, request, "INSUFFICIENT_AMOUNT", 0);
+                return null;
+            }
+        }
         runtime.Replication.RegisterBinding(new WorldEntityBinding
         {
             Id = new EntityId(runtimeId, false),

@@ -55,7 +55,7 @@ public sealed class FaultInjectingTransport : ITransport
 
     public void Connect(string address, ushort port)
     {
-        disconnectFired = false; // 重连后重新武装
+        disconnectFired = false; sentCount = 0; // 重连后重新武装
         inner.Connect(address, port);
     }
 

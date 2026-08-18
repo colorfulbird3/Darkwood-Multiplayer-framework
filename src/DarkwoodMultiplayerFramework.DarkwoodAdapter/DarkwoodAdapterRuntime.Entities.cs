@@ -116,6 +116,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(amount<=0){RejectAction(peer,request,"INVALID_AMOUNT",0);return;}
         if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
         var item=new InvItemClass(slot.invItem);
+        item.amount=amount; // 只给请求的数量，绝不复制整个槽（复制物品风险）
         if(!shadow.CanAdd(item)){RejectAction(peer,request,"INVENTORY_FULL",0);return;}
         // 权威事务：容器扣 → 玩家 shadow 加
         slot.invItem.amount-=amount;

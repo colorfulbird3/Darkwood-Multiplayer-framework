@@ -144,7 +144,6 @@ public sealed class DarkwoodSaveTransferService
         if (runtime.clientSession.Session.Lifecycle.State != ConnectionState.ApplyingSnapshot) return false;
         if (realtimeNow < nextSnapshotAckRetry) return false;
         nextSnapshotAckRetry = realtimeNow + 1f;
-        snapshotAckRetryCount++;
         return true;
     }
     public int SnapshotAckRetryCount => snapshotAckRetryCount;
