@@ -50,10 +50,11 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
-    public bool TryRequestDrop(InvSlot slot)
+    public bool TryRequestDrop(InvItemClass item)
     {
-        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
-        var payload=DarkwoodDropPatch.BuildPayload(slot);
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||InvItemClass.isNull(item))return false;
+        var payload=DarkwoodDropPatch.BuildPayload(item);
+        if(payload.SlotIndex<0)return false;
         var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.DropItem,0,false,0,ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));

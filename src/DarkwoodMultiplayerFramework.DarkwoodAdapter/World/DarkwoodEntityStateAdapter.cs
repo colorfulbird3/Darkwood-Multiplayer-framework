@@ -62,7 +62,7 @@ public static class DarkwoodEntityStateAdapter
         }
         else if (c is Item item)
         {
-            item.destroyed = Flag(s.Flags, 0); item.health = Mathf.RoundToInt(s.Health); item.invItemAmount = s.StateA; item.isOn = Flag(s.Flags, 1); item.hasPower = Flag(s.Flags, 2); item.searched = Flag(s.Flags, 3); if (immediate) { item.transform.position = p; item.transform.rotation = q; } item.gameObject.SetActive(Flag(s.Flags, 4));
+            item.destroyed = Flag(s.Flags, 0); item.health = Mathf.RoundToInt(s.Health); item.invItemAmount = s.StateA; item.hasPower = Flag(s.Flags, 2); item.searched = Flag(s.Flags, 3); var targetIsOn = Flag(s.Flags, 1); if (item.isOn != targetIsOn) { if (item.switchable && item.gameObject != null) { try { item.switchMe(); } catch (Exception) { } item.isOn = targetIsOn; } else item.isOn = targetIsOn; } if (immediate) { item.transform.position = p; item.transform.rotation = q; } item.gameObject.SetActive(Flag(s.Flags, 4));
         }
     }
 

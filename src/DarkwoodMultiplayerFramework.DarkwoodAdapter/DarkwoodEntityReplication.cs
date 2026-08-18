@@ -12,7 +12,7 @@ public sealed class DarkwoodEntityReplication
     /// <summary>Read-only enumeration of the bound entity map. Used by the host melee resolver; must not be mutated during iteration.</summary>
     public IEnumerable<KeyValuePair<EntityId,Component>> AllEntities=>entities;
     public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
-    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities){var state=DarkwoodEntityStateAdapter.Capture(pair.Key,pair.Value,++revision);a.Add(state);last[pair.Key]=state;}return a.ToArray();}
+    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities){var component=pair.Value;if(component==null||component.gameObject==null){entities.Remove(pair.Key);bindings.Remove(pair.Key);last.Remove(pair.Key);targets.Remove(pair.Key);lastInventories.Remove(pair.Key);continue;}var state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);a.Add(state);last[pair.Key]=state;}return a.ToArray();}
     public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();foreach(var pair in entities){var state=DarkwoodEntityStateAdapter.Capture(pair.Key,pair.Value,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(!last.TryGetValue(pair.Key,out old)||Changed(old,state)){a.Add(state);last[pair.Key]=state;}}return a.ToArray();}
     public void Apply(IEnumerable<EntityStateWire> states,bool immediate){ApplyingRemote=true;try{foreach(var s in states){var id=new EntityId(s.Value,s.Persistent);if(!entities.TryGetValue(id,out var component))continue;if(last.TryGetValue(id,out var old)&&s.Revision<old.Revision)continue;DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);targets[id]=s;last[id]=s;}}finally{ApplyingRemote=false;}}
     public void Interpolate(float factor){foreach(var pair in targets){if(!entities.TryGetValue(pair.Key,out var c)||!(c is Character))continue;var s=pair.Value;c.transform.position=Vector3.Lerp(c.transform.position,new Vector3(s.X,s.Y,s.Z),Mathf.Clamp01(factor));c.transform.rotation=Quaternion.Slerp(c.transform.rotation,new Quaternion(s.Qx,s.Qy,s.Qz,s.Qw),Mathf.Clamp01(factor));}}
@@ -61,7 +61,7 @@ public sealed class DarkwoodEntityReplication
         var result=new List<EntityStateWire>();
         foreach(var component in components)
         {
-            if(component==null)continue;
+            if(component==null||component.gameObject==null)continue;
             if(!TryGetId(component,out var id))continue;
             var next=last.TryGetValue(id,out var known)?known.Revision+1:++revision;
             var state=DarkwoodEntityStateAdapter.Capture(id,component,next);

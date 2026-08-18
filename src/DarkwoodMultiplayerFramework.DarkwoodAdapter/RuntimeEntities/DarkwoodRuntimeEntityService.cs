@@ -74,6 +74,7 @@ public sealed class DarkwoodRuntimeEntityService
     public void TickHost()
     {
         if (!runtime.Session.IsHost || runtime.readyPeers.Count == 0 || Time.unscaledTime < nextScan) return;
+        nextScan = Time.unscaledTime + 10f; // 审计器：10 秒一轮（原 5 秒，扫描约 100ms 会卡主线程）
         nextScan = Time.unscaledTime + 5f; // beta.4：2s→5s 降低全场景扫描开销
         var scanStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var seen = new HashSet<Inventory>();
@@ -127,7 +128,7 @@ public sealed class DarkwoodRuntimeEntityService
             }
         }
         scanStopwatch.Stop();
-        if (scanStopwatch.ElapsedMilliseconds > 30) runtime.log?.LogWarning($"运行时实体扫描耗时 {scanStopwatch.ElapsedMilliseconds} ms（每 5 秒一次，若持续偏高会导致主机卡顿）。");
+        if (scanStopwatch.ElapsedMilliseconds > 150) runtime.log?.LogWarning($"运行时实体扫描耗时 {scanStopwatch.ElapsedMilliseconds} ms（每 10 秒一次，若持续偏高会导致主机卡顿）。");
         // beta.5：检测被游戏销毁的持久实体（夹子拆除等）→ Despawn 广播
         var despawnWires = new List<EntityStateWire>();
         foreach (var pair in runtime.replication.Entities())

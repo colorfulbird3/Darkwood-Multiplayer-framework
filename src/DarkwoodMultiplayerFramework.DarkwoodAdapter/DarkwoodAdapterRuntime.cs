@@ -133,7 +133,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private float nextProfileAutosave;
     private const float ProfileAutosaveSeconds = 30f;
     private float scheduledStopAt;
-    private float nextRegistryAudit; // Combat 服务通过 ScheduleStop 设置
+    private float nextRegistryAudit;
+    private float nextLoadDiag;
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -315,7 +316,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         RetrySnapshotAcknowledgement();
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
         if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave&&SaveState.LoadStartedAt>0f&&Time.unscaledTime-SaveState.LoadStartedAt>900f)FailClient("SAVE_LOAD_TIMEOUT",new TimeoutException("存档加载超时（900 秒未完成）。主机存档过大或客户端过慢时请观察加载进度是否持续前进。"));
-        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen!=null){var percent=(int)worldGen.percentLoaded;SaveState.SetProgress($"正在加载存档…({percent}%)");var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.MarkLoadBucket(bucket);LogMessage($"存档加载进度 {percent}%（已用 {Time.unscaledTime-SaveState.LoadStartedAt:F0} 秒）。");}}}
+        if(clientSession!=null&&clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave){var loadSeconds=Time.unscaledTime-SaveState.LoadStartedAt;if(loadSeconds>180f){FailClient("LOAD_TIMEOUT",new TimeoutException("存档加载超过 180 秒无完成，判定超时。"));return;}var worldGen=Singleton<WorldGenerator>.Instance;if(worldGen==null){if(Time.unscaledTime>=nextLoadDiag){nextLoadDiag=Time.unscaledTime+5f;LogMessage($"加载诊断：WorldGenerator 实例为空（场景生成未启动），已等待 {loadSeconds:F0} 秒。");}return;}var percent=(int)worldGen.percentLoaded;SaveState.SetProgress($"正在加载存档…({percent}%)");if(Time.unscaledTime>=nextLoadDiag){nextLoadDiag=Time.unscaledTime+5f;LogMessage($"加载诊断：WorldGenerator.percentLoaded={percent}%（已用 {loadSeconds:F0} 秒）。");}var bucket=percent/10;if(bucket>SaveState.LastLoadBucket){SaveState.MarkLoadBucket(bucket);LogMessage($"存档加载进度 {percent}%（已用 {loadSeconds:F0} 秒）。");}}
         if(autoReconnectAt>0f&&Time.unscaledTime>=autoReconnectAt){autoReconnectAt=0f;log?.LogInfo("场景切换自动重连：正在重新连接主机……");ConnectClient();}
     }
 
