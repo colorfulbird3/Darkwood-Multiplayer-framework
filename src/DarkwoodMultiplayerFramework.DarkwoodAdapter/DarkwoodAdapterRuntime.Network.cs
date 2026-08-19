@@ -152,6 +152,9 @@ public sealed partial class DarkwoodAdapterRuntime
     {
         SaveState.ClientSaveLoadPending=false;LogMessage($"存档加载完成回调已触发（用时 {(SaveState.LoadStartedAt>0f?Time.unscaledTime-SaveState.LoadStartedAt:0f):F1} 秒）。");
         if(Time.timeScale<=0.01f){Time.timeScale=1f;LogMessage("已强制恢复 timeScale=1（加载期间曾被冻结）。");}
+        // FIX-018：LoadDownloadedSave 设置的 forbidInputs/buttonsDisabled 必须在此恢复。
+        // 真机：客户端打开共享容器后无法退出（UI 关闭按钮被 buttonsDisabled 禁用 / 输入被 forbidInputs 锁）。
+        global::Core.forbidInputs=false;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=false;
         var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
     }
 
