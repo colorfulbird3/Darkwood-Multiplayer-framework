@@ -8,7 +8,7 @@
 
 - 构建 0 警告 / 0 错误
 - SelfTests 85/85（原有全套协议/组件测试保留，+4：DropItemPayload 来源 ×2、binding manifest/entries codec ×2）
-- xUnit 40/40（+11 实体绑定：sibling 顺序不同仍绑定 / Host 多对象 / Client 少对象 / 同名不误绑 / unknown missing / 权威 id / ambiguous / generation 换代 / 真实 applied / Ready gate）
+- xUnit 47/47（EntityBindingTests.cs 独立文件 19 项：sibling 顺序不同仍绑定 / A>B>C 三阶段优先级 / 同名不误绑 / unknown missing / 权威 id / ambiguous / generation 换代 / fingerprint 判稳 / Snapshot 稳定 gate / Ready gate / ApplyStats 真实计数）
 - xUnit 8/8（tests/DarkwoodMultiplayerFramework.UnitTests：乐观锁 / ID 纪律 / 生命周期 / codec / SessionContext）
 - 回环自测全链路通过（握手 → 存档 1,022,925 字节 SHA-256 → 快照 895 字节 → 档案 → READY，9 秒）
 - 消息路由无"未注册类型"警告（25 种消息全部被 handler 认领）

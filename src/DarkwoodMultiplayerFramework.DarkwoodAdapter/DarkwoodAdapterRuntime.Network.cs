@@ -146,14 +146,15 @@ public sealed partial class DarkwoodAdapterRuntime
         var deadline=Time.realtimeSinceStartup+90f;
         // 世界在存档加载后仍可能流式生成：等待本地候选集合稳定（连续 3 次一致），
         // 之后收到的 BindingManifest 才有完整的本地对象可绑定。
-        var previousCount=-1;
-        var stableChecks=0;
-        var candidates=Array.Empty<LocalEntityCandidate>();
+        var previousFingerprint = string.Empty;
+        var stableChecks = 0;
+        var candidates = Array.Empty<LocalEntityCandidate>();
         while(Time.realtimeSinceStartup<deadline)
         {
             if(Player.Instance==null){yield return null;continue;}
-            candidates=scanner.BuildLocalCandidates(out _);
-            if(candidates.Length==previousCount)
+            candidates=scanner.BuildLocalCandidates(out var comps);
+            var fingerprint = ScanFingerprint(comps); // 真实对象集合指纹（type+InstanceID），非 count
+            if(fingerprint==previousFingerprint)
             {
                 stableChecks++;
                 if(stableChecks>=3)break;
@@ -161,9 +162,9 @@ public sealed partial class DarkwoodAdapterRuntime
             else
             {
                 stableChecks=0;
-                previousCount=candidates.Length;
+                previousFingerprint=fingerprint;
             }
-            yield return new WaitForSeconds(1f);
+            yield return new WaitForSecondsRealtime(1f);
         }
         try
         {
@@ -193,7 +194,14 @@ public sealed partial class DarkwoodAdapterRuntime
 
     private void PrepareSnapshot(int peer,ReadyMessage ready)
     {
-        if(registryDirty)RebuildRegistry();
+        var stableGate = EntityBindingGate.SnapshotReady(hostRegistryStable);
+        if (stableGate != null)
+        {
+            SaveState.SetPendingSnapshotRequest(peer, ready);
+            SaveState.SetProgress("正在等待主机世界稳定");
+            log?.LogInfo($"Peer {peer} ready 到达但主机注册表未稳定（{stableGate}），快照请求挂起。");
+            return;
+        }
         if(!string.Equals(ready.Scene,CurrentScene,StringComparison.Ordinal)){Queue(peer,ProtocolMessageType.Error,ReplicationProtocolCodec.Encode(new ProtocolErrorMessage("SCENE_MISMATCH",$"host={CurrentScene};client={ready.Scene}")));return;}
         EnsureHostExistingLootScaled();
         if(!hostLootScaleScanComplete)

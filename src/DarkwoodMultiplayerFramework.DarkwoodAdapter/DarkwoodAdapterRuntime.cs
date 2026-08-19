@@ -144,6 +144,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private byte[] bindingManifestBytes = Array.Empty<byte>();
     private Guid bindingTransferId;
     private Coroutine? hostRegistryStabilizer;
+    /// <summary>主机 World Stable 是否已达成（StabilizeHostRegistry 提交权威注册表后才为 true）。</summary>
+    private bool hostRegistryStable;
     /// <summary>客户端：本地候选就绪标志（稳定化循环完成后置位，替代本地 hash 注册表握手）。</summary>
     private bool clientCandidatesReady;
     private int clientCandidatesCount;
@@ -191,6 +193,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Session.Error = string.Empty;
         Session.IsMultiplayerActive = true;
         log?.LogInfo($"主机正在监听 TCP 端口 {Port}（访客上限 {hostSession.MaxPeers}，联机人数 {ConfiguredPlayerCount}）。");
+        hostRegistryStable = false;
         hostRegistryStabilizer = StartCoroutine(StabilizeHostRegistry()); // World Stable → Build generation → Binding → Snapshot → Ready
     }
 
@@ -276,12 +279,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 
         SetState(DetectState());
-        if (registryDirty && Session.IsHost && readyPeers.Count == 0 && Player.Instance != null)
-        {
-            RebuildRegistry();
-            SetState(DetectState());
-        }
-        else if (registryDirty && Session.IsHost && readyPeers.Count > 0 && Time.unscaledTime >= nextRegistryRebuildWarnAt)
+        // 主机注册表只由 StabilizeHostRegistry 提交（World Stable 后才允许）；Update 不再抢先 RebuildRegistry。
+        if (registryDirty && Session.IsHost && readyPeers.Count > 0 && Time.unscaledTime >= nextRegistryRebuildWarnAt)
         {
             // 联机 Ready 后禁止无协议 Clear + Rebuild 整个注册表（场景切换会先通知客户端重连）
             nextRegistryRebuildWarnAt = Time.unscaledTime + 10f;
@@ -297,27 +296,44 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     internal DarkwoodMultiplayerFramework.Protocol.InventoryStateMessage CaptureAuthoritativeInventoryForHost(DarkwoodMultiplayerFramework.Core.EntityId id) => replication.CaptureAuthoritativeInventory(id);
 
-    /// <summary>主机权威注册表稳定化：World Stable（实体计数连续 3 秒不变）后构建一次，不再延迟重建。</summary>
-    private IEnumerator StabilizeHostRegistry()
-    {
-        yield return new WaitForSeconds(2f);
+    /// <summary>主机权威注册表稳定化：每秒真实扫描 Scene，按 Component type+InstanceID 指纹判定 World Stable（连续 3 次一致），
+        /// 然后把最后一次扫描结果一次性提交为权威注册表（registry 与 replication 同源）。</summary>
+        private IEnumerator StabilizeHostRegistry()
+        {
+            yield return new WaitForSecondsRealtime(2f);
         if (hostSession == null) yield break;
-        var previousCount = -1;
-        var stableChecks = 0;
         var deadline = Time.realtimeSinceStartup + 150f;
+        var previousFingerprint = string.Empty;
+        var stableChecks = 0;
+        var lastScanned = Array.Empty<Component>();
         while (Time.realtimeSinceStartup < deadline)
         {
             if (hostSession == null) yield break;
-            if (Player.Instance == null) { yield return new WaitForSeconds(1f); continue; }
-            if (registry == null) registryDirty = true; // 触发一次构建（Update 驱动）
-            yield return new WaitForSeconds(1f);
-            if (registry == null) continue;
-            if (registry.Count == previousCount) { stableChecks++; if (stableChecks >= 3) break; }
-            else { stableChecks = 0; previousCount = registry.Count; }
+            lastScanned = scanner.ScanScene().ToArray();
+            var fingerprint = ScanFingerprint(lastScanned);
+            if (fingerprint == previousFingerprint) { stableChecks++; if (stableChecks >= 3) break; }
+            else { stableChecks = 0; previousFingerprint = fingerprint; }
+            yield return new WaitForSecondsRealtime(1f);
         }
-        if (hostSession == null) { yield break; }
-        if (registry == null) { log?.LogWarning("主机注册表稳定化超时（150 秒），注册表未构建，客户端将无法加入。"); yield break; }
-        log?.LogInfo($"主机权威注册表已稳定：第 {registryGeneration} 代，{registry.Count} 实体，{authoritativeDescriptors.Length} 描述符，摘要 {RegistryDigest}。");
+        if (hostSession == null) yield break;
+        if (stableChecks < 3)
+        {
+            if (lastScanned.Length == 0) { log?.LogWarning("主机注册表稳定化超时（150 秒）且无可用扫描，客户端将无法加入。"); yield break; }
+            log?.LogWarning("主机注册表稳定化超时（150 秒），以最后一次扫描结果提交权威注册表。");
+        }
+        CommitAuthoritativeRegistry(lastScanned);
+        hostRegistryStable = true;
+        log?.LogInfo($"主机权威注册表已稳定并提交：第 {registryGeneration} 代，{registry.Count} 实体，{authoritativeDescriptors.Length} 描述符，指纹 {previousFingerprint}，场景 {CurrentScene}。");
+        // 稳定器就绪前挂起的快照请求现在补发（Manifest → Snapshot → Ready）
+        foreach (var request in SaveState.DrainPendingSnapshotRequests())
+            if (hostSession != null) PrepareSnapshot(request.Key, request.Value);
+    }
+
+    private static string ScanFingerprint(Component[] components)
+    {
+        var identities = new List<EntityScanFingerprint.ScanIdentity>(components.Length);
+        foreach (var c in components) identities.Add(new EntityScanFingerprint.ScanIdentity(c.GetType().Name, c.transform.GetInstanceID()));
+        return EntityScanFingerprint.Compute(identities);
     }
 
     private void TickHost()
@@ -400,7 +416,13 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         registryDirty = true;
         registry = null;
         RegistryDigest = string.Empty;
+        hostRegistryStable = false;
         hostLootScaleScanComplete = false;
+        if (hostSession != null)
+        {
+            if (hostRegistryStabilizer != null) StopCoroutine(hostRegistryStabilizer);
+            hostRegistryStabilizer = StartCoroutine(StabilizeHostRegistry()); // 新场景 → 重新稳定化并提交新代注册表
+        }
         // 场景切换——主机通知所有客户端自动重连（重连走完整握手+新场景存档加载），
         // 并重置运行时实体状态（新场景是全新的运行时世界；Runtime ID 计数器继续单调递增、绝不复用）。
         if (hostSession != null && (scene.Equals("chapter1", StringComparison.Ordinal) || scene.Equals("chapter2", StringComparison.Ordinal)))
@@ -414,14 +436,16 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         SceneChanged?.Invoke(scene);
     }
 
-    private void RebuildRegistry()
+    /// <summary>一次性提交权威注册表：registry 与 replication 使用同一份已捕获扫描（组件→ID 只算一次）。</summary>
+    private void CommitAuthoritativeRegistry(Component[] components)
     {
         var next = new EntityRegistry<Component>();
+        var pairs = new List<KeyValuePair<EntityId, Component>>();
         var collisions = 0;
-        foreach (var component in scanner.ScanScene())
+        foreach (var component in components)
         {
             var id = scanner.ToPersistentId(component);
-            try { next.Register(id, component); }
+            try { next.Register(id, component); pairs.Add(new KeyValuePair<EntityId, Component>(id, component)); }
             catch (InvalidOperationException)
             {
                 collisions++;
@@ -429,9 +453,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
             }
         }
         registry = next;
-        replication.Rebuild(scanner);
+        replication.Rebuild(pairs);
         registryGeneration++;
-        authoritativeDescriptors = scanner.BuildAuthoritativeDescriptors(replication.AllEntities);
+        authoritativeDescriptors = scanner.BuildAuthoritativeDescriptors(pairs);
         bindingManifestBytes = ReplicationProtocolCodec.Encode(authoritativeDescriptors);
         bindingTransferId = Guid.NewGuid();
         RegistryDigest = next.ComputeDigest();

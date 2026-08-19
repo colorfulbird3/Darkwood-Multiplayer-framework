@@ -140,15 +140,24 @@ public static class EntityBindingGate
                 total += n;
         return total;
     }
+
+    /// <summary>主机快照稳定 gate：注册表未稳定前禁止发送 BindingManifest/Snapshot。
+    /// 返回 null 表示允许发送；否则返回挂起原因。</summary>
+    public static string? SnapshotReady(bool hostRegistryStable)
+    {
+        return hostRegistryStable ? null : "主机注册表尚未稳定（World Stable 未达成），快照请求挂起。";
+    }
 }
 
 /// <summary>
 /// 权威描述符 → 本地候选 的显式匹配器。
-/// 匹配优先级：
-///   A. SaveableUid + ComponentType + RelativePath 完全一致（唯一）
-///   B. SaveableUid + ComponentType 一致，path 不同 → position 容差内唯一
-///   C. 无 uid：ComponentType + ObjectName + position 容差内唯一
-/// 禁止无约束最近邻；多候选一律记 ambiguous 不绑定。
+/// 匹配按三阶段进行，阶段之间严格降级（Pass A → Pass B → Pass C）：
+///   A. SaveableUid + ComponentType + RelativePath 完全一致
+///   B. SaveableUid + ComponentType 一致，path 不同 → position 容差内
+///   C. 无 uid：ComponentType + ObjectName + position 容差内
+/// 每个阶段只允许该等级候选参与；多个同等级候选才记 ambiguous；
+/// 低等级候选不会让高等级唯一候选变成 ambiguous；每个本地候选只绑一次。
+/// 禁止无约束最近邻。
 /// </summary>
 public sealed class EntityBindingMatcher
 {
@@ -158,31 +167,34 @@ public sealed class EntityBindingMatcher
     {
         var outcome = new EntityBindingOutcome { Total = authoritative.Length };
         var usedLocal = new bool[local.Length];
+        var entryUsed = new bool[authoritative.Length];
+        MatchPhase(authoritative, local, usedLocal, entryUsed, outcome, MatchLevel.A);
+        MatchPhase(authoritative, local, usedLocal, entryUsed, outcome, MatchLevel.B);
+        MatchPhase(authoritative, local, usedLocal, entryUsed, outcome, MatchLevel.C);
         for (var i = 0; i < authoritative.Length; i++)
+            if (!entryUsed[i])
+                outcome.RecordMissing(i, authoritative[i].Describe());
+        return outcome;
+    }
+
+    private static void MatchPhase(EntityBindingEntryWire[] entries, LocalEntityCandidate[] local, bool[] usedLocal, bool[] entryUsed, EntityBindingOutcome outcome, MatchLevel level)
+    {
+        for (var i = 0; i < entries.Length; i++)
         {
-            var entry = authoritative[i];
+            if (entryUsed[i]) continue;
+            var entry = entries[i];
             var matched = -1;
-            var ambiguousCount = 0;
+            var count = 0;
             for (var j = 0; j < local.Length; j++)
             {
                 if (usedLocal[j]) continue;
-                if (!string.Equals(local[j].ComponentType, entry.ComponentType, StringComparison.Ordinal)) continue;
-                var level = ScoreMatch(entry, local[j]);
-                if (level == MatchLevel.None) continue;
-                if (matched < 0) { matched = j; ambiguousCount = 1; }
-                else ambiguousCount++;
+                if (ScoreMatch(entry, local[j]) != level) continue;
+                matched = j;
+                count++;
             }
-            if (ambiguousCount > 1)
-            {
-                outcome.RecordAmbiguous(i, entry.Describe());
-                continue;
-            }
-            if (matched < 0) { outcome.RecordMissing(i, entry.Describe()); continue; }
-            usedLocal[matched] = true;
-            outcome.Pairs.Add(new EntityBindingPair(i, matched));
-            outcome.Bound++;
+            if (count == 1) { entryUsed[i] = true; usedLocal[matched] = true; outcome.Pairs.Add(new EntityBindingPair(i, matched)); outcome.Bound++; }
+            else if (count > 1) { entryUsed[i] = true; outcome.RecordAmbiguous(i, entry.Describe()); }
         }
-        return outcome;
     }
 
     private enum MatchLevel { None, C, B, A }
@@ -192,8 +204,7 @@ public sealed class EntityBindingMatcher
         var uidMatch = entry.SaveableUid > 0 && entry.SaveableUid == candidate.SaveableUid;
         var pathMatch = entry.RelativePath.Length > 0 && string.Equals(entry.RelativePath, candidate.RelativePath, StringComparison.Ordinal);
         var nameMatch = entry.ObjectName.Length > 0 && string.Equals(entry.ObjectName, candidate.ObjectName, StringComparison.Ordinal);
-        var distance = Distance(entry, candidate);
-        var inRange = distance <= PositionTolerance * PositionTolerance;
+        var inRange = Distance(entry, candidate) <= PositionTolerance * PositionTolerance;
         if (uidMatch && pathMatch) return MatchLevel.A;
         if (uidMatch && inRange) return MatchLevel.B;
         if (entry.SaveableUid <= 0 && nameMatch && inRange) return MatchLevel.C;
@@ -204,5 +215,27 @@ public sealed class EntityBindingMatcher
     {
         var dx = entry.X - candidate.X; var dy = entry.Y - candidate.Y; var dz = entry.Z - candidate.Z;
         return dx * dx + dy * dy + dz * dz;
+    }
+}
+
+/// <summary>世界稳定扫描指纹（纯逻辑，可单测）。
+/// 基于 Component type + InstanceID 的排序集合；不用 count（数量相同但对象集合不同必须能区分）、不用 position（移动中的对象）。</summary>
+public static class EntityScanFingerprint
+{
+    public readonly struct ScanIdentity
+    {
+        public ScanIdentity(string type, int instanceId) { Type = type ?? string.Empty; InstanceId = instanceId; }
+        public string Type { get; }
+        public int InstanceId { get; }
+    }
+
+    public static string Compute(IEnumerable<ScanIdentity> identities)
+    {
+        var items = new List<string>();
+        foreach (var id in identities) items.Add(id.Type + ":" + id.InstanceId);
+        items.Sort(StringComparer.Ordinal);
+        ulong hash = 14695981039346656037UL;
+        foreach (var s in items) foreach (var b in System.Text.Encoding.UTF8.GetBytes(s)) { hash ^= b; hash *= 1099511628211UL; }
+        return hash.ToString("X16");
     }
 }

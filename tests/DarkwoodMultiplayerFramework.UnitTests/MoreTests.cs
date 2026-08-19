@@ -101,3 +101,33 @@ public class MoreCodecTests
         Assert.Equal(4, Enum.GetNames(typeof(TransportChannel)).Length); // Control/ReliableGameplay/Realtime/Bulk
     }
 }
+
+/// <summary>0.8.9-beta.6：DropItemPayload 来源语义 roundtrip。</summary>
+public class DropItemPayloadTests
+{
+    [Fact]
+    public void PlayerSlot_Roundtrip()
+    {
+        var payload = new DropItemPayload(true, 3, 2, 1f, 2f, 3f, 0f, 0f, 0f, 1f);
+        var decoded = ReplicationProtocolCodec.DecodeDropItem(ReplicationProtocolCodec.Encode(payload));
+        Assert.Equal(DropOriginWire.PlayerSlot, decoded.Origin);
+        Assert.True(decoded.FromHotbar);
+        Assert.Equal(3, decoded.SlotIndex);
+        Assert.Equal(2, decoded.Amount);
+        Assert.Equal(0UL, decoded.ContainerValue);
+        Assert.False(decoded.ContainerPersistent);
+    }
+
+    [Fact]
+    public void SharedContainer_Roundtrip()
+    {
+        var payload = new DropItemPayload(false, 7, 1, 0f, 0f, 0f, 0f, 0f, 0f, 1f, DropOriginWire.SharedContainer, 12345, true);
+        var decoded = ReplicationProtocolCodec.DecodeDropItem(ReplicationProtocolCodec.Encode(payload));
+        Assert.Equal(DropOriginWire.SharedContainer, decoded.Origin);
+        Assert.False(decoded.FromHotbar);
+        Assert.Equal(7, decoded.SlotIndex);
+        Assert.Equal(1, decoded.Amount);
+        Assert.Equal(12345UL, decoded.ContainerValue);
+        Assert.True(decoded.ContainerPersistent);
+    }
+}
