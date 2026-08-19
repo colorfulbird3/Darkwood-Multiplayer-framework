@@ -547,7 +547,7 @@ static void SaveGraphStripSingle()
     var json="{\"graph\":\"UEsDBBQAAAAIAAAA\",\"savedObjs\":[{\"Name\":\"wolf\"}]}";
     var stripped=DarkwoodSaveStrip.TryStrip(json);
     Require(stripped!=null);
-    Require(stripped!.Contains("\"graph\":\"\"",StringComparison.Ordinal)&&stripped.Contains("\"savedObjs\":[{\"Name\":\"wolf\"}]",StringComparison.Ordinal));
+    Require(stripped!.Contains("\"graph\":null",StringComparison.Ordinal)&&stripped.Contains("\"savedObjs\":[{\"Name\":\"wolf\"}]",StringComparison.Ordinal));
 }
 static void SaveGraphStripDuplicate()
 {
@@ -564,7 +564,7 @@ static void SaveGraphStripEscaped()
     var json="{\"graph\":\"a\\\"b\\\\c\"}";
     var stripped=DarkwoodSaveStrip.TryStrip(json);
     Require(stripped!=null);
-    Require(stripped=="{\"graph\":\"\"}");
+    Require(stripped=="{\"graph\":null}");
 }
 static void SnapshotToleranceRuntimeSpawns()
 {
