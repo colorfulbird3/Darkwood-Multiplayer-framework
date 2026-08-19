@@ -133,15 +133,15 @@ public sealed partial class DarkwoodAdapterRuntime
         {
             var currentManager = Singleton<SaveManager>.Instance;
             if (currentManager != null) AttachLoadFinishedCallback(currentManager);
-            if (worldGen.percentLoaded >= 0.99f)
+            if (worldGen.percentLoaded >= 90f)
             {
-                log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{worldGen.percentLoaded:P0}），直接推进联机流程。");
+                log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{(int)worldGen.percentLoaded}%），直接推进联机流程。");
                 OnDownloadedSaveFinished();
             }
             else
             {
                 SaveState.MarkLoadStarted(Time.unscaledTime);
-                log?.LogInfo($"目标场景 {targetScene} 已是当前场景且存档恢复进行中（{worldGen.percentLoaded:P0}），跳过重复场景加载，等待完成。");
+                log?.LogInfo($"目标场景 {targetScene} 已是当前场景且存档恢复进行中（{(int)worldGen.percentLoaded}%），跳过重复场景加载，等待完成。");
             }
             yield break;
         }

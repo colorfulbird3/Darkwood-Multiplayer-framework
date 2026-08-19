@@ -309,4 +309,44 @@ public class EntityBindingTests
         Assert.NotNull(EntityBindingGate.SnapshotReady(false)); // 未稳定 → 挂起
         Assert.Null(EntityBindingGate.SnapshotReady(true));     // 已稳定 → 允许发送
     }
+
+    /// <summary>P0 回归：EntityBindingChunk codec roundtrip 后 Data/Hash 必须各自完全一致（不得反转）。</summary>
+    [Fact]
+    public void BindingChunk_Roundtrip_Preserves_Data_And_Hash()
+    {
+        var id = Guid.NewGuid();
+        var data = new byte[64 * 1024];
+        new Random(42).NextBytes(data);
+        var hash = DarkwoodMultiplayerFramework.Network.ChunkTransferAssembler.Hash(data);
+
+        var original = new EntityBindingChunk(id, 1, 4, data, hash);
+        var decoded = ReplicationProtocolCodec.DecodeEntityBindingChunk(ReplicationProtocolCodec.Encode(original));
+
+        Assert.Equal(id, decoded.TransferId);
+        Assert.Equal(1, decoded.Index);
+        Assert.Equal(4, decoded.Total);
+        Assert.Equal(data, decoded.Data);
+        Assert.Equal(hash, decoded.Hash);
+    }
+
+    /// <summary>P0 回归：多块 binding chunk 经 encode/decode 后交给 assembler，SHA-256 全量校验必须通过。</summary>
+    [Fact]
+    public void BindingChunk_Roundtrip_Passes_Hash_Verification()
+    {
+        var data = new byte[100000];
+        new Random(123).NextBytes(data);
+        var chunks = DarkwoodMultiplayerFramework.Network.ChunkTransferAssembler.Split(data, 64 * 1024);
+        var transferId = Guid.NewGuid();
+        var assembler = new DarkwoodMultiplayerFramework.Network.ChunkTransferAssembler(transferId, data.Length, chunks.Length, DarkwoodMultiplayerFramework.Network.ChunkTransferAssembler.Hash(data));
+
+        for (var i = 0; i < chunks.Length; i++)
+        {
+            var wire = new EntityBindingChunk(transferId, i, chunks.Length, chunks[i], DarkwoodMultiplayerFramework.Network.ChunkTransferAssembler.Hash(chunks[i]));
+            var decoded = ReplicationProtocolCodec.DecodeEntityBindingChunk(ReplicationProtocolCodec.Encode(wire));
+            assembler.Add(decoded.TransferId, decoded.Index, decoded.Total, decoded.Data, decoded.Hash);
+        }
+
+        Assert.True(assembler.IsComplete);
+        Assert.Equal(data, assembler.Build());
+    }
 }

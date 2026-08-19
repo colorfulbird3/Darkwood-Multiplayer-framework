@@ -15,8 +15,8 @@ public sealed class Plugin : BaseUnityPlugin
     // BepInEx 5 parses this value as System.Version while scanning plugins.
     // A SemVer prerelease suffix (for example 0.8.7-alpha.1) makes the
     // chainloader silently skip the assembly and report "0 plugins to load".
-    public const string PluginVersion = "0.8.9.6";
-    public const string DisplayVersion = "0.8.9-beta.6";
+    public const string PluginVersion = "0.8.9.7";
+    public const string DisplayVersion = "0.8.9-beta.7";
     public const string Version = DisplayVersion;
 
     private GameObject? runtimeObject;
@@ -35,7 +35,7 @@ public sealed class Plugin : BaseUnityPlugin
         runtimeObject.AddComponent<DarkwoodRescueOverlay>();
         var selfTest = runtimeObject.AddComponent<DarkwoodSelfTestClient>();
         if (runtime.AutoSelfTest) selfTest.AutoStart();
-        Logger.LogInfo("Darkwood adapter 0.8.9-beta.1 loaded; architecture refactor complete (8 partials + SessionContext + MessageRouter + domain protocol files + real transport channel model + host/client tick split + runtime entity lifecycle model); feature parity with 0.8.8-beta.5 (runtime entities, dropped items, container revision, rescue, despawn targeting); single-version handshake gate; trust model; loopback self-test (SelfTestAuto full chain, F7/F8 manual).");
+        Logger.LogInfo($"Darkwood adapter {DisplayVersion} loaded; host-authoritative entity ids + binding manifest + real world-stable registry gate; loopback self-test (SelfTestAuto).");
     }
 
     private void OnDestroy()
