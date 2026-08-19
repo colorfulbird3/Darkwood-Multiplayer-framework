@@ -11,6 +11,7 @@ using DarkwoodMultiplayerFramework.Core;
 using DarkwoodMultiplayerFramework.Entities;
 using DarkwoodMultiplayerFramework.Network;
 using DarkwoodMultiplayerFramework.Protocol;
+using DarkwoodMultiplayerFramework.DarkwoodAdapter.World;
 using HarmonyLib;
 using Steamworks;
 using UnityEngine;
@@ -280,6 +281,12 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         lastScene = CurrentScene;
         RegisterMessageHandlers(); // 消息路由处理器注册
         SceneManager.sceneLoaded += OnSceneLoaded;
+        // P0（World State Adapter）：注册首批 typed 业务状态适配器。具体类型先注册（最具体优先匹配）。
+        replication.Adapters.Register(new World.CharacterStateAdapter());
+        replication.Adapters.Register(new World.BearTrapStateAdapter());
+        replication.Adapters.Register(new World.DoorStateAdapter());
+        replication.Adapters.Register(new World.WindowStateAdapter());
+        replication.Adapters.Register(new World.GenericItemStateAdapter());
     }
 
     /// <summary>延迟停服（战斗服务的全员倒地结局回调）。</summary>
@@ -353,6 +360,49 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         return EntityScanFingerprint.Compute(identities);
     }
 
+    private float nextWorldAudit;
+    /// <summary>P0 大世界扫描审计：统计注册表内对象上全部 MonoBehaviour 类型，标出尚未被任何
+    /// WorldStateAdapter 覆盖（无 typed 同步）的类型——即"还有哪些大世界对象状态不进入同步"。
+    /// 排除基础视觉/物理/音效组件与 Inventory（专用协议）。</summary>
+    private static readonly HashSet<string> AuditedCoreTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Renderer","SpriteRenderer","Transform","RectTransform","CanvasRenderer","MeshRenderer","SkinnedMeshRenderer",
+        "AudioSource","AudioListener","ParticleSystem","Light","Camera","Collider","Collider2D",
+        "BoxCollider","BoxCollider2D","CircleCollider2D","PolygonCollider2D","CapsuleCollider2D","SphereCollider",
+        "Rigidbody","Rigidbody2D","tk2dSprite","tk2dSpriteAnimator","Animator","Animation","TrailRenderer","LineRenderer",
+    };
+    private void RunWorldAudit()
+    {
+        if (registry == null || registry.Count == 0) return;
+        int ch = 0, dr = 0, wn = 0, it = 0, inv = 0;
+        var unreplicated = new Dictionary<string, (int Count, string Example)>(StringComparer.Ordinal);
+        foreach (var pair in replication.EntitySnapshot())
+        {
+            var component = pair.Value;
+            if (component == null || component.gameObject == null) continue;
+            if (component is Character) ch++; else if (component is Door) dr++; else if (component is Window) wn++; else if (component is Item) it++; else if (component is Inventory) inv++;
+            var gameObject = component.gameObject;
+            foreach (var mb in gameObject.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb == null) continue;
+                var typeName = mb.GetType().Name;
+                if (typeName == component.GetType().Name) continue;             // 主组件本身（有 adapter）
+                if (mb is Inventory) continue;                                   // 专用协议
+                if (AuditedCoreTypes.Contains(typeName)) continue;               // 基础视觉/物理/音效
+                if (replication.Adapters.Resolve(mb) != null) continue;          // 已有 adapter
+                var example = "";
+                if (!unreplicated.TryGetValue(typeName, out var rec)) { rec = (0, gameObject.name); }
+                rec.Count++; unreplicated[typeName] = rec;
+            }
+        }
+        log?.LogInfo($"[WORLD-AUDIT] Character={ch} Door={dr} Window={wn} Item={it} Inventory={inv} (合计 {ch + dr + wn + it + inv})");
+        var top = unreplicated.OrderByDescending(kv => kv.Value.Count).Take(30).ToArray();
+        if (top.Length == 0) { log?.LogInfo("[WORLD-AUDIT] 无从属未覆盖组件类型。"); return; }
+        foreach (var kv in top)
+            log?.LogInfo($"[WORLD-AUDIT] unreplicated: {kv.Key} x{kv.Value.Count}（例：{kv.Value.Example}）");
+        if (unreplicated.Count > top.Length) log?.LogInfo($"[WORLD-AUDIT] 其余未列类型 {unreplicated.Count - top.Length} 个。");
+    }
+
     private void TickHost()
     {
         // 诊断：30 秒注册表巡检（确认主机世界是否仍在加载/实体数是否增长）
@@ -360,6 +410,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         {
             nextRegistryAudit = Time.unscaledTime + 30f;
             log?.LogInfo($"主机注册表巡检：{registry?.Count ?? 0} 实体 / 共享容器 {replication.SharedInventoryCount} / 运行时实体 {RuntimeEntities.PendingCount}。");
+        }
+        if (Time.unscaledTime >= nextWorldAudit)
+        {
+            nextWorldAudit = Time.unscaledTime + 60f;
+            RunWorldAudit();
         }
         if (Time.unscaledTime >= nextSyncDiag)
         {

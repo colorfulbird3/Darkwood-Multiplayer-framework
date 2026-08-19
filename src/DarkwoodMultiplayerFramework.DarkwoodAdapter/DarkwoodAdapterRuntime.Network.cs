@@ -21,17 +21,40 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 public sealed partial class DarkwoodAdapterRuntime
 {
+    private bool f8WasDown;
     private void PollHotkeys()
     {
-        var f1 = Input.GetKey(KeyCode.F1); var f2 = Input.GetKey(KeyCode.F2); var f3 = Input.GetKey(KeyCode.F3);
+        var f1 = Input.GetKey(KeyCode.F1); var f2 = Input.GetKey(KeyCode.F2); var f3 = Input.GetKey(KeyCode.F3); var f8 = Input.GetKey(KeyCode.F8);
         try
         {
             if (f1 && !f1WasDown) StartHost();
             if (f2 && !f2WasDown) ConnectClient();
             if (f3 && !f3WasDown) { StopNetwork(); log?.LogInfo("联机会话已停止。"); }
+            if (f8 && !f8WasDown) DumpSelectedEntityTrace();
         }
         catch (Exception error) { log?.LogError($"Standalone network command failed: {error}"); }
-        finally { f1WasDown = f1; f2WasDown = f2; f3WasDown = f3; }
+        finally { f1WasDown = f1; f2WasDown = f2; f3WasDown = f3; f8WasDown = f8; }
+    }
+
+    /// <summary>F8 DEBUG：鼠标指向世界对象时，打印 EntityId / 组件类型 / Schema / 本端 typed 状态哈希，
+    /// 真机可直接指着同一个捕兽夹比较 Host 与 Client 的状态。</summary>
+    private void DumpSelectedEntityTrace()
+    {
+        var player = Player.Instance;
+        var target = player != null ? player.selectedObject : null;
+        if (target == null) { log?.LogInfo("[WORLD-TRACE] 未选中任何对象（对准世界对象后按 F8）。"); return; }
+        Component component = target.GetComponent<Inventory>();
+        if (component == null) component = target.GetComponent<Character>();
+        if (component == null) component = target.GetComponent<Door>();
+        if (component == null) component = target.GetComponent<Window>();
+        if (component == null) component = target.GetComponent<Item>();
+        if (component == null) { log?.LogInfo($"[WORLD-TRACE] {target.name} 无同步组件（Item/Character/Door/Window/Inventory）。"); return; }
+        if (!replication.TryGetId(component, out var id)) { log?.LogInfo($"[WORLD-TRACE] {target.name} 尚未绑定 EntityId（未登录/未 ready）。"); return; }
+        var adapter = replication.Adapters.Resolve(component);
+        var extra = Array.Empty<byte>();
+        if (adapter != null) { try { extra = adapter.Capture(component); } catch (Exception) { } }
+        var hash = extra.Length > 0 ? $"{BitConverter.ToString(System.Security.Cryptography.SHA256.Create().ComputeHash(extra),0,4).Replace("-","")}" : "n/a";
+        log?.LogInfo($"[WORLD-TRACE] id={id} type={component.GetType().Name} name={target.name} schema={(adapter?.SchemaId ?? 0)} extraHash={hash} pos=({component.transform.position.x:F1},{component.transform.position.y:F1},{component.transform.position.z:F1}) side={(Session.IsHost ? "HOST" : "CLIENT")}");
     }
 
     private void OnHandshakeSucceeded()
@@ -386,6 +409,17 @@ var appliedInventories=0;var failedInventories=0;var loggedFailures=0;var skippe
         if (generation != replication.RegistryGeneration) replication.BeginNewGeneration(generation); // 代际换代：旧映射失效
         replication.BindFromManifest(entries, outcome, localComponents);
         replication.FreezeUnboundCharacters(localComponents); // 未绑定 Character 禁止静默本地模拟
+        // P0（World State Adapter）：绑定非玩家 Character 进入纯视觉代理——关闭 simulation owner 组件 + Rigidbody kinematic，
+        // 防止客户端本地组件把位置/状态改写回「各玩各的」。Host 仍是唯一 AI authority。
+        foreach (var pair in replication.EntitySnapshot())
+        {
+            try
+            {
+                var adapter = replication.Adapters.Resolve(pair.Value);
+                if (adapter is DarkwoodMultiplayerFramework.DarkwoodAdapter.World.CharacterStateAdapter && pair.Value is Character) adapter.EnterClientProxyMode(pair.Value);
+            }
+            catch (Exception) { }
+        }
         lastBindingGeneration = generation;
         log?.LogInfo($"[SYNC] binding host={entries.Length} bound={outcome.Bound} missing={outcome.Missing.Count} ambiguous={outcome.Ambiguous.Count} generation={generation}");
         if (outcome.Missing.Count > 0) log?.LogWarning($"[SYNC] 绑定 missing 前 20：{string.Join(" | ", outcome.MissingDetails.ToArray())}");

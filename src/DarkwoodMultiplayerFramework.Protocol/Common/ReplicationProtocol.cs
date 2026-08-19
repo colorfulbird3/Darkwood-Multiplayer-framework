@@ -7,12 +7,16 @@ namespace DarkwoodMultiplayerFramework.Protocol;
 public readonly struct EntityStateWire
 {
     public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision)
-    { Value=value; Persistent=persistent; Kind=kind; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; Health=health; StateA=stateA; StateB=stateB; Flags=flags; Animation=animation ?? string.Empty; Frame=frame; Revision=revision; }
+        : this(value, persistent, kind, x, y, z, qx, qy, qz, qw, health, stateA, stateB, flags, animation, frame, revision, 0, System.Array.Empty<byte>()) { }
+    public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision, ushort stateSchema, byte[] extraState)
+    { Value=value; Persistent=persistent; Kind=kind; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; Health=health; StateA=stateA; StateB=stateB; Flags=flags; Animation=animation ?? string.Empty; Frame=frame; Revision=revision; StateSchema=stateSchema; ExtraState=extraState ?? System.Array.Empty<byte>(); }
     public ulong Value { get; } public bool Persistent { get; } public byte Kind { get; }
     public float X { get; } public float Y { get; } public float Z { get; }
     public float Qx { get; } public float Qy { get; } public float Qz { get; } public float Qw { get; }
     public float Health { get; } public int StateA { get; } public int StateB { get; } public byte Flags { get; }
     public string Animation { get; } public int Frame { get; } public ulong Revision { get; }
+    public ushort StateSchema { get; } public byte[] ExtraState { get; }
+    public EntityStateWire WithSchema(ushort schema, byte[] extra) => new EntityStateWire(Value,Persistent,Kind,X,Y,Z,Qx,Qy,Qz,Qw,Health,StateA,StateB,Flags,Animation,Frame,Revision,schema,extra);
 }
 
 public readonly struct EntityDeltaMessage
@@ -38,12 +42,13 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9-beta.7";
+    public const string Framework = "0.8.9-beta.8";
 }
 
 public static class ReplicationProtocolCodec
 {
     private const int MaxChunks = 4096, MaxEntities = 4096, MaxString = 4096, MaxHash = 64;
+    private const int MaxExtraState = 4096; // 单实体 typed adapter 状态上限（trap/door/character 远小于此）
     private const int MaxBindingEntries = 20000;
     public static byte[] Encode(SaveTransferRequest m) => Write(w => w.Write(m.RequestId.ToByteArray()));
     public static SaveTransferRequest DecodeSaveTransferRequest(byte[] p) => Read(p, r => new SaveTransferRequest(new Guid(ReadExact(r,16))));
@@ -120,8 +125,8 @@ public static class ReplicationProtocolCodec
     private const byte GuestProfileFormatVersion = 1;
     private static void WriteInventorySlots(BinaryWriter w,InventorySlotWire[] slots){if(slots.Length>256)throw new InvalidOperationException("Too many player inventory slots.");w.Write(slots.Length);foreach(var s in slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}}
     private static InventorySlotWire[] ReadInventorySlots(BinaryReader r){var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return slots;}
-    private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);} }
-    private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++) a[i]=new EntityStateWire(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadByte(),ReadString(r),r.ReadInt32(),r.ReadUInt64()); return a; }
+    private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);w.Write(e.StateSchema);WriteBytes(w,e.ExtraState,MaxExtraState);} }
+    private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++) a[i]=new EntityStateWire(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadByte(),ReadString(r),r.ReadInt32(),r.ReadUInt64(),r.ReadUInt16(),ReadBytes(r,MaxExtraState)); return a; }
     private static byte[] Write(Action<BinaryWriter> a){using var s=new MemoryStream();using var w=new BinaryWriter(s,Encoding.UTF8);a(w);return s.ToArray();}
     private static T Read<T>(byte[] p,Func<BinaryReader,T> a){using var s=new MemoryStream(p??Array.Empty<byte>());using var r=new BinaryReader(s,Encoding.UTF8);var v=a(r);if(s.Position!=s.Length)throw new InvalidDataException("Trailing protocol payload.");return v;}
     private static void WriteString(BinaryWriter w,string s){var b=Encoding.UTF8.GetBytes(s??string.Empty);if(b.Length>MaxString)throw new InvalidOperationException("String too long.");w.Write(b.Length);w.Write(b);}

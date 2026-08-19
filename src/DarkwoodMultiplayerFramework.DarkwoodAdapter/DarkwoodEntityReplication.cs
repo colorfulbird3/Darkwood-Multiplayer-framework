@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DarkwoodMultiplayerFramework.Core;
 using DarkwoodMultiplayerFramework.Protocol;
+using DarkwoodMultiplayerFramework.DarkwoodAdapter.World;
 using UnityEngine;
 
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
@@ -39,11 +40,13 @@ public sealed class DarkwoodEntityReplication
     private readonly HashSet<EntityId> stalePending=new HashSet<EntityId>();
     /// <summary>只读枚举（Combat 等调用方用；遍历时不得修改集合——用 EntitySnapshot()）。</summary>
     public IEnumerable<KeyValuePair<EntityId,Component>> AllEntities=>entities;
+    /// <summary>World State Adapter registry（typed 业务状态；Capture 时附加、Apply 时调用）。</summary>
+    public WorldStateAdapterRegistry Adapters { get; } = new WorldStateAdapterRegistry();
     public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
     /// <summary>用主机权威注册表同一份扫描结果构建复制状态（避免 registry 与 replication 各扫一次）。</summary>
     public void Rebuild(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<EntityId, Component>> pairs){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var pair in pairs)if(!entities.ContainsKey(pair.Key))entities[pair.Key]=pair.Value;}
     public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureAll",null);stalePending.Add(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureAll",error);continue;}a.Add(state);last[pair.Key]=state;}PurgeStale();return a.ToArray();}
-    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureDeltas",null);stalePending.Add(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}PurgeStale();LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
+    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureDeltas",null);stalePending.Add(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);var adapter=Adapters.Resolve(component);if(adapter!=null){var extra=adapter.Capture(component);if(extra!=null&&extra.Length>0)state=state.WithSchema(adapter.SchemaId,extra);}}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}PurgeStale();LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
     public void Apply(IEnumerable<EntityStateWire> states,bool immediate){Apply(states,immediate,out _);}
     public ApplyStats Apply(IEnumerable<EntityStateWire> states,bool immediate,out ApplyStats stats)
     {
@@ -56,7 +59,15 @@ public sealed class DarkwoodEntityReplication
                 var id=new EntityId(s.Value,s.Persistent);
                 if(!entities.TryGetValue(id,out var component)){stats.RecordMissing(DescribeMissing(id,s),s.Kind);DeltaMissing++;KindMissing[s.Kind]++;continue;}
                 if(last.TryGetValue(id,out var old)&&s.Revision<old.Revision){stats.Stale++;continue;}
-                try{DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);}
+                try
+                {
+                    DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);
+                    if (s.StateSchema != 0)
+                    {
+                        var adapter = Adapters.Resolve(component);
+                        if (adapter != null && adapter.SchemaId == s.StateSchema) adapter.Apply(component, s.ExtraState);
+                    }
+                }
                 catch(Exception error){LogStale(id,component,"Apply",error);continue;}
                 targets[id]=s;last[id]=s;stats.Applied++;DeltaApplied++;KindApplied[s.Kind]++;
             }
@@ -193,5 +204,6 @@ public sealed class DarkwoodEntityReplication
         return $"共享={shared}，同类型={sameType}{typeInfo}，同名={sameName}{nameInfo}";
     }
     public int SharedInventoryCount{get{var count=0;foreach(var pair in entities)if(pair.Value is Inventory inventory&&DarkwoodEntityStateAdapter.IsShared(inventory))count++;return count;}}
-    private static bool Changed(EntityStateWire a,EntityStateWire b)=>Math.Abs(a.X-b.X)>.01f||Math.Abs(a.Y-b.Y)>.01f||Math.Abs(a.Z-b.Z)>.01f||Math.Abs(a.Qx-b.Qx)>.001f||Math.Abs(a.Qy-b.Qy)>.001f||Math.Abs(a.Qz-b.Qz)>.001f||Math.Abs(a.Qw-b.Qw)>.001f||Math.Abs(a.Health-b.Health)>.01f||a.StateA!=b.StateA||a.StateB!=b.StateB||a.Flags!=b.Flags||a.Frame!=b.Frame||a.Animation!=b.Animation;
+    private static bool Changed(EntityStateWire a, EntityStateWire b)=>Math.Abs(a.X-b.X)>.01f||Math.Abs(a.Y-b.Y)>.01f||Math.Abs(a.Z-b.Z)>.01f||Math.Abs(a.Qx-b.Qx)>.001f||Math.Abs(a.Qy-b.Qy)>.001f||Math.Abs(a.Qz-b.Qz)>.001f||Math.Abs(a.Qw-b.Qw)>.001f||Math.Abs(a.Health-b.Health)>.01f||a.StateA!=b.StateA||a.StateB!=b.StateB||a.Flags!=b.Flags||a.Frame!=b.Frame||a.Animation!=b.Animation||a.StateSchema!=b.StateSchema||!BytesEqual(a.ExtraState,b.ExtraState);
+    private static bool BytesEqual(byte[] a,byte[] b){if(a==null||b==null)return a==b;if(a.Length!=b.Length)return false;for(var i=0;i<a.Length;i++)if(a[i]!=b[i])return false;return true;}
 }
