@@ -61,7 +61,7 @@ public class EntityBindingTests
         Assert.Equal(101UL, entries[outcome.Missing[0]].EntityValue); // C 级 entry 空手
     }
 
-    /// <summary>4. 两个同等级 A 候选 → ambiguous，一个都不绑。</summary>
+    /// <summary>两个同等级 A 候选 → ambiguous，一个都不绑。</summary>
     [Fact]
     public void Two_Exact_Matches_Are_Ambiguous()
     {
@@ -75,6 +75,30 @@ public class EntityBindingTests
         Assert.Equal(0, outcome.Bound);
         Assert.Single(outcome.Ambiguous);
         Assert.Empty(outcome.Missing);
+    }
+
+    /// <summary>真机 bug 回归：同一 SaveableObject 挂多个组件（Dog+Inventory / Character+Inventory），
+    /// uid 相同但 ComponentType 不同——必须按 type 各自唯一绑定，不得误判为 ambiguous（真机曾 1474 个 ambiguous）。</summary>
+    [Fact]
+    public void Same_Uid_Multiple_Components_Not_Ambiguous()
+    {
+        var entries = new[]
+        {
+            Entry(100, EntityKindWire.Character, "Dog", 697, ".", "Dog", -13781.7f, 13.8f, -12719.4f),
+            Entry(101, EntityKindWire.Inventory, "Inventory", 697, ".", "Dog", -13781.7f, 13.8f, -12719.4f)
+        };
+        var local = new[]
+        {
+            Candidate("Dog", 697, ".", "Dog", -13781.7f, 13.8f, -12719.4f),
+            Candidate("Inventory", 697, ".", "Dog", -13781.7f, 13.8f, -12719.4f)
+        };
+        var outcome = new EntityBindingMatcher().Match(entries, local);
+        Assert.Equal(2, outcome.Bound);   // 各自唯一绑定
+        Assert.Empty(outcome.Ambiguous);
+        Assert.Empty(outcome.Missing);
+        // entry 100（Dog）→ local[0]（Dog），entry 101（Inventory）→ local[1]（Inventory）
+        Assert.Equal(0, outcome.Pairs[0].LocalIndex);
+        Assert.Equal(1, outcome.Pairs[1].LocalIndex);
     }
 
     /// <summary>5. Host 比 Client 多 runtime object：多出的条目统计为 missing，不误绑。</summary>

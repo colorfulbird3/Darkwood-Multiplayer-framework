@@ -201,13 +201,17 @@ public sealed class EntityBindingMatcher
 
     private static MatchLevel ScoreMatch(EntityBindingEntryWire entry, LocalEntityCandidate candidate)
     {
-        var uidMatch = entry.SaveableUid > 0 && entry.SaveableUid == candidate.SaveableUid;
+        // 同一个 SaveableObject 常挂多个组件（Dog+Inventory、Character+Inventory 等），
+        // 它们 uid 相同但 ComponentType 不同。uid 匹配若不校验 type，每个 entry 会把
+        // 同 uid 的所有组件候选都算进来 → 全部 ambiguous（真机 1474 个）。必须 type 参与。
+        var typeMatch = string.Equals(entry.ComponentType, candidate.ComponentType, StringComparison.Ordinal);
+        var uidMatch = entry.SaveableUid > 0 && entry.SaveableUid == candidate.SaveableUid && typeMatch;
         var pathMatch = entry.RelativePath.Length > 0 && string.Equals(entry.RelativePath, candidate.RelativePath, StringComparison.Ordinal);
         var nameMatch = entry.ObjectName.Length > 0 && string.Equals(entry.ObjectName, candidate.ObjectName, StringComparison.Ordinal);
         var inRange = Distance(entry, candidate) <= PositionTolerance * PositionTolerance;
         if (uidMatch && pathMatch) return MatchLevel.A;
         if (uidMatch && inRange) return MatchLevel.B;
-        if (entry.SaveableUid <= 0 && nameMatch && inRange) return MatchLevel.C;
+        if (entry.SaveableUid <= 0 && typeMatch && nameMatch && inRange) return MatchLevel.C;
         return MatchLevel.None;
     }
 
