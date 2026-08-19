@@ -247,16 +247,22 @@ public sealed partial class DarkwoodAdapterRuntime
             {
                 case ProtocolMessageType.EntityDelta:
                 {
-                    var delta = ReplicationProtocolCodec.DecodeEntityDelta(envelope.Payload);
-                    if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.Ready && delta.Scene == runtime.CurrentScene)
+                    try
                     {
-                        runtime.replication.Apply(delta.Entities, false);
-                        runtime.replication.ApplyDespawns(delta.Despawns);
+                        var delta = ReplicationProtocolCodec.DecodeEntityDelta(envelope.Payload);
+                        if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.Ready && delta.Scene == runtime.CurrentScene)
+                        {
+                            runtime.replication.Apply(delta.Entities, false);
+                            runtime.replication.ApplyDespawns(delta.Despawns);
+                        }
                     }
+                    catch (Exception error) { runtime.log?.LogError($"客户端 EntityDelta 处理异常（已隔离，P0-3）：{error}"); }
                     break;
                 }
                 case ProtocolMessageType.InventoryState:
                 {
+                    try
+                    {
                     var inventory = ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);
                     var id = new EntityId(inventory.Value, inventory.Persistent);
                     if (runtime.replication.TryGetInventoryState(id, out var local))
@@ -277,6 +283,8 @@ public sealed partial class DarkwoodAdapterRuntime
                         runtime.missingEntities.Add(new EntityId(inventory.Value, inventory.Persistent));
                         runtime.log?.LogWarning($"忽略缺失实体的容器状态：ID={inventory.Value:X16}，名称={inventory.Name}（主机运行时生成物，等待 Spawn 生命周期补发）。");
                     }
+                    }
+                    catch (Exception error) { runtime.log?.LogError($"客户端 InventoryState 处理异常（已隔离，P0-3）：{error}"); }
                     break;
                 }
                 case ProtocolMessageType.RuntimeEntitySpawn:

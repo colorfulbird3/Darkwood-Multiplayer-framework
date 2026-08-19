@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using DarkwoodMultiplayerFramework.Core;
 using DarkwoodMultiplayerFramework.Protocol;
 using UnityEngine;
@@ -9,13 +10,40 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 public sealed class DarkwoodEntityReplication
 {
     private readonly Dictionary<EntityId,Component> entities=new Dictionary<EntityId,Component>(); private readonly Dictionary<EntityId,WorldEntityBinding> bindings=new Dictionary<EntityId,WorldEntityBinding>(); private readonly Dictionary<EntityId,EntityStateWire> last=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,EntityStateWire> targets=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,InventoryStateMessage> lastInventories=new Dictionary<EntityId,InventoryStateMessage>(); private readonly HashSet<Character> frozen=new HashSet<Character>(); private readonly HashSet<Character> deadCharacters=new HashSet<Character>(); private ulong revision; public bool ApplyingRemote {get;private set;}
-    /// <summary>Read-only enumeration of the bound entity map. Used by the host melee resolver; must not be mutated during iteration.</summary>
+    // P0-2/P0-3：实体已销毁（Unity destroyed/missing）的限频诊断（每实体每 10s 打一次，避免刷屏）。
+    private readonly Dictionary<EntityId,float> staleLoggedAt=new Dictionary<EntityId,float>();
+    // P1：per-kind 同步统计（0=未知 1=Character 2=Door 3=Window 4=Item 5=Inventory）。Host 用 Changed/Sent；Client 用 Received/Applied/Missing。
+    public readonly long[] KindChanged=new long[6], KindSent=new long[6], KindReceived=new long[6], KindApplied=new long[6], KindMissing=new long[6];
+    public void ResetKindDiagnostics(){for(var i=0;i<6;i++){KindChanged[i]=0;KindSent[i]=0;KindReceived[i]=0;KindApplied[i]=0;KindMissing[i]=0;}}
+    /// <summary>只读快照枚举，允许调用期间 unregister/ForceDespawn（P0-2：禁止在遍历中删除字典）。</summary>
+    public KeyValuePair<EntityId,Component>[] EntitySnapshot()=>entities.ToArray();
+    private bool IsStale(Component component)=>component==null||component.gameObject==null;
+    /// <summary>限频 stale/异常诊断。componentName 可为 null（对象已无法解析）。</summary>
+    private void LogStale(EntityId id,Component component,string context,Exception? error,string? componentName=null,string? componentType=null)
+    {
+        if(Time.realtimeSinceStartup < (staleLoggedAt.TryGetValue(id,out var at)?at:0f))return;
+        staleLoggedAt[id]=Time.realtimeSinceStartup+10f;
+        var name=componentName??(component!=null?component.name:"?");
+        var type=componentType??(component!=null?component.GetType().Name:"?");
+        var logger=DarkwoodAdapterRuntime.Instance?.log;
+        if(error!=null)logger?.LogWarning($"[SYNC] {context} 异常（限频）：id={id} type={type} name={name} persistent={id.IsPersistent} {error.GetType().Name}: {error.Message}");
+        else logger?.LogWarning($"[SYNC] stale capture：id={id} type={type} name={name} persistent={id.IsPersistent}");
+    }
+    /// <summary>统一清理 stale 实体（从全部字典移除）。不在遍历中调用。</summary>
+    private void PurgeStale()
+    {
+        if(stalePending.Count==0)return;
+        foreach(var id in stalePending){entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
+        stalePending.Clear();
+    }
+    private readonly HashSet<EntityId> stalePending=new HashSet<EntityId>();
+    /// <summary>只读枚举（Combat 等调用方用；遍历时不得修改集合——用 EntitySnapshot()）。</summary>
     public IEnumerable<KeyValuePair<EntityId,Component>> AllEntities=>entities;
     public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
     /// <summary>用主机权威注册表同一份扫描结果构建复制状态（避免 registry 与 replication 各扫一次）。</summary>
     public void Rebuild(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<EntityId, Component>> pairs){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var pair in pairs)if(!entities.ContainsKey(pair.Key))entities[pair.Key]=pair.Value;}
-    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();var stale=new List<EntityId>();foreach(var pair in entities){var component=pair.Value;if(component==null||component.gameObject==null){stale.Add(pair.Key);continue;}var state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);a.Add(state);last[pair.Key]=state;}foreach(var id in stale){entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}return a.ToArray();}
-    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities){var state=DarkwoodEntityStateAdapter.Capture(pair.Key,pair.Value,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(!last.TryGetValue(pair.Key,out old)||Changed(old,state)){a.Add(state);last[pair.Key]=state;changed++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
+    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureAll",null);stalePending.Add(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureAll",error);continue;}a.Add(state);last[pair.Key]=state;}PurgeStale();return a.ToArray();}
+    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureDeltas",null);stalePending.Add(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}PurgeStale();LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
     public void Apply(IEnumerable<EntityStateWire> states,bool immediate){Apply(states,immediate,out _);}
     public ApplyStats Apply(IEnumerable<EntityStateWire> states,bool immediate,out ApplyStats stats)
     {
@@ -24,12 +52,13 @@ public sealed class DarkwoodEntityReplication
         {
             foreach(var s in states)
             {
-                stats.Received++;DeltaReceived++;
+                stats.Received++;DeltaReceived++;KindReceived[s.Kind]++;
                 var id=new EntityId(s.Value,s.Persistent);
-                if(!entities.TryGetValue(id,out var component)){stats.RecordMissing(DescribeMissing(id,s),s.Kind);DeltaMissing++;continue;}
+                if(!entities.TryGetValue(id,out var component)){stats.RecordMissing(DescribeMissing(id,s),s.Kind);DeltaMissing++;KindMissing[s.Kind]++;continue;}
                 if(last.TryGetValue(id,out var old)&&s.Revision<old.Revision){stats.Stale++;continue;}
-                DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);
-                targets[id]=s;last[id]=s;stats.Applied++;DeltaApplied++;
+                try{DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);}
+                catch(Exception error){LogStale(id,component,"Apply",error);continue;}
+                targets[id]=s;last[id]=s;stats.Applied++;DeltaApplied++;KindApplied[s.Kind]++;
             }
         }
         finally{ApplyingRemote=false;}
@@ -50,10 +79,10 @@ public sealed class DarkwoodEntityReplication
     public void Interpolate(float factor){foreach(var pair in targets){if(!entities.TryGetValue(pair.Key,out var c)||!(c is Character))continue;var s=pair.Value;c.transform.position=Vector3.Lerp(c.transform.position,new Vector3(s.X,s.Y,s.Z),Mathf.Clamp01(factor));c.transform.rotation=Quaternion.Slerp(c.transform.rotation,new Quaternion(s.Qx,s.Qy,s.Qz,s.Qw),Mathf.Clamp01(factor));}}
     public void RestoreSimulation(){foreach(var c in frozen)if(c!=null){c.enabled=true;if(c.AIpath!=null)c.AIpath.enabled=true;}frozen.Clear();foreach(var c in deadCharacters)if(c!=null)c.enabled=true;deadCharacters.Clear();}
     public EntityStateWire[] Snapshot()=>CaptureAll();
-    public InventoryStateMessage[] CaptureInventorySnapshot(){var list=new List<InventoryStateMessage>();foreach(var pair in entities){if(!(pair.Value is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;var message=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,++revision);list.Add(message);lastInventories[pair.Key]=message;}return list.ToArray();}
-    public InventoryStateMessage[] CaptureInventoryDeltas(){var list=new List<InventoryStateMessage>();foreach(var pair in entities){if(!(pair.Value is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;var next=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,lastInventories.TryGetValue(pair.Key,out var previous)?previous.Revision+1:++revision);if(!lastInventories.TryGetValue(pair.Key,out previous)||!DarkwoodEntityStateAdapter.SlotsEqual(previous.Slots,next.Slots)){list.Add(next);lastInventories[pair.Key]=next;}}return list.ToArray();}
+    public InventoryStateMessage[] CaptureInventorySnapshot(){var list=new List<InventoryStateMessage>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureInventorySnapshot",null);stalePending.Add(pair.Key);continue;}if(!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;InventoryStateMessage message;try{message=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,++revision);}catch(Exception error){LogStale(pair.Key,inventory,"CaptureInventorySnapshot",error);continue;}list.Add(message);lastInventories[pair.Key]=message;}PurgeStale();return list.ToArray();}
+    public InventoryStateMessage[] CaptureInventoryDeltas(){var list=new List<InventoryStateMessage>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){LogStale(pair.Key,component,"CaptureInventoryDeltas",null);stalePending.Add(pair.Key);continue;}if(!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;InventoryStateMessage previous=default!;bool hadPrevious=false;InventoryStateMessage next;try{hadPrevious=lastInventories.TryGetValue(pair.Key,out previous);next=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,hadPrevious?previous.Revision+1:++revision);}catch(Exception error){LogStale(pair.Key,inventory,"CaptureInventoryDeltas",error);continue;}if(!hadPrevious||!DarkwoodEntityStateAdapter.SlotsEqual(previous.Slots,next.Slots)){list.Add(next);lastInventories[pair.Key]=next;}}PurgeStale();return list.ToArray();}
     public InventoryStateMessage[] CaptureInventories()=>CaptureInventorySnapshot();
-    public bool Apply(InventoryStateMessage message){var id=new EntityId(message.Value,message.Persistent);if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))return false;if(lastInventories.TryGetValue(id,out var previous)&&message.Revision<previous.Revision)return true;var slots=new DarkwoodInventorySlot[message.Slots.Length];for(var i=0;i<slots.Length;i++){var s=message.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}ApplyingRemote=true;try{DarkwoodInventoryAdapter.Apply(inventory,slots);lastInventories[id]=message;return true;}finally{ApplyingRemote=false;}}
+    public bool Apply(InventoryStateMessage message){var id=new EntityId(message.Value,message.Persistent);if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))return false;if(lastInventories.TryGetValue(id,out var previous)&&message.Revision<previous.Revision)return true;var slots=new DarkwoodInventorySlot[message.Slots.Length];for(var i=0;i<slots.Length;i++){var s=message.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}ApplyingRemote=true;try{DarkwoodInventoryAdapter.Apply(inventory,slots);lastInventories[id]=message;return true;}catch(Exception error){LogStale(id,inventory,"Apply(Inventory)",error);return false;}finally{ApplyingRemote=false;}}
     public bool TryGetInventoryState(EntityId id,out InventoryStateMessage state){if(entities.TryGetValue(id,out var component)&&component is Inventory inventory){state=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision:0);return true;}state=default;return false;}
     public InventoryStateMessage CaptureAuthoritativeInventory(EntityId id){if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory))throw new InvalidOperationException("Inventory entity does not exist.");var message=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision+1:++revision);lastInventories[id]=message;return message;}
 

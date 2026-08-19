@@ -365,30 +365,60 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         {
             nextSyncDiag = Time.unscaledTime + 10f;
             log?.LogInfo($"[SYNC] host generation={registryGeneration} entities={registry?.Count ?? 0} deltaChanged={replication.LastDeltaChangedCount} deltaSent={replication.LastDeltaSentCount}");
+            // P1：per-kind 同步统计（定位怪物/门/窗/Item 哪类不同步）
+            log?.LogInfo($"[SYNC-KIND] Character changed={replication.KindChanged[1]} sent={replication.KindSent[1]} | Door changed={replication.KindChanged[2]} sent={replication.KindSent[2]} | Window changed={replication.KindChanged[3]} sent={replication.KindSent[3]} | Item changed={replication.KindChanged[4]} sent={replication.KindSent[4]} | Inventory changed={replication.KindChanged[5]} sent={replication.KindSent[5]}");
+            replication.ResetKindDiagnostics();
         }
-        if(hostSession!=null&&!registryDirty&&registry!=null)EnsureHostExistingLootScaled();
+        if(hostSession!=null&&!registryDirty&&registry!=null)
+            try{EnsureHostExistingLootScaled();}catch(Exception error){log?.LogError($"TickHost.LootScale 子系统异常（已隔离）：{error}");}
+        // P0-3：TickHost 各子系统隔离——单个坏世界对象/异常不能让整个网络主循环掉帧。各自 log error + 继续。
         if (hostSession != null && readyPeers.Count>0 && !registryDirty && Time.unscaledTime>=nextDelta)
         {
-            nextDelta=Time.unscaledTime+(1f/15f); serverTick++; var delta=replication.CaptureDeltas();
-            if(delta.Length>0){var payload=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,delta,Array.Empty<EntityStateWire>()));foreach(var peer in readyPeers.ToArray())Queue(peer,ProtocolMessageType.EntityDelta,payload);}
+            nextDelta=Time.unscaledTime+(1f/15f); serverTick++;
+            try
+            {
+                var delta=replication.CaptureDeltas();
+                if(delta.Length>0){var payload=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,delta,Array.Empty<EntityStateWire>()));foreach(var peer in readyPeers.ToArray())Queue(peer,ProtocolMessageType.EntityDelta,payload);}
+            }
+            catch(Exception error){log?.LogError($"TickHost.Delta 子系统异常（已隔离）：{error}");}
         }
         if (hostSession != null && readyPeers.Count>0 && !registryDirty && Time.unscaledTime>=nextInventoryDelta)
         {
             nextInventoryDelta=Time.unscaledTime+0.25f;
-            foreach(var inventory in replication.CaptureInventoryDeltas()) BroadcastInventory(inventory);
+            try
+            {
+                foreach(var inventory in replication.CaptureInventoryDeltas()) BroadcastInventory(inventory);
+            }
+            catch(Exception error){log?.LogError($"TickHost.Inventory 子系统异常（已隔离）：{error}");}
         }
-        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendHostPose();}
-        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave){nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;foreach(var peer in readyPeers.ToArray())Players.PersistGuestProfile(peer);}
-        if(hostSession!=null){Combat.TickHost();RuntimeEntities.TickHost();}
+        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextPose)
+        {
+            nextPose=Time.unscaledTime+(1f/15f);
+            try{SendHostPose();}catch(Exception error){log?.LogError($"TickHost.Pose 子系统异常（已隔离）：{error}");}
+        }
+        if(hostSession!=null&&readyPeers.Count>0&&Time.unscaledTime>=nextProfileAutosave)
+        {
+            nextProfileAutosave=Time.unscaledTime+ProfileAutosaveSeconds;
+            try{foreach(var peer in readyPeers.ToArray())Players.PersistGuestProfile(peer);}catch(Exception error){log?.LogError($"TickHost.ProfileAutosave 子系统异常（已隔离）：{error}");}
+        }
+        if(hostSession!=null)
+        {
+            try{Combat.TickHost();}catch(Exception error){log?.LogError($"TickHost.Combat 子系统异常（已隔离）：{error}");}
+            try{RuntimeEntities.TickHost();}catch(Exception error){log?.LogError($"TickHost.RuntimeEntities 子系统异常（已隔离）：{error}");}
+        }
     }
 
     private void TickClient()
     {
-        if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready)replication.Interpolate(Time.unscaledDeltaTime*12f);
+        if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready)
+            try{replication.Interpolate(Time.unscaledDeltaTime*12f);}catch(Exception error){log?.LogError($"TickClient.Interpolate 异常（已隔离）：{error}");}
         if (Time.unscaledTime >= nextSyncDiag)
         {
             nextSyncDiag = Time.unscaledTime + 10f;
             log?.LogInfo($"[SYNC] client generation={replication.RegistryGeneration} bound={replication.BoundEntityCount} delta received={replication.DeltaReceived} applied={replication.DeltaApplied} missing={replication.DeltaMissing}");
+            // P1：per-kind 同步统计（定位怪物/门/窗/Item 哪类不同步）
+            log?.LogInfo($"[SYNC-KIND] Character received={replication.KindReceived[1]} applied={replication.KindApplied[1]} missing={replication.KindMissing[1]} | Door received={replication.KindReceived[2]} applied={replication.KindApplied[2]} missing={replication.KindMissing[2]} | Window received={replication.KindReceived[3]} applied={replication.KindApplied[3]} missing={replication.KindMissing[3]} | Item received={replication.KindReceived[4]} applied={replication.KindApplied[4]} missing={replication.KindMissing[4]} | Inventory received={replication.KindReceived[5]} applied={replication.KindApplied[5]} missing={replication.KindMissing[5]}");
+            replication.ResetKindDiagnostics();
         }
         TrySendClientRegistryReady();
         RetrySnapshotAcknowledgement();

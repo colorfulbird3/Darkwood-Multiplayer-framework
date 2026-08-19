@@ -51,6 +51,8 @@ public static class DarkwoodEntityStateAdapter
             if (ch.alive && !Flag(s.Flags, 0) && !deadCharacters.Contains(ch)) { deadCharacters.Add(ch); frozen.Remove(ch); ch.enabled = true; try { ch.die2(); } catch (Exception) { ch.gameObject.SetActive(false); } if (ch.gameObject.activeSelf) ch.enabled = false; }
             if (!deadCharacters.Contains(ch) && frozen.Add(ch)) { ch.enabled = false; if (ch.AIpath != null) ch.AIpath.enabled = false; }
             ch.health = s.Health; ch.Health = s.Health; ch.alive = Flag(s.Flags, 0); ch.walking = Flag(s.Flags, 3); ch.running = Flag(s.Flags, 4); ch.attacking = Flag(s.Flags, 2); ch.inBearTrap = Flag(s.Flags, 5); ch.gameObject.SetActive(Flag(s.Flags, 1)); if (immediate) { ch.transform.position = p; ch.transform.rotation = q; }
+            // P1-b：Host 权威驱动动画。动画名变化才 Play（避免每 tick 重启动画）；帧用反射尽力对齐（缺 API 不崩）。
+            ApplyHostAnimation(ch, s);
         }
         else if (c is Door d)
         {
@@ -91,8 +93,39 @@ public static class DarkwoodEntityStateAdapter
         return true;
     }
 
-    public static byte Kind(Component c) => c is Character ? (byte)1 : c is Door ? (byte)2 : c is Window ? (byte)3 : c is Item ? (byte)4 : c is Inventory ? (byte)5 : (byte)0;
+    /// <summary>P1-b：Host 权威驱动客户端角色动画。动画名变化才 Play（tk2dSpriteAnimator 标准 API），
+    /// 帧尽力对齐（反射，缺 API 静默——绝不因动画驱动让整个 Apply 抛异常）。</summary>
+    private static void ApplyHostAnimation(Character ch, EntityStateWire s)
+    {
+        if (ch.animator == null || string.IsNullOrEmpty(s.Animation)) return;
+        try
+        {
+            var clipName = ch.animator.CurrentClip?.name;
+            if (!string.Equals(s.Animation, clipName, StringComparison.Ordinal))
+            {
+                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
+                var play = ch.animator.GetType().GetMethod("Play", flags, null, new[] { typeof(string) }, null);
+                if (play != null) play.Invoke(ch.animator, new object[] { s.Animation });
+                else
+                {
+                    var playAny = ch.animator.GetType().GetMethod("Play", flags);
+                    if (playAny != null) playAny.Invoke(ch.animator, new object[] { s.Animation });
+                }
+            }
+            if (s.Frame >= 0)
+            {
+                var frameProp = ch.animator.GetType().GetProperty("CurrentFrame");
+                if (frameProp != null)
+                {
+                    var current = (int)frameProp.GetValue(ch.animator);
+                    if (current != s.Frame) frameProp.SetValue(ch.animator, s.Frame);
+                }
+            }
+        }
+        catch (Exception) { /* tk2d API 差异/动画资源缺失：保持字段状态，不额外干预 */ }
+    }
 
+    public static byte Kind(Component c) => c is Character ? (byte)1 : c is Door ? (byte)2 : c is Window ? (byte)3 : c is Item ? (byte)4 : c is Inventory ? (byte)5 : (byte)0;
     public static byte Flags(bool a, bool b, bool c, bool d, bool e = false, bool f = false) => (byte)((a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) | (d ? 8 : 0) | (e ? 16 : 0) | (f ? 32 : 0));
     public static bool Flag(byte f, int bit) => (f & (1 << bit)) != 0;
 }

@@ -130,11 +130,10 @@ public sealed class DarkwoodRuntimeEntityService
         scanStopwatch.Stop();
         if (scanStopwatch.ElapsedMilliseconds > 150) runtime.log?.LogWarning($"运行时实体扫描耗时 {scanStopwatch.ElapsedMilliseconds} ms（每 10 秒一次，若持续偏高会导致主机卡顿）。");
         // beta.5：检测被游戏销毁的持久实体（夹子拆除等）→ Despawn 广播
+        // P0-2：两阶段快照——绝不在遍历 replication.Entities()（惰性迭代器）时 ForceDespawn（会删字典 → Collection modified）。
         var despawnWires = new List<EntityStateWire>();
-        foreach (var pair in runtime.replication.Entities())
-        {
-            if (pair.Key.IsPersistent && pair.Value == null) despawnWires.Add(runtime.replication.ForceDespawn(pair.Key));
-        }
+        foreach (var id in runtime.replication.EntitySnapshot().Where(pair => pair.Key.IsPersistent && pair.Value == null).Select(pair => pair.Key).ToArray())
+            despawnWires.Add(runtime.replication.ForceDespawn(id));
         if (despawnWires.Count > 0)
         {
             var deltaPayload = ReplicationProtocolCodec.Encode(new EntityDeltaMessage(runtime.CurrentScene, runtime.serverTick, Array.Empty<EntityStateWire>(), despawnWires.ToArray()));
