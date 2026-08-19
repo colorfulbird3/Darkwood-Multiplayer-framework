@@ -199,6 +199,16 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     public void ConnectClient()
     {
+        if (clientSession != null && (clientSession.Session.Lifecycle.State == ConnectionState.SaveTransfer
+            || clientSession.Session.Lifecycle.State == ConnectionState.LoadingSave
+            || clientSession.Session.Lifecycle.State == ConnectionState.BuildingRegistry
+            || clientSession.Session.Lifecycle.State == ConnectionState.ApplyingSnapshot))
+        {
+            // 真机教训：加载存档期间重复连接会触发多次 LoadScene，打断正在进行的
+            // WorldGenerator 生成 → SaveManager 永远不初始化 → 重连死循环（SaveManager 不可用）。
+            log?.LogWarning("客户端正在加载主机存档/等待快照，忽略新的连接请求（请等待当前流程完成后再按 F2）。");
+            return;
+        }
         StopNetwork();
         clientSession = new ClientHandshakeSession(new TelepathyClientTransport(telepathyPath), Identity);
         clientSession.HandshakeSucceeded += OnHandshakeSucceeded;

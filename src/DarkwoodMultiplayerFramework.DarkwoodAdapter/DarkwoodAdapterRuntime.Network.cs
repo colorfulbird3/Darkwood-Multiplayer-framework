@@ -120,7 +120,32 @@ public sealed partial class DarkwoodAdapterRuntime
         // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
         // 正确路径：保持 loadingGame=true 直接加载章节场景，WorldGenerator.Start
         // 会走 SaveManager.Load() 恢复主机存档世界，完成后回调 onFinishedLoading。
-        global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;SaveState.ClientSaveLoadPending=true;LogMessage($"正在切换到章节场景 {(profile.chapter>=2?"chapter2":"chapter1")} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(profile.chapter>=2?"chapter2":"chapter1");global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
+        global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;SaveState.ClientSaveLoadPending=true;
+        // FIX-009：重复连接打断场景加载。真机：客户端加载存档时断线重连会再次 LoadScene，
+        // 打断正在进行的 WorldGenerator 生成 → 之后 WorldGenerator 实例为空 / SaveManager 不可用，
+        // 每次重连都重新打断 → 死循环。修复：目标场景已是当前场景且世界生成器已存在时，
+        // 不重复 LoadScene——加载进行中就等它完成（FIX-006 回调已挂到当前实例），
+        // 已加载完就直接推进（BuildingRegistry → BindingManifest → Ready）。
+        var activeSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        var targetScene = profile.chapter >= 2 ? "chapter2" : "chapter1";
+        var worldGen = Singleton<WorldGenerator>.Instance;
+        if (string.Equals(activeSceneName, targetScene, StringComparison.Ordinal) && worldGen != null)
+        {
+            var currentManager = Singleton<SaveManager>.Instance;
+            if (currentManager != null) AttachLoadFinishedCallback(currentManager);
+            if (worldGen.percentLoaded >= 0.99f)
+            {
+                log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{worldGen.percentLoaded:P0}），直接推进联机流程。");
+                OnDownloadedSaveFinished();
+            }
+            else
+            {
+                SaveState.MarkLoadStarted(Time.unscaledTime);
+                log?.LogInfo($"目标场景 {targetScene} 已是当前场景且存档恢复进行中（{worldGen.percentLoaded:P0}），跳过重复场景加载，等待完成。");
+            }
+            yield break;
+        }
+        LogMessage($"正在切换到章节场景 {targetScene} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(targetScene);global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
     }
 
     private void OnDownloadedSaveFinished()
