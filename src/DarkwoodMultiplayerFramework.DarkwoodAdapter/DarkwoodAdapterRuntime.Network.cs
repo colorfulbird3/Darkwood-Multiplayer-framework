@@ -109,48 +109,54 @@ public sealed partial class DarkwoodAdapterRuntime
 
     private IEnumerator LoadDownloadedSave(int profileId)
     {
-        yield return null;try{if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed)throw new InvalidOperationException("客户端连接已断开，取消存档加载。");var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);
+        yield return null;
+        // ── FIX-019 重载编排（可 yield 区域，不放 try：C# 禁止在带 catch 的 try 内 yield）──
+        // 绝不在 chapter 场景内重载同名场景（真机 NRE 洪水 + WorldGenerator 起不来）。
+        // 需要换世界时走原版 returnToMainMenu 路径：先 LoadScene("Darkwood")（主菜单），等 SaveManager 就绪再进章节。
+        if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){FailClient("CLIENT_DISCONNECTED",new InvalidOperationException("客户端连接已断开，取消存档加载。"));yield break;}
+        var activeSceneName0=UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        var inChapterScene=activeSceneName0=="chapter1"||activeSceneName0=="chapter2";
+        var worldGen0=Singleton<WorldGenerator>.Instance;
+        var loadingNow0=worldGen0!=null&&worldGen0.percentLoaded<90f;
+        if(inChapterScene&&worldGen0!=null)
+        {
+            var currentManager=Singleton<SaveManager>.Instance;
+            if(currentManager!=null)AttachLoadFinishedCallback(currentManager);
+            if(loadingNow0){SaveState.MarkLoadStarted(Time.unscaledTime);log?.LogInfo($"目标场景已是当前场景且存档恢复进行中（{(int)worldGen0.percentLoaded}%），跳过重复场景加载，等待完成。");yield break;}
+            if(clientWorldFreshForSession&&worldGen0.percentLoaded>=90f){log?.LogInfo($"当前场景已完成存档恢复（{(int)worldGen0.percentLoaded}%）且为本会话新鲜世界，直接推进联机流程。");OnDownloadedSaveFinished();yield break;}
+            // 章节场景存在但非本会话新鲜（上次失败残留）→ 落到下面回主菜单重载。
+            log?.LogWarning($"当前场景 {activeSceneName0} 中的世界非本会话新鲜存档，返回主菜单以重组干净世界。");
+        }
+        if(activeSceneName0!="Darkwood")
+        {
+            log?.LogInfo("客户端不在主菜单，先返回主菜单（LoadScene(\"Darkwood\")）以重组干净世界。");
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Darkwood");
+            var menuDeadline=Time.realtimeSinceStartup+30f;
+            while(Time.realtimeSinceStartup<menuDeadline)
+            {
+                yield return null;
+                if(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name=="Darkwood"&&Singleton<SaveManager>.Instance!=null)break;
+            }
+            if(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name!="Darkwood"||Singleton<SaveManager>.Instance==null){FailClient("MENU_RELOAD_TIMEOUT",new InvalidOperationException("返回主菜单超时。"));yield break;}
+            log?.LogInfo("已回到主菜单，SaveManager 就绪。");
+        }
+        clientWorldFreshForSession=false;
+        SaveState.SetProgress("正在加载存档");SaveState.MarkLoadStarted(Time.unscaledTime);
+        // ── 数据装载 + 切场景（无 yield，可 safe try/catch）──
+        try{
+        var manager=Singleton<SaveManager>.Instance;if(manager==null)throw new InvalidOperationException("SaveManager 不可用。");var state=manager.loadGameProfiles();if(state?.profiles==null)throw new InvalidDataException("下载的存档档案信息不可用。");var profile=state.profiles.FirstOrDefault(p=>p!=null&&p.id==profileId&&p.Active);if(profile==null)throw new InvalidDataException("下载的存档档案信息不可用。");global::Core.profiles=state.profiles;global::Core.currentProfile=profile;manager.updateFilePaths();if(clientSession.Session.Lifecycle.State==ConnectionState.SaveTransfer)clientSession.Session.Lifecycle.MoveTo(ConnectionState.LoadingSave);
         // FIX-006：不在此处挂 onFinishedLoading——SaveManager 是场景内单例（非 DontDestroyOnLoad），
         // 此处挂到的是主菜单场景的实例，LoadScene 后随场景销毁；Load() 跑在 chapter1 场景的
         // 新实例上，回调永远不触发（实测：加载卡 92%、timeScale 无人恢复、界面永不隐藏）。
         // 改由 DarkwoodLoadFinishedPatch 在 SaveManager.Load 入口挂到 __instance。
-        SaveState.SetProgress("正在加载存档");SaveState.MarkLoadStarted(Time.unscaledTime);
         // FIX-002：initLoadGame() 内部先跑 initNewGame()，会把 Core.loadingGame 重置为 false，
         // WorldGenerator.Start 因此走“生成新世界”分支（教学梦境，约 8 个实体），且
         // SaveManager.onFinishedLoading 不触发（客户端永远卡在加载界面）。
         // 正确路径：保持 loadingGame=true 直接加载章节场景，WorldGenerator.Start
         // 会走 SaveManager.Load() 恢复主机存档世界，完成后回调 onFinishedLoading。
         global::Core.loadingGame=true;global::Core.loadedGame=true;global::Core.forbidInputs=true;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=true;SaveState.ClientSaveLoadPending=true;
-        // FIX-009：重复连接打断场景加载。真机：客户端加载存档时断线重连会再次 LoadScene，
-        // 打断正在进行的 WorldGenerator 生成 → 之后 WorldGenerator 实例为空 / SaveManager 不可用，
-        // 每次重连都重新打断 → 死循环。修复：目标场景已是当前场景且世界生成器已存在时，
-        // 不重复 LoadScene——加载进行中就等它完成（FIX-006 回调已挂到当前实例），
-        // 已加载完就直接推进（BuildingRegistry → BindingManifest → Ready）。
-        var activeSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-        var targetScene = profile.chapter >= 2 ? "chapter2" : "chapter1";
-        var worldGen = Singleton<WorldGenerator>.Instance;
-        var sceneMatches = string.Equals(activeSceneName, targetScene, StringComparison.Ordinal);
-        var loadingNow = worldGen != null && worldGen.percentLoaded < 90f;
-        if (sceneMatches && worldGen != null && (loadingNow || clientWorldFreshForSession))
-        {
-            var currentManager = Singleton<SaveManager>.Instance;
-            if (currentManager != null) AttachLoadFinishedCallback(currentManager);
-            if (loadingNow)
-            {
-                SaveState.MarkLoadStarted(Time.unscaledTime);
-                log?.LogInfo($"目标场景 {targetScene} 已是当前场景且存档恢复进行中（{(int)worldGen.percentLoaded}%），跳过重复场景加载，等待完成。");
-                yield break;
-            }
-            log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{(int)worldGen.percentLoaded}%）且为本会话新鲜世界，直接推进联机流程。");
-            OnDownloadedSaveFinished();
-            yield break;
-        }
-        // FIX-019：场景还在但 worldGen 不是本会话加载的新鲜世界（上次失败残留，世界已被部分快照污染）
-        // 或场景不在目标 → 必须重新 LoadScene 从本次下载的存档恢复干净世界。
-        if (sceneMatches && worldGen != null)
-            log?.LogWarning($"当前场景 {activeSceneName} 中的世界非本会话新鲜存档（fresh={clientWorldFreshForSession}），重新加载 {targetScene} 以恢复干净世界。");
-        clientWorldFreshForSession = false;
-        LogMessage($"正在切换到章节场景 {targetScene} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(targetScene);global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
+        LogMessage($"正在切换到章节场景 {(profile.chapter>=2?"chapter2":"chapter1")} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(profile.chapter>=2?"chapter2":"chapter1");global::Core.mainMenu=false;
+        }catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
     }
 
     private void OnDownloadedSaveFinished()
