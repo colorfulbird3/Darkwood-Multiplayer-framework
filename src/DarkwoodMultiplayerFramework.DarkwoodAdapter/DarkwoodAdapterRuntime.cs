@@ -41,6 +41,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     // FIX-019：当前 clientSession 是否已用"本次下载的存档"加载出新鲜世界。
     // true=本会话刚加载（重连时可安全跳过重载）；false=上次会话失败留下的残留世界或从未加载（必须重载）。
     private bool clientWorldFreshForSession;
+    // FIX-020：本进程内是否曾成功用 DMF 下载存档加载出世界。用于区分"干净单机世界（重载安全，28 号实证）
+    // vs DMF 残留脏世界（重载会破坏 Darkwood 常驻单例 → NRE 洪水，需提示重启）"。
+    private bool everLoadedDmfWorld;
     public string StateDisplay => StateText(State);
     public string CurrentScene => SceneManager.GetActiveScene().name;
     public Player? LocalPlayer => Player.Instance;

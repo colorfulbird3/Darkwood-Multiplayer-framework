@@ -124,22 +124,16 @@ public sealed partial class DarkwoodAdapterRuntime
             if(currentManager!=null)AttachLoadFinishedCallback(currentManager);
             if(loadingNow0){SaveState.MarkLoadStarted(Time.unscaledTime);log?.LogInfo($"目标场景已是当前场景且存档恢复进行中（{(int)worldGen0.percentLoaded}%），跳过重复场景加载，等待完成。");yield break;}
             if(clientWorldFreshForSession&&worldGen0.percentLoaded>=90f){log?.LogInfo($"当前场景已完成存档恢复（{(int)worldGen0.percentLoaded}%）且为本会话新鲜世界，直接推进联机流程。");OnDownloadedSaveFinished();yield break;}
-            // 章节场景存在但非本会话新鲜（上次失败残留）→ 落到下面回主菜单重载。
-            log?.LogWarning($"当前场景 {activeSceneName0} 中的世界非本会话新鲜存档，返回主菜单以重组干净世界。");
+            // 章节场景存在但非本会话新鲜（上次失败残留）→ 由下方 FIX-020 判定：DMF 残留→提示重启；单机世界→覆盖。
         }
-        if(activeSceneName0!="Darkwood")
+        if(inChapterScene&&worldGen0!=null&&!loadingNow0&&!clientWorldFreshForSession&&everLoadedDmfWorld)
         {
-            log?.LogInfo("客户端不在主菜单，先返回主菜单（LoadScene(\"Darkwood\")）以重组干净世界。");
-            UnityEngine.SceneManagement.SceneManager.LoadScene("Darkwood");
-            var menuDeadline=Time.realtimeSinceStartup+30f;
-            while(Time.realtimeSinceStartup<menuDeadline)
-            {
-                yield return null;
-                if(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name=="Darkwood"&&Singleton<SaveManager>.Instance!=null)break;
-            }
-            if(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name!="Darkwood"||Singleton<SaveManager>.Instance==null){FailClient("MENU_RELOAD_TIMEOUT",new InvalidOperationException("返回主菜单超时。"));yield break;}
-            log?.LogInfo("已回到主菜单，SaveManager 就绪。");
+            // FIX-020：DMF 残留脏世界——本进程内再切场景会破坏 Darkwood 常驻单例
+            // （真机 NRE 洪水：Core/Controller/Rain 全崩）。无法安全重载，直接 fast-fail 明示重启。
+            FailClient("CLEAN_START_REQUIRED",new InvalidDataException("客户端世界状态异常（上次联机会话失败的残留世界）。请重启游戏后在主菜单重新连接——当前进程内重载会破坏 Darkwood 常驻组件。"));
+            yield break;
         }
+        // 干净单机世界或主菜单：直接 LoadScene 覆盖/进入（FIX-020：单机世界重载安全，28 号实证）。
         clientWorldFreshForSession=false;
         SaveState.SetProgress("正在加载存档");SaveState.MarkLoadStarted(Time.unscaledTime);
         // ── 数据装载 + 切场景（无 yield，可 safe try/catch）──
@@ -165,7 +159,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(Time.timeScale<=0.01f){Time.timeScale=1f;LogMessage("已强制恢复 timeScale=1（加载期间曾被冻结）。");}
         // FIX-018：LoadDownloadedSave 设置的 forbidInputs/buttonsDisabled 必须在此恢复。
         // 真机：客户端打开共享容器后无法退出（UI 关闭按钮被 buttonsDisabled 禁用 / 输入被 forbidInputs 锁）。
-        global::Core.forbidInputs=false;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=false;clientWorldFreshForSession=true;
+        global::Core.forbidInputs=false;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=false;clientWorldFreshForSession=true;everLoadedDmfWorld=true;
         var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
     }
 
