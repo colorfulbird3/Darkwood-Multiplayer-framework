@@ -38,12 +38,13 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9-beta.5";
+    public const string Framework = "0.8.9-beta.6";
 }
 
 public static class ReplicationProtocolCodec
 {
     private const int MaxChunks = 4096, MaxEntities = 4096, MaxString = 4096, MaxHash = 64;
+    private const int MaxBindingEntries = 20000;
     public static byte[] Encode(SaveTransferRequest m) => Write(w => w.Write(m.RequestId.ToByteArray()));
     public static SaveTransferRequest DecodeSaveTransferRequest(byte[] p) => Read(p, r => new SaveTransferRequest(new Guid(ReadExact(r,16))));
     public static byte[] Encode(SaveTransferManifest m) => Write(w => { w.Write(m.TransferId.ToByteArray()); w.Write(m.ProfileId); w.Write(m.TotalBytes); w.Write(m.ChunkCount); WriteBytes(w,m.Sha256,MaxHash); WriteString(w,m.Description); });
@@ -56,6 +57,12 @@ public static class ReplicationProtocolCodec
     public static WorldSnapshotManifest DecodeWorldSnapshotManifest(byte[] p) => Read(p,r => new WorldSnapshotManifest(new Guid(ReadExact(r,16)),r.ReadInt64(),ReadCount(r,MaxChunks),ReadBytes(r,MaxHash),ReadString(r),ReadString(r),r.ReadInt64()));
     public static byte[] Encode(WorldSnapshotChunk m) => Write(w => { w.Write(m.SnapshotId.ToByteArray()); w.Write(m.Index); w.Write(m.Total); WriteBytes(w,m.Hash,MaxHash); WriteBytes(w,m.Data,SnapshotMax); });
     public static WorldSnapshotChunk DecodeWorldSnapshotChunk(byte[] p) => Read(p,r => { var id=new Guid(ReadExact(r,16));var index=r.ReadInt32();var total=ReadCount(r,MaxChunks);var hash=ReadBytes(r,MaxHash);var data=ReadBytes(r,SnapshotMax);return new WorldSnapshotChunk(id,index,total,data,hash); });
+    public static byte[] Encode(EntityBindingManifest m) => Write(w => { w.Write(m.TransferId.ToByteArray()); w.Write(m.TotalBytes); w.Write(m.ChunkCount); WriteBytes(w,m.Sha256,MaxHash); WriteString(w,m.Scene); w.Write(m.Generation); w.Write(m.EntityCount); });
+    public static EntityBindingManifest DecodeEntityBindingManifest(byte[] p) => Read(p,r => new EntityBindingManifest(new Guid(ReadExact(r,16)),r.ReadInt64(),ReadCount(r,MaxChunks),ReadBytes(r,MaxHash),ReadString(r),r.ReadInt32(),r.ReadInt32()));
+    public static byte[] Encode(EntityBindingChunk m) => Write(w => { w.Write(m.TransferId.ToByteArray()); w.Write(m.Index); w.Write(m.Total); WriteBytes(w,m.Hash,MaxHash); WriteBytes(w,m.Data,SnapshotMax); });
+    public static EntityBindingChunk DecodeEntityBindingChunk(byte[] p) => Read(p,r => new EntityBindingChunk(new Guid(ReadExact(r,16)),r.ReadInt32(),ReadCount(r,MaxChunks),ReadBytes(r,MaxHash),ReadBytes(r,SnapshotMax)));
+    public static byte[] Encode(EntityBindingEntryWire[] entries) => Write(w => { w.Write(entries.Length); foreach (var m in entries) { w.Write(m.EntityValue); w.Write(m.Kind); WriteString(w,m.ComponentType); w.Write(m.SaveableUid); WriteString(w,m.RelativePath); WriteString(w,m.ObjectName); w.Write(m.X); w.Write(m.Y); w.Write(m.Z); } });
+    public static EntityBindingEntryWire[] DecodeEntityBindingEntries(byte[] data) => Read(data,r => { var count=ReadCount(r,MaxBindingEntries); var result=new EntityBindingEntryWire[count]; for(var i=0;i<count;i++) result[i]=new EntityBindingEntryWire(r.ReadUInt64(),r.ReadByte(),ReadString(r),r.ReadInt64(),ReadString(r),ReadString(r),r.ReadSingle(),r.ReadSingle(),r.ReadSingle()); return result; });
     public static byte[] Encode(WorldSnapshotApplied m)=>Write(w=>{w.Write(m.SnapshotId.ToByteArray());WriteString(w,m.Scene);WriteString(w,m.RegistryDigest);w.Write(m.ServerTick);w.Write(m.EntityCount);});
     public static WorldSnapshotApplied DecodeWorldSnapshotApplied(byte[] p)=>Read(p,r=>new WorldSnapshotApplied(new Guid(ReadExact(r,16)),ReadString(r),ReadString(r),r.ReadInt64(),r.ReadInt32()));
     public static byte[] Encode(EntityDeltaMessage m) => Write(w => { WriteString(w,m.Scene); w.Write(m.ServerTick); WriteEntities(w,m.Entities); WriteEntities(w,m.Despawns); });
@@ -76,8 +83,8 @@ public static class ReplicationProtocolCodec
     public static RescueProgressMessage DecodeRescueProgress(byte[] p)=>Read(p,r=>new RescueProgressMessage(r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadBoolean()));
     public static byte[] Encode(AllDownedMessage m)=>Array.Empty<byte>();
     public static AllDownedMessage DecodeAllDowned(byte[] p)=>Read(p,r=>new AllDownedMessage());
-    public static byte[] Encode(DropItemPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.Amount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);});
-    public static DropItemPayload DecodeDropItem(byte[] p)=>Read(p,r=>new DropItemPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle()));
+    public static byte[] Encode(DropItemPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.SlotIndex);w.Write(m.Amount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write((byte)m.Origin);w.Write(m.ContainerValue);w.Write(m.ContainerPersistent);});
+    public static DropItemPayload DecodeDropItem(byte[] p)=>Read(p,r=>new DropItemPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),(DropOriginWire)r.ReadByte(),r.ReadUInt64(),r.ReadBoolean()));
     public static byte[] Encode(ActionRequestMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write(m.PlayerId);w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.ExpectedRevision);WriteBytes(w,m.Payload,ActionPayloadMax);});
     public static ActionRequestMessage DecodeActionRequest(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var player=r.ReadInt32();var kind=ReadActionKind(r);return new ActionRequestMessage(id,player,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadBytes(r,ActionPayloadMax));});
     public static byte[] Encode(ActionResultMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.Revision);WriteBytes(w,m.Payload,ActionPayloadMax);});

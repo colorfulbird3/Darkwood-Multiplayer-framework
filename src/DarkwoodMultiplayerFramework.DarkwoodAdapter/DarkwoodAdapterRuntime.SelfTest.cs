@@ -28,12 +28,41 @@ public sealed partial class DarkwoodAdapterRuntime
         var result=new DarkwoodInventorySlot[slots.Length];for(var i=0;i<slots.Length;i++){var s=slots[i];result[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}return result;
     }
 
+    /// <summary>已做过漂移收敛重试的请求（防止无限重试循环）。</summary>
+    private readonly HashSet<Guid> resyncedDropRequests = new HashSet<Guid>();
+
     private void HandleActionRejected(ActionRejectedMessage rejected)
     {
-        if(!pendingActions.Remove(rejected.RequestId))return;
+        if(!pendingActions.TryGetValue(rejected.RequestId,out var request))return;
+        pendingActions.Remove(rejected.RequestId);
         log?.LogWarning($"主机拒绝联机操作 {rejected.RequestId}：{rejected.ErrorCode}，主机版本 {rejected.CurrentRevision}。");
         Player.Instance?.displayMessage("联机操作被主机拒绝："+rejected.ErrorCode);
+
+        // 背包漂移收敛：槽位类拒绝说明主机影子背包与客户端真实背包不一致
+        //（客户端本地合成/搜尸体等增益未走意图路径）。上报真实背包 → 主机重建影子 → 重试一次。
+        if (IsInventoryDriftError(rejected.ErrorCode) && !resyncedDropRequests.Contains(rejected.RequestId)
+            && (request.Kind == ActionKindWire.DropItem || request.Kind == ActionKindWire.ContainerTake
+                || request.Kind == ActionKindWire.ContainerPut || request.Kind == ActionKindWire.Pickup))
+        {
+            try
+            {
+                var state = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+                clientSession?.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(state));
+                pendingActions[rejected.RequestId] = request;
+                clientSession?.Send(ProtocolMessageType.ActionRequest, ReplicationProtocolCodec.Encode(request));
+                resyncedDropRequests.Add(rejected.RequestId);
+                log?.LogInfo($"背包漂移收敛：已上报真实背包并重试 {request.Kind}（{rejected.RequestId}）。");
+            }
+            catch (Exception error)
+            {
+                log?.LogWarning($"背包漂移收敛失败：{error.Message}");
+            }
+        }
     }
+
+    private static bool IsInventoryDriftError(string code) =>
+        code == "PLAYER_SLOT_EMPTY" || code == "INSUFFICIENT_AMOUNT" || code == "SLOT_OUT_OF_RANGE"
+        || code == "INVALID_AMOUNT" || code == "INVENTORY_FULL";
 
     private void SendInventory(int peer,InventoryStateMessage inventory)=>Queue(peer,ProtocolMessageType.InventoryState,ReplicationProtocolCodec.Encode(inventory));
 

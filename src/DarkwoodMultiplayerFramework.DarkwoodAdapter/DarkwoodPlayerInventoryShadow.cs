@@ -97,6 +97,15 @@ internal sealed class DarkwoodPlayerInventoryShadow
         var slot=source[slotIndex];slot.Amount-=amount;if(slot.Amount==0)Clear(slot);return true;
     }
 
+    /// <summary>客户端上报真实背包后整体重建（本地合成/搜尸体等漂移收敛）。</summary>
+    public void Rebuild(InventorySlotWire[] backpackWire, InventorySlotWire[] hotbarWire, Action<string>? warn = null)
+    {
+        backpack.Clear();
+        hotbar.Clear();
+        Restore(backpackWire, backpack, warn);
+        Restore(hotbarWire, hotbar, warn);
+    }
+
     /// <summary>Drains weapon durability after an accepted attack. A weapon reduced to zero breaks and is removed. Returns the remaining durability, or -1 when the slot is invalid.</summary>
     public float DrainDurability(bool fromHotbar,int slotIndex,float amount)
     {

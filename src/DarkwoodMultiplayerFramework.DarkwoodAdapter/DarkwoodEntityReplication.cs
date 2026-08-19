@@ -13,15 +13,45 @@ public sealed class DarkwoodEntityReplication
     public IEnumerable<KeyValuePair<EntityId,Component>> AllEntities=>entities;
     public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
     public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities){var component=pair.Value;if(component==null||component.gameObject==null){entities.Remove(pair.Key);bindings.Remove(pair.Key);last.Remove(pair.Key);targets.Remove(pair.Key);lastInventories.Remove(pair.Key);continue;}var state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);a.Add(state);last[pair.Key]=state;}return a.ToArray();}
-    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();foreach(var pair in entities){var state=DarkwoodEntityStateAdapter.Capture(pair.Key,pair.Value,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(!last.TryGetValue(pair.Key,out old)||Changed(old,state)){a.Add(state);last[pair.Key]=state;}}return a.ToArray();}
-    public void Apply(IEnumerable<EntityStateWire> states,bool immediate){ApplyingRemote=true;try{foreach(var s in states){var id=new EntityId(s.Value,s.Persistent);if(!entities.TryGetValue(id,out var component))continue;if(last.TryGetValue(id,out var old)&&s.Revision<old.Revision)continue;DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);targets[id]=s;last[id]=s;}}finally{ApplyingRemote=false;}}
+    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities){var state=DarkwoodEntityStateAdapter.Capture(pair.Key,pair.Value,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(!last.TryGetValue(pair.Key,out old)||Changed(old,state)){a.Add(state);last[pair.Key]=state;changed++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
+    public void Apply(IEnumerable<EntityStateWire> states,bool immediate){Apply(states,immediate,out _);}
+    public ApplyStats Apply(IEnumerable<EntityStateWire> states,bool immediate,out ApplyStats stats)
+    {
+        stats=new ApplyStats();ApplyingRemote=true;
+        try
+        {
+            foreach(var s in states)
+            {
+                stats.Received++;DeltaReceived++;
+                var id=new EntityId(s.Value,s.Persistent);
+                if(!entities.TryGetValue(id,out var component)){stats.RecordMissing(DescribeMissing(id,s),s.Kind);DeltaMissing++;continue;}
+                if(last.TryGetValue(id,out var old)&&s.Revision<old.Revision){stats.Stale++;continue;}
+                DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);
+                targets[id]=s;last[id]=s;stats.Applied++;DeltaApplied++;
+            }
+        }
+        finally{ApplyingRemote=false;}
+        return stats;
+    }
+    private string DescribeMissing(EntityId id,EntityStateWire s)
+    {
+        if(descriptorByEntity.TryGetValue(id,out var entry))return $"{id} kind={s.Kind} name={entry.ObjectName} {entry.Describe()}";
+        return $"{id} kind={s.Kind} (no binding descriptor)";
+    }
+    public long DeltaReceived {get;private set;}
+    public long DeltaApplied {get;private set;}
+    public long DeltaMissing {get;private set;}
+    public int LastDeltaChangedCount {get;private set;}
+    public int LastDeltaSentCount {get;private set;}
+    public void ResetDeltaDiagnostics(){DeltaReceived=0;DeltaApplied=0;DeltaMissing=0;}
+    private readonly Dictionary<EntityId,EntityBindingEntryWire> descriptorByEntity=new Dictionary<EntityId,EntityBindingEntryWire>();
     public void Interpolate(float factor){foreach(var pair in targets){if(!entities.TryGetValue(pair.Key,out var c)||!(c is Character))continue;var s=pair.Value;c.transform.position=Vector3.Lerp(c.transform.position,new Vector3(s.X,s.Y,s.Z),Mathf.Clamp01(factor));c.transform.rotation=Quaternion.Slerp(c.transform.rotation,new Quaternion(s.Qx,s.Qy,s.Qz,s.Qw),Mathf.Clamp01(factor));}}
     public void RestoreSimulation(){foreach(var c in frozen)if(c!=null){c.enabled=true;if(c.AIpath!=null)c.AIpath.enabled=true;}frozen.Clear();foreach(var c in deadCharacters)if(c!=null)c.enabled=true;deadCharacters.Clear();}
     public EntityStateWire[] Snapshot()=>CaptureAll();
     public InventoryStateMessage[] CaptureInventorySnapshot(){var list=new List<InventoryStateMessage>();foreach(var pair in entities){if(!(pair.Value is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;var message=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,++revision);list.Add(message);lastInventories[pair.Key]=message;}return list.ToArray();}
     public InventoryStateMessage[] CaptureInventoryDeltas(){var list=new List<InventoryStateMessage>();foreach(var pair in entities){if(!(pair.Value is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;var next=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,lastInventories.TryGetValue(pair.Key,out var previous)?previous.Revision+1:++revision);if(!lastInventories.TryGetValue(pair.Key,out previous)||!DarkwoodEntityStateAdapter.SlotsEqual(previous.Slots,next.Slots)){list.Add(next);lastInventories[pair.Key]=next;}}return list.ToArray();}
     public InventoryStateMessage[] CaptureInventories()=>CaptureInventorySnapshot();
-    public bool Apply(InventoryStateMessage message){var id=new EntityId(message.Value,message.Persistent);if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory)){if(!TryRebindInventory(id,message,out inventory))return false;}if(lastInventories.TryGetValue(id,out var previous)&&message.Revision<previous.Revision)return true;var slots=new DarkwoodInventorySlot[message.Slots.Length];for(var i=0;i<slots.Length;i++){var s=message.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}ApplyingRemote=true;try{DarkwoodInventoryAdapter.Apply(inventory,slots);lastInventories[id]=message;return true;}finally{ApplyingRemote=false;}}
+    public bool Apply(InventoryStateMessage message){var id=new EntityId(message.Value,message.Persistent);if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))return false;if(lastInventories.TryGetValue(id,out var previous)&&message.Revision<previous.Revision)return true;var slots=new DarkwoodInventorySlot[message.Slots.Length];for(var i=0;i<slots.Length;i++){var s=message.Slots[i];slots[i]=new DarkwoodInventorySlot{Type=s.Type,Amount=s.Amount,Durability=s.Durability,Quality=s.Quality,Recipe=s.Recipe};}ApplyingRemote=true;try{DarkwoodInventoryAdapter.Apply(inventory,slots);lastInventories[id]=message;return true;}finally{ApplyingRemote=false;}}
     public bool TryGetInventoryState(EntityId id,out InventoryStateMessage state){if(entities.TryGetValue(id,out var component)&&component is Inventory inventory){state=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision:0);return true;}state=default;return false;}
     public InventoryStateMessage CaptureAuthoritativeInventory(EntityId id){if(!entities.TryGetValue(id,out var component)||!(component is Inventory inventory))throw new InvalidOperationException("Inventory entity does not exist.");var message=DarkwoodEntityStateAdapter.CaptureInventory(id,inventory,lastInventories.TryGetValue(id,out var known)?known.Revision+1:++revision);lastInventories[id]=message;return message;}
 
@@ -82,20 +112,39 @@ public sealed class DarkwoodEntityReplication
     }
     public bool TryGetState(EntityId id,out EntityStateWire state){if(entities.TryGetValue(id,out var component)){state=DarkwoodEntityStateAdapter.Capture(id,component,last.TryGetValue(id,out var known)?known.Revision:0);return true;}state=default;return false;}
     public EntityStateWire MarkDespawned(EntityId id){if(!entities.TryGetValue(id,out var component))throw new InvalidOperationException("Entity does not exist.");var nextRevision=last.TryGetValue(id,out var known)?known.Revision+1:++revision;var state=DarkwoodEntityStateAdapter.Capture(id,component,nextRevision);component.gameObject.SetActive(false);state=new EntityStateWire(state.Value,state.Persistent,state.Kind,state.X,state.Y,state.Z,state.Qx,state.Qy,state.Qz,state.Qw,state.Health,state.StateA,state.StateB,(byte)(state.Flags&~16),state.Animation,state.Frame,nextRevision);last[id]=state;targets.Remove(id);return state;}
-    private bool TryRebindInventory(EntityId authoritativeId,InventoryStateMessage message,out Inventory inventory)
+    /// <summary>客户端：按主机权威描述符显式绑定本地组件（替代本地 hash 注册表）。
+    /// 绑定后 entities/bindings 的键即主机权威 EntityId；ActionRequest 经 TryGetId 自然使用权威 ID。</summary>
+    public void BindFromManifest(EntityBindingEntryWire[] entries, EntityBindingOutcome outcome, Component[] localCandidates)
     {
-        inventory=null!;EntityId localId=default;var best=float.MaxValue;
-        foreach(var pair in entities)
+        RestoreSimulation();
+        entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();descriptorByEntity.Clear();
+        foreach(var pair in outcome.Pairs)
         {
-            if(!(pair.Value is Inventory candidate)||!DarkwoodEntityStateAdapter.IsShared(candidate)||(int)candidate.invType!=message.InventoryType)continue;
-            if(message.Name.Length>0&&!string.Equals(candidate.name,message.Name,StringComparison.Ordinal))continue;
-            var p=candidate.transform.position;var dx=p.x-message.X;var dy=p.y-message.Y;var dz=p.z-message.Z;var distance=dx*dx+dy*dy+dz*dz;
-            if(distance<best){best=distance;inventory=candidate;localId=pair.Key;}
+            var entry=entries[pair.EntryIndex];
+            var component=localCandidates[pair.LocalIndex];
+            if(component==null||component.gameObject==null)continue;
+            var id=new EntityId(entry.EntityValue,true);
+            entities[id]=component;
+            bindings[id]=WorldEntityBinding.FromComponent(id,component);
+            descriptorByEntity[id]=entry;
         }
-        if(inventory==null||best>1f)return false;
-        if(!localId.Equals(authoritativeId)){entities.Remove(localId);last.Remove(localId);targets.Remove(localId);lastInventories.Remove(localId);entities[authoritativeId]=inventory;}
-        return true;
     }
+    /// <summary>客户端：绑定完成后冻结未匹配到任何权威 ID 的本地 Character（禁止静默本地模拟）。</summary>
+    public void FreezeUnboundCharacters(Component[] localCandidates)
+    {
+        foreach(var component in localCandidates)
+        {
+            if(!(component is Character character)||character is Player)continue;
+            if(!TryGetId(character,out _)&&frozen.Add(character)){character.enabled=false;if(character.AIpath!=null)character.AIpath.enabled=false;}
+        }
+    }
+    public int RegistryGeneration {get;private set;}
+    public int BoundEntityCount => entities.Count;
+    /// <summary>注册表代际换代：清空全部绑定与状态（收到新 generation manifest / 场景切换时）。</summary>
+    public void BeginNewGeneration(int generation){RegistryGeneration=generation;RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();descriptorByEntity.Clear();ResetDeltaDiagnostics();}
+    public bool TryGetDescriptor(EntityId id,out EntityBindingEntryWire entry)=>descriptorByEntity.TryGetValue(id,out entry);
+    /// <summary>枚举已绑定的权威描述符（主机快照缺失诊断用）。</summary>
+    public IEnumerable<EntityBindingEntryWire> BoundDescriptors=>descriptorByEntity.Values;
     /// <summary>Diagnostic: describes the client's best matching candidates for a failed snapshot inventory binding.</summary>
     public string DescribeNearestInventory(InventoryStateMessage message)
     {

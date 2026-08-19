@@ -19,16 +19,30 @@ public enum ActionKindWire : byte
     DeployItem = 11
 }
 
+/// <summary>Drop 来源：决定 Host 从哪个权威状态扣减物品。</summary>
+public enum DropOriginWire : byte
+{
+    /// <summary>玩家自己的背包/快捷栏槽位（Host 从权威影子背包读槽）。</summary>
+    PlayerSlot = 0,
+    /// <summary>手上物品来自容器（共享容器/尸体/商人）——槽位属于来源容器，Host 从权威容器扣减。</summary>
+    SharedContainer = 1
+}
+
 /// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>
 public readonly struct DropItemPayload
 {
-    public DropItemPayload(bool fromHotbar,int slotIndex,int amount,float x,float y,float z,float qx,float qy,float qz,float qw)
-    {FromHotbar=fromHotbar;SlotIndex=slotIndex;Amount=amount;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;}
+    public DropItemPayload(bool fromHotbar,int slotIndex,int amount,float x,float y,float z,float qx,float qy,float qz,float qw,
+        DropOriginWire origin = DropOriginWire.PlayerSlot, ulong containerValue = 0, bool containerPersistent = false)
+    {FromHotbar=fromHotbar;SlotIndex=slotIndex;Amount=amount;X=x;Y=y;Z=z;Qx=qx;Qy=qy;Qz=qz;Qw=qw;Origin=origin;ContainerValue=containerValue;ContainerPersistent=containerPersistent;}
     public bool FromHotbar { get; }
     public int SlotIndex { get; }
     public int Amount { get; }
     public float X { get; } public float Y { get; } public float Z { get; }
     public float Qx { get; } public float Qy { get; } public float Qz { get; } public float Qw { get; }
+    public DropOriginWire Origin { get; }
+    /// <summary>SharedContainer 来源：来源容器实体 ID（主机权威扣减目标）。</summary>
+    public ulong ContainerValue { get; }
+    public bool ContainerPersistent { get; }
 }
 
 public readonly struct ActionRequestMessage

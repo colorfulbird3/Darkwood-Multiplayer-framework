@@ -132,10 +132,18 @@ public sealed partial class DarkwoodAdapterRuntime
         private readonly DarkwoodAdapterRuntime runtime;
         public HostInventoryHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
-        public bool Handles(ProtocolMessageType type) => type == ProtocolMessageType.InventoryState && runtime.IsHost;
+        public bool Handles(ProtocolMessageType type) => runtime.IsHost && (type == ProtocolMessageType.InventoryState || type == ProtocolMessageType.PlayerInventoryState);
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
+            if (envelope.MessageType == ProtocolMessageType.PlayerInventoryState)
+            {
+                // 客户端真实背包上报（漂移收敛）：重建该玩家的权威影子背包
+                var state = ReplicationProtocolCodec.DecodePlayerInventoryState(envelope.Payload);
+                if (runtime.Players.RebuildInventory(peer.PeerId, state))
+                    runtime.log?.LogInfo($"主机已按客户端真实背包重建影子：玩家 {peer.PeerId}。");
+                return;
+            }
             var inventory = ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);
             var id = new EntityId(inventory.Value, inventory.Persistent);
             if (runtime.replication.TryGetInventoryState(id, out var current) && !ContainerRevisionGate.TryAdvance(inventory.Revision, current.Revision, out _))
@@ -197,11 +205,24 @@ public sealed partial class DarkwoodAdapterRuntime
         public ClientSnapshotHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
         public bool Handles(ProtocolMessageType type) =>
-            type == ProtocolMessageType.WorldSnapshotManifest || type == ProtocolMessageType.WorldSnapshotChunk;
+            type == ProtocolMessageType.WorldSnapshotManifest || type == ProtocolMessageType.WorldSnapshotChunk
+            || type == ProtocolMessageType.EntityBindingManifest || type == ProtocolMessageType.EntityBindingChunk;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
-            if (envelope.MessageType == ProtocolMessageType.WorldSnapshotManifest)
+            if (envelope.MessageType == ProtocolMessageType.EntityBindingManifest)
+            {
+                var bindingManifest = ReplicationProtocolCodec.DecodeEntityBindingManifest(envelope.Payload);
+                if (!string.Equals(bindingManifest.Scene, runtime.CurrentScene, StringComparison.Ordinal))
+                {
+                    runtime.FailClient("BINDING_SCENE_MISMATCH", new InvalidDataException($"绑定清单场景不一致：host={bindingManifest.Scene}，client={runtime.CurrentScene}。"));
+                    return;
+                }
+                runtime.BeginBindingReceive(bindingManifest);
+            }
+            else if (envelope.MessageType == ProtocolMessageType.EntityBindingChunk)
+                runtime.ReceiveBindingChunk(ReplicationProtocolCodec.DecodeEntityBindingChunk(envelope.Payload));
+            else if (envelope.MessageType == ProtocolMessageType.WorldSnapshotManifest)
             {
                 var manifest = ReplicationProtocolCodec.DecodeWorldSnapshotManifest(envelope.Payload);
                 runtime.SaveState.BeginSnapshotReceive(manifest);

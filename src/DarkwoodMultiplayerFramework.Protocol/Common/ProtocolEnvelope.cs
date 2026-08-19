@@ -15,6 +15,8 @@ public enum ProtocolMessageType : ushort
     WorldSnapshotManifest = 20,
     WorldSnapshotChunk = 21,
     WorldSnapshotApplied = 22,
+    EntityBindingManifest = 23,
+    EntityBindingChunk = 24,
     EntityDelta = 30,
     EntityDespawn = 31,
     InventoryState = 32,

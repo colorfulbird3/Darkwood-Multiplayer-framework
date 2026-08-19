@@ -87,6 +87,15 @@ public sealed class DarkwoodPlayerService
     internal void SetInventory(int peer, DarkwoodPlayerInventoryShadow inventory) => remoteInventories[peer] = inventory;
     public bool RemoveInventory(int peer) => remoteInventories.Remove(peer);
 
+    /// <summary>客户端上报真实背包后重建影子（本地合成/搜尸体等漂移收敛）。</summary>
+    public bool RebuildInventory(int peer, PlayerInventoryStatePayload state)
+    {
+        if (!remoteInventories.TryGetValue(peer, out var shadow)) return false;
+        shadow.Rebuild(state.Backpack, state.Hotbar, message => runtime.log?.LogWarning(message));
+        runtime.log?.LogInfo($"Peer {peer} inventory rebuilt from client report: {state.Backpack.Length} backpack slots, {state.Hotbar.Length} hotbar slots.");
+        return true;
+    }
+
     public bool TryGetGuestKey(int peer, out string key) => peerGuestKeys.TryGetValue(peer, out key!);
     public void SetGuestKey(int peer, string key) => peerGuestKeys[peer] = key;
     public bool TryGetGuestRecord(int peer, out GuestProfileRecord record) => peerGuestRecords.TryGetValue(peer, out record);

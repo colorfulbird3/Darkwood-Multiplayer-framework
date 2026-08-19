@@ -24,7 +24,7 @@ internal static class DarkwoodDropPatch
             return true;
 
         var payload = BuildPayload(_item);
-        if (payload.SlotIndex < 0)
+        if (payload.SlotIndex < 0 && payload.Origin == DropOriginWire.PlayerSlot)
             return true;
 
         // 原版 spawnDroppedInvItem 被拦截后不会执行 pickedUpItem 复位（80885-80892），
@@ -62,11 +62,36 @@ internal static class DarkwoodDropPatch
     {
         var player = Player.Instance;
         var slot = item.slot;
-        var fromHotbar = slot?.inventory != null && slot.inventory.invType == Inventory.InvType.hotbar;
-        var slotIndex = slot?.inventory != null ? slot.inventory.slots.IndexOf(slot) : -1;
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        var fromHotbar = false;
+        var slotIndex = -1;
+        var origin = DropOriginWire.PlayerSlot;
+        ulong containerValue = 0;
+        var containerPersistent = false;
+        if (slot != null && slot.inventory != null)
+        {
+            var invType = slot.inventory.invType;
+            if (invType == Inventory.InvType.hotbar || invType == Inventory.InvType.playerInv)
+            {
+                fromHotbar = invType == Inventory.InvType.hotbar;
+                slotIndex = slot.inventory.slots.IndexOf(slot);
+            }
+            else
+            {
+                // 手上物品的来源是容器（共享容器/尸体/商人等）：槽位属于来源容器，
+                // 不能按玩家背包槽位解读——带上容器 ID 让 Host 从权威容器扣减。
+                origin = DropOriginWire.SharedContainer;
+                slotIndex = slot.inventory.slots.IndexOf(slot);
+                if (runtime != null && runtime.TryGetEntityId(slot.inventory, out var containerId))
+                {
+                    containerValue = containerId.Value;
+                    containerPersistent = containerId.IsPersistent;
+                }
+            }
+        }
         var amount = item.amount;
         var pos = player != null ? player._transform.position : Vector3.zero;
         var rot = player != null ? player._transform.rotation : Quaternion.identity;
-        return new DropItemPayload(fromHotbar, slotIndex, amount, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w);
+        return new DropItemPayload(fromHotbar, slotIndex, amount, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w, origin, containerValue, containerPersistent);
     }
 }

@@ -30,6 +30,42 @@ public sealed class DarkwoodEntityScanner
             }
         }
     }
+    /// <summary>客户端本地候选描述符（无网络身份）。匹配由 EntityBindingMatcher 完成。
+    /// components 与返回数组按同一顺序对齐（供绑定使用）。</summary>
+    public DarkwoodMultiplayerFramework.Protocol.LocalEntityCandidate[] BuildLocalCandidates(out Component[] components)
+    {
+        var list = new System.Collections.Generic.List<DarkwoodMultiplayerFramework.Protocol.LocalEntityCandidate>();
+        var comps = new System.Collections.Generic.List<Component>();
+        foreach (var c in ScanScene())
+        {
+            var saveable = c.GetComponent<SaveableObject>() ?? c.GetComponentInParent<SaveableObject>();
+            var uid = saveable != null && saveable.uniqueId > 0 ? saveable.uniqueId : 0L;
+            var path = saveable != null ? RelativePath(saveable.transform, c.transform) : string.Empty;
+            var p = c.transform.position;
+            list.Add(new DarkwoodMultiplayerFramework.Protocol.LocalEntityCandidate(c.GetType().Name, uid, path, c.name, p.x, p.y, p.z));
+            comps.Add(c);
+        }
+        components = comps.ToArray();
+        return list.ToArray();
+    }
+
+    /// <summary>主机权威描述符（构建 BindingManifest 用）。</summary>
+    public DarkwoodMultiplayerFramework.Protocol.EntityBindingEntryWire[] BuildAuthoritativeDescriptors(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<DarkwoodMultiplayerFramework.Core.EntityId, Component>> entities)
+    {
+        var list = new System.Collections.Generic.List<DarkwoodMultiplayerFramework.Protocol.EntityBindingEntryWire>();
+        foreach (var pair in entities)
+        {
+            var component = pair.Value;
+            if (component == null || component.gameObject == null) continue;
+            var saveable = component.GetComponent<SaveableObject>() ?? component.GetComponentInParent<SaveableObject>();
+            var uid = saveable != null && saveable.uniqueId > 0 ? saveable.uniqueId : 0L;
+            var path = saveable != null ? RelativePath(saveable.transform, component.transform) : string.Empty;
+            var p = component.transform.position;
+            list.Add(new DarkwoodMultiplayerFramework.Protocol.EntityBindingEntryWire(pair.Key.Value, DarkwoodEntityStateAdapter.Kind(component), component.GetType().Name, uid, path, component.name, p.x, p.y, p.z));
+        }
+        return list.ToArray();
+    }
+
     public EntityId ToPersistentId(Component component)
     {
         var saveable = component.GetComponent<SaveableObject>() ?? component.GetComponentInParent<SaveableObject>();

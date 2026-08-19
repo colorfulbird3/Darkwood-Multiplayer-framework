@@ -32,6 +32,10 @@ var tests = new (string Name, Action Run)[]
     ("pickup result roundtrip", PickupResultRoundtrip),
     ("container take roundtrip", ContainerTakeRoundtrip),
     ("container put roundtrip", ContainerPutRoundtrip),
+    ("drop payload roundtrip", DropPayloadRoundtrip),
+    ("drop container origin roundtrip", DropContainerOriginRoundtrip),
+    ("binding manifest codec roundtrip", BindingManifestCodecRoundtrip),
+    ("binding entries codec roundtrip", BindingEntriesCodecRoundtrip),
     ("player inventory state roundtrip", PlayerInventoryStateRoundtrip),
     ("action empty request id", ActionEmptyRequestId),
     ("action unknown kind", ActionUnknownKind),
@@ -183,6 +187,24 @@ static void ContainerPutRoundtrip()
 {
     var decoded=ReplicationProtocolCodec.DecodeContainerPut(ReplicationProtocolCodec.Encode(new ContainerPutPayload(true,4,9,-1)));Require(decoded.Hotbar&&decoded.SlotIndex==4&&decoded.DestinationSlotIndex==9&&decoded.Amount==-1);
     var request=ReplicationProtocolCodec.DecodeActionRequest(ReplicationProtocolCodec.Encode(new ActionRequestMessage(Guid.NewGuid(),2,ActionKindWire.ContainerPut,101,true,6,ReplicationProtocolCodec.Encode(new ContainerPutPayload(false,2,5,1)))));var put=ReplicationProtocolCodec.DecodeContainerPut(request.Payload);Require(request.Kind==ActionKindWire.ContainerPut&&!put.Hotbar&&put.SlotIndex==2&&put.DestinationSlotIndex==5&&put.Amount==1);
+}
+static void DropPayloadRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeDropItem(ReplicationProtocolCodec.Encode(new DropItemPayload(true,3,2,1f,2f,3f,0f,0f,0f,1f)));Require(decoded.FromHotbar&&decoded.SlotIndex==3&&decoded.Amount==2&&decoded.Origin==DropOriginWire.PlayerSlot&&decoded.ContainerValue==0&&!decoded.ContainerPersistent);
+}
+static void DropContainerOriginRoundtrip()
+{
+    var decoded=ReplicationProtocolCodec.DecodeDropItem(ReplicationProtocolCodec.Encode(new DropItemPayload(false,7,1,0f,0f,0f,0f,0f,0f,1f,DropOriginWire.SharedContainer,12345,true)));Require(!decoded.FromHotbar&&decoded.SlotIndex==7&&decoded.Origin==DropOriginWire.SharedContainer&&decoded.ContainerValue==12345&&decoded.ContainerPersistent);
+}
+static void BindingManifestCodecRoundtrip()
+{
+    var m=new EntityBindingManifest(Guid.NewGuid(),9999,5,new byte[]{9,8,7},"Darkwood",3,77);
+    var d=ReplicationProtocolCodec.DecodeEntityBindingManifest(ReplicationProtocolCodec.Encode(m));Require(d.TotalBytes==9999&&d.ChunkCount==5&&d.Generation==3&&d.EntityCount==77&&d.Scene=="Darkwood");
+}
+static void BindingEntriesCodecRoundtrip()
+{
+    var entries=new[]{new EntityBindingEntryWire(100,EntityKindWire.Character,"Character",42,"Root/A#0","Wolf",1f,2f,3f),new EntityBindingEntryWire(101,EntityKindWire.Inventory,"Inventory",0,"","Chest",4f,0f,4f)};
+    var d=ReplicationProtocolCodec.DecodeEntityBindingEntries(ReplicationProtocolCodec.Encode(entries));Require(d.Length==2&&d[0].SaveableUid==42&&d[0].ComponentType=="Character"&&d[0].RelativePath=="Root/A#0"&&d[0].ObjectName=="Wolf"&&d[0].X==1f&&d[1].SaveableUid==0&&d[1].ObjectName=="Chest");
 }
 static void PlayerInventoryStateRoundtrip()
 {

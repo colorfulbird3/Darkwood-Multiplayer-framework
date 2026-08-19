@@ -144,19 +144,16 @@ public sealed partial class DarkwoodAdapterRuntime
     private IEnumerator WaitForRegistryThenReady()
     {
         var deadline=Time.realtimeSinceStartup+90f;
-        // 世界在存档加载后仍可能流式生成：Player.Instance 出现得很早，但场景对象
-        // 会继续分帧实例化。反复强制重建注册表，直到实体数连续 3 次稳定，
-        // 确保客户端注册表覆盖主机世界的完整对象集（否则快照库存无法绑定）。
+        // 世界在存档加载后仍可能流式生成：等待本地候选集合稳定（连续 3 次一致），
+        // 之后收到的 BindingManifest 才有完整的本地对象可绑定。
         var previousCount=-1;
         var stableChecks=0;
+        var candidates=Array.Empty<LocalEntityCandidate>();
         while(Time.realtimeSinceStartup<deadline)
         {
             if(Player.Instance==null){yield return null;continue;}
-            registryDirty=true;
-            yield return null;
-            if(registry==null){yield return null;continue;}
-            var count=registry.Count;
-            if(count==previousCount)
+            candidates=scanner.BuildLocalCandidates(out _);
+            if(candidates.Length==previousCount)
             {
                 stableChecks++;
                 if(stableChecks>=3)break;
@@ -164,19 +161,34 @@ public sealed partial class DarkwoodAdapterRuntime
             else
             {
                 stableChecks=0;
-                previousCount=count;
+                previousCount=candidates.Length;
             }
             yield return new WaitForSeconds(1f);
         }
         try
         {
-            if(Player.Instance==null||registry==null)throw new InvalidOperationException("实体注册表在 90 秒内未就绪。");
-            if(stableChecks<3)log?.LogWarning($"注册表在超时前未能稳定（最后实体数 {registry.Count}），继续尝试就绪。");
-            log?.LogInfo($"客户端注册表已稳定：{registry.Count} 个实体，摘要 {RegistryDigest}。");
+            if(Player.Instance==null)throw new InvalidOperationException("本地场景在 90 秒内未就绪。");
+            registryDirty=false; // 客户端场景稳定：清 dirty 否则握手永远被拦（客户端不再重建注册表）
+            clientCandidatesReady=true;
+            clientCandidatesCount=candidates.Length;
+            clientCandidateDigest=CandidateDigest(candidates);
+            if(stableChecks<3)log?.LogWarning($"本地候选在超时前未能稳定（最后 {candidates.Length} 个），继续尝试就绪。");
+            log?.LogInfo($"客户端本地候选已稳定：{candidates.Length} 个实体，摘要 {clientCandidateDigest}。");
             SaveState.MarkRegistryStabilized();
             TrySendClientRegistryReady();
         }
         catch(Exception error){FailClient("REGISTRY_BUILD_FAILED",error);}
+    }
+
+    /// <summary>客户端候选摘要（诊断用，不再作为就绪门槛与主机比对）。</summary>
+    private static string CandidateDigest(LocalEntityCandidate[] candidates)
+    {
+        var items=new List<string>(candidates.Length);
+        foreach(var c in candidates)items.Add(c.ComponentType+":"+c.SaveableUid);
+        items.Sort(StringComparer.Ordinal);
+        ulong hash=14695981039346656037UL;
+        foreach(var s in items)foreach(var b in System.Text.Encoding.UTF8.GetBytes(s)){hash^=b;hash*=1099511628211UL;}
+        return hash.ToString("X16").Substring(0,16);
     }
 
     private void PrepareSnapshot(int peer,ReadyMessage ready)
@@ -191,8 +203,17 @@ public sealed partial class DarkwoodAdapterRuntime
             log?.LogInfo($"Peer {peer} handshake is valid; delaying world snapshot until shared-container preparation completes.");
             return;
         }
-        if(!string.Equals(ready.RegistryDigest,RegistryDigest,StringComparison.Ordinal))log?.LogWarning($"Peer {peer} registry digest differs (host={RegistryDigest}, client={ready.RegistryDigest}); sending authoritative snapshot.");
-        if(SaveState.TryGetSentSnapshot(peer,out _))return;var entities=replication.Snapshot();var inventories=replication.CaptureInventorySnapshot();var state=DarkwoodWorldSnapshotCodec.Encode(CurrentScene,RegistryDigest,serverTick,entities,inventories);var id=Guid.NewGuid();SaveState.SetSentSnapshot(peer,id);var chunks=ChunkTransferAssembler.Split(state,64*1024);Queue(peer,ProtocolMessageType.WorldSnapshotManifest,ReplicationProtocolCodec.Encode(new WorldSnapshotManifest(id,state.LongLength,chunks.Length,ChunkTransferAssembler.Hash(state),CurrentScene,RegistryDigest,serverTick)));for(var i=0;i<chunks.Length;i++)Queue(peer,ProtocolMessageType.WorldSnapshotChunk,ReplicationProtocolCodec.Encode(new WorldSnapshotChunk(id,i,chunks.Length,chunks[i],ChunkTransferAssembler.Hash(chunks[i]))),"世界快照",i,chunks.Length);log?.LogInfo($"已为玩家 {peer} 准备世界快照 {id}：{entities.Length} 个实体，{inventories.Length} 个库存，{state.Length} 字节，注册表 {RegistryDigest}。");
+        if(!string.Equals(ready.RegistryDigest,RegistryDigest,StringComparison.Ordinal))log?.LogWarning($"[SYNC] Peer {peer} local candidate digest differs (host={RegistryDigest}, client={ready.RegistryDigest}); sending authoritative binding manifest + snapshot.");
+        if(SaveState.TryGetSentSnapshot(peer,out _))return;
+        // 1) Entity Binding Manifest（权威描述符，分块）——客户端必须先完成绑定才能应用快照
+        if (authoritativeDescriptors.Length == 0) { log?.LogError($"无法为玩家 {peer} 发送绑定清单：主机权威描述符为空（注册表未构建）。"); return; }
+        var transferId = bindingTransferId;
+        var chunks = ChunkTransferAssembler.Split(bindingManifestBytes, 64 * 1024);
+        Queue(peer, ProtocolMessageType.EntityBindingManifest, ReplicationProtocolCodec.Encode(new EntityBindingManifest(transferId, bindingManifestBytes.LongLength, chunks.Length, ChunkTransferAssembler.Hash(bindingManifestBytes), CurrentScene, registryGeneration, authoritativeDescriptors.Length)));
+        for (var i = 0; i < chunks.Length; i++) Queue(peer, ProtocolMessageType.EntityBindingChunk, ReplicationProtocolCodec.Encode(new EntityBindingChunk(transferId, i, chunks.Length, chunks[i], ChunkTransferAssembler.Hash(chunks[i]))), "实体绑定清单", i, chunks.Length);
+        log?.LogInfo($"已为玩家 {peer} 发送实体绑定清单（第 {registryGeneration} 代）：{authoritativeDescriptors.Length} 个描述符，{bindingManifestBytes.Length} 字节，{chunks.Length} 块。");
+        // 2) 世界快照（绑定完成后客户端才会应用）
+        var entities=replication.Snapshot();var inventories=replication.CaptureInventorySnapshot();var state=DarkwoodWorldSnapshotCodec.Encode(CurrentScene,RegistryDigest,serverTick,entities,inventories);var id=Guid.NewGuid();SaveState.SetSentSnapshot(peer,id);var snapshotChunks=ChunkTransferAssembler.Split(state,64*1024);Queue(peer,ProtocolMessageType.WorldSnapshotManifest,ReplicationProtocolCodec.Encode(new WorldSnapshotManifest(id,state.LongLength,snapshotChunks.Length,ChunkTransferAssembler.Hash(state),CurrentScene,RegistryDigest,serverTick)));for(var i=0;i<snapshotChunks.Length;i++)Queue(peer,ProtocolMessageType.WorldSnapshotChunk,ReplicationProtocolCodec.Encode(new WorldSnapshotChunk(id,i,snapshotChunks.Length,snapshotChunks[i],ChunkTransferAssembler.Hash(snapshotChunks[i]))),"世界快照",i,snapshotChunks.Length);log?.LogInfo($"已为玩家 {peer} 准备世界快照 {id}：{entities.Length} 个实体，{inventories.Length} 个库存，{state.Length} 字节，注册表 {RegistryDigest}。");
     }
 
     private void EnsureHostExistingLootScaled()
@@ -268,7 +289,66 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!SaveState.AcceptSnapshotChunk(chunk))return;
         var bytes=SaveState.FinishSnapshotReceive();
         var manifest=SaveState.PendingSnapshotManifest;
-        var snapshot=DarkwoodWorldSnapshotCodec.Decode(bytes);if(snapshot.Scene!=CurrentScene||snapshot.Scene!=manifest.Scene)throw new InvalidDataException("世界快照场景不一致。");if(snapshot.RegistryDigest!=manifest.RegistryDigest)throw new InvalidDataException($"快照摘要不一致：payload={snapshot.RegistryDigest}，manifest={manifest.RegistryDigest}。");if(snapshot.ServerTick!=manifest.ServerTick)throw new InvalidDataException("世界快照 tick 不一致。");replication.Apply(snapshot.Entities,true);var appliedInventories=0;var failedInventories=0;var loggedFailures=0;var skippedDeathDrop=0;foreach(var inventory in snapshot.Inventories){if(replication.Apply(inventory))appliedInventories++;else if(inventory.InventoryType==(int)Inventory.InvType.deathDrop){skippedDeathDrop++;}else{failedInventories++;missingEntities.Add(new EntityId(inventory.Value,inventory.Persistent));if(loggedFailures<8){loggedFailures++;log?.LogError($"共享容器快照无法绑定：ID={inventory.Value:X16}，名称={inventory.Name}，位置=({inventory.X:F1},{inventory.Y:F1},{inventory.Z:F1})，类型={inventory.InventoryType}。客户端候选：{replication.DescribeNearestInventory(inventory)}");}}}if(failedInventories>0){if(!DarkwoodMultiplayerFramework.Core.SnapshotTolerance.Tolerate(failedInventories,snapshot.Inventories.Length))throw new InvalidDataException($"有 {failedInventories} 个共享容器无法应用主机权威快照（客户端共享容器 {replication.SharedInventoryCount} 个），已阻止客户端误进入就绪状态。");log?.LogWarning($"FIX-007：{failedInventories}/{snapshot.Inventories.Length} 个共享容器在客户端世界中缺失（主机运行时生成物，如乌鸦/动物尸体），已跳过并继续就绪；等待 0.8.8 Spawn 生命周期补发。");}if(skippedDeathDrop>0)log?.LogWarning($"已跳过 {skippedDeathDrop} 个死亡掉落容器（跨端独立生成，ID 不一致属常态，不阻断就绪）。");SaveState.RecordSnapshotApplied(new WorldSnapshotApplied(manifest.SnapshotId,snapshot.Scene,snapshot.RegistryDigest,snapshot.ServerTick,snapshot.Entities.Length));SendSnapshotAcknowledgement();log?.LogInfo($"世界快照应用完成：{snapshot.Entities.Length} 个实体，共享容器 {appliedInventories}/{snapshot.Inventories.Length}，tick {snapshot.ServerTick}；等待主机确认。");
+        var snapshot=DarkwoodWorldSnapshotCodec.Decode(bytes);if(snapshot.Scene!=CurrentScene||snapshot.Scene!=manifest.Scene)throw new InvalidDataException("世界快照场景不一致。");if(snapshot.RegistryDigest!=manifest.RegistryDigest)throw new InvalidDataException($"快照摘要不一致：payload={snapshot.RegistryDigest}，manifest={manifest.RegistryDigest}。");if(snapshot.ServerTick!=manifest.ServerTick)throw new InvalidDataException("世界快照 tick 不一致。");var stats = replication.Apply(snapshot.Entities, true, out _);
+        // Ready gate 1/2：硬 critical（Character）unmatched 一律禁止 Ready
+        var gate = EntityBindingGate.Evaluate(stats, EntityKindWire.Character);
+        if (gate != null)
+        {
+            var details = string.Join(" | ", stats.MissingDetails.ToArray());
+            FailClient("ENTITY_BINDING_INCOMPLETE", new InvalidDataException($"{gate} missing 前 20：{details}"));
+            return;
+        }
+        // Ready gate 2/2：非 Character 关键类别（Door/Window/Item/Shared Inventory）missing 超容差 → 禁止 Ready
+        var criticalMissing = EntityBindingGate.CountMissing(stats, EntityKindWire.Door, EntityKindWire.Window, EntityKindWire.Item, EntityKindWire.Inventory);
+        if (criticalMissing > 0 && !SnapshotTolerance.Tolerate(criticalMissing, stats.Received))
+        {
+            var details2 = string.Join(" | ", stats.MissingDetails.ToArray());
+            FailClient("ENTITY_BINDING_INCOMPLETE", new InvalidDataException($"关键实体类别（Door/Window/Item/Inventory）绑定缺失 {criticalMissing}/{stats.Received} 个，超过容差，禁止进入就绪。missing 前 20：{details2}"));
+            return;
+        }
+var appliedInventories=0;var failedInventories=0;var loggedFailures=0;var skippedDeathDrop=0;foreach(var inventory in snapshot.Inventories){if(replication.Apply(inventory))appliedInventories++;else if(inventory.InventoryType==(int)Inventory.InvType.deathDrop){skippedDeathDrop++;}else{failedInventories++;missingEntities.Add(new EntityId(inventory.Value,inventory.Persistent));if(loggedFailures<8){loggedFailures++;log?.LogError($"共享容器快照无法绑定：ID={inventory.Value:X16}，名称={inventory.Name}，位置=({inventory.X:F1},{inventory.Y:F1},{inventory.Z:F1})，类型={inventory.InventoryType}。客户端候选：{replication.DescribeNearestInventory(inventory)}");}}}if(failedInventories>0){if(!DarkwoodMultiplayerFramework.Core.SnapshotTolerance.Tolerate(failedInventories,snapshot.Inventories.Length))throw new InvalidDataException($"有 {failedInventories} 个共享容器无法应用主机权威快照（客户端共享容器 {replication.SharedInventoryCount} 个），已阻止客户端误进入就绪状态。");log?.LogWarning($"FIX-007：{failedInventories}/{snapshot.Inventories.Length} 个共享容器在客户端世界中缺失（主机运行时生成物，如乌鸦/动物尸体），已跳过并继续就绪；等待 0.8.8 Spawn 生命周期补发。");}if(skippedDeathDrop>0)log?.LogWarning($"已跳过 {skippedDeathDrop} 个死亡掉落容器（跨端独立生成，ID 不一致属常态，不阻断就绪）。");if (stats.Missing > 0) log?.LogWarning($"[SYNC] 快照 missing 前 20：{string.Join(" | ", stats.MissingDetails.ToArray())}");
+        SaveState.RecordSnapshotApplied(new WorldSnapshotApplied(manifest.SnapshotId,snapshot.Scene,snapshot.RegistryDigest,snapshot.ServerTick,stats.Applied));
+        SendSnapshotAcknowledgement();
+        log?.LogInfo($"世界快照应用完成：received={stats.Received} applied={stats.Applied} missing={stats.Missing} stale={stats.Stale}，共享容器 {appliedInventories}/{snapshot.Inventories.Length}，tick {snapshot.ServerTick}；等待主机确认。");
+    }
+
+    private ChunkTransferAssembler? bindingAssembler;
+    private EntityBindingManifest pendingBindingManifest;
+
+    internal void BeginBindingReceive(EntityBindingManifest manifest)
+    {
+        bindingAssembler = new ChunkTransferAssembler(manifest.TransferId, manifest.TotalBytes, manifest.ChunkCount, manifest.Sha256);
+        pendingBindingManifest = manifest;
+        log?.LogInfo($"开始接收实体绑定清单（第 {manifest.Generation} 代）：{manifest.EntityCount} 个描述符，{manifest.TotalBytes} 字节，{manifest.ChunkCount} 块。");
+    }
+
+    internal void ReceiveBindingChunk(EntityBindingChunk chunk)
+    {
+        if (bindingAssembler == null) return;
+        bindingAssembler.Add(chunk.TransferId, chunk.Index, chunk.Total, chunk.Data, chunk.Hash);
+        if (!bindingAssembler.IsComplete) return;
+        var bytes = bindingAssembler.Build(); // SHA-256 全量校验
+        bindingAssembler = null;
+        var entries = ReplicationProtocolCodec.DecodeEntityBindingEntries(bytes);
+        if (entries.Length != pendingBindingManifest.EntityCount)
+        {
+            FailClient("BINDING_COUNT_MISMATCH", new InvalidDataException($"绑定清单实体数不一致：manifest={pendingBindingManifest.EntityCount}，实际={entries.Length}。"));
+            return;
+        }
+        CompleteEntityBinding(entries, pendingBindingManifest.Generation);
+    }
+
+    private void CompleteEntityBinding(EntityBindingEntryWire[] entries, int generation)
+    {
+        var candidates = scanner.BuildLocalCandidates(out var localComponents);
+        var outcome = new EntityBindingMatcher().Match(entries, candidates);
+        if (generation != replication.RegistryGeneration) replication.BeginNewGeneration(generation); // 代际换代：旧映射失效
+        replication.BindFromManifest(entries, outcome, localComponents);
+        replication.FreezeUnboundCharacters(localComponents); // 未绑定 Character 禁止静默本地模拟
+        lastBindingGeneration = generation;
+        log?.LogInfo($"[SYNC] binding host={entries.Length} bound={outcome.Bound} missing={outcome.Missing.Count} ambiguous={outcome.Ambiguous.Count} generation={generation}");
+        if (outcome.Missing.Count > 0) log?.LogWarning($"[SYNC] 绑定 missing 前 20：{string.Join(" | ", outcome.MissingDetails.ToArray())}");
+        if (outcome.Ambiguous.Count > 0) log?.LogWarning($"[SYNC] 绑定 ambiguous 前 20：{string.Join(" | ", outcome.AmbiguousDetails.ToArray())}");
     }
 
     private void RetrySnapshotAcknowledgement()

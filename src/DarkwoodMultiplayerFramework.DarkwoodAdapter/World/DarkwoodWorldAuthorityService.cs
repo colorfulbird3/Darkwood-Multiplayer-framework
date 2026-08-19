@@ -28,8 +28,22 @@ public sealed class DarkwoodWorldAuthorityService
     public ActionResultMessage? DropItem(int peer, DropItemPayload payload, ActionRequestMessage request, Action<int, ActionRequestMessage, string, ulong> reject)
     {
         InvItemClass item;
-        System.Func<InvSlot, InvSlot>? hostSlot = null;
-        if (peer == 0)
+        Inventory? sourceContainer = null;
+        var originContainer = default(EntityId);
+        if (payload.Origin == DropOriginWire.SharedContainer)
+        {
+            // 手上物品来自容器（共享容器/尸体/商人）：从权威容器扣减，影子背包不动。
+            if (payload.ContainerValue == 0) { reject(peer, request, "CONTAINER_NOT_FOUND", 0); return null; }
+            originContainer = new EntityId(payload.ContainerValue, payload.ContainerPersistent);
+            if (!runtime.Replication.TryGetInventory(originContainer, out sourceContainer)) { reject(peer, request, "CONTAINER_NOT_FOUND", 0); return null; }
+            if (payload.SlotIndex < 0 || payload.SlotIndex >= sourceContainer.slots.Count) { reject(peer, request, "SLOT_OUT_OF_RANGE", 0); return null; }
+            var sourceSlot = sourceContainer.slots[payload.SlotIndex];
+            if (sourceSlot == null || InvItemClass.isNull(sourceSlot.invItem)) { reject(peer, request, "SLOT_EMPTY", 0); return null; }
+            if (sourceSlot.invItem.amount < payload.Amount) { reject(peer, request, "INSUFFICIENT_AMOUNT", 0); return null; }
+            item = new InvItemClass(sourceSlot.invItem);
+            item.amount = payload.Amount; // 只拿请求的数量
+        }
+        else if (peer == 0)
         {
             // Host 本地玩家：真实背包槽位（先读后扣，事务化）
             var player = Player.Instance;
@@ -64,8 +78,15 @@ public sealed class DarkwoodWorldAuthorityService
             return null;
         }
 
-        // 创建成功 → 扣库存（扣减失败防御性回滚：销毁已创建的掉落物）
-        if (peer == 0)
+        // 创建成功 → 按来源扣减（扣减失败防御性回滚：销毁已创建的掉落物）
+        if (payload.Origin == DropOriginWire.SharedContainer)
+        {
+            var sourceSlot = sourceContainer!.slots[payload.SlotIndex];
+            sourceSlot.invItem.amount -= payload.Amount;
+            if (sourceSlot.invItem.amount <= 0) sourceSlot.removeItem();
+            sourceSlot.inventory?.refreshItems();
+        }
+        else if (peer == 0)
         {
             var player = Player.Instance;
             var slots = payload.FromHotbar ? player.Hotbar.slots : player.Inventory.slots;
@@ -94,12 +115,25 @@ public sealed class DarkwoodWorldAuthorityService
             Kind = WorldEntityKind.DroppedItem
         });
 
-        runtime.LogInfo($"Drop accepted: peer {peer}, {item.type} x{payload.Amount}, slot {payload.SlotIndex}, runtime id {runtimeId}.");
+        runtime.LogInfo($"Drop accepted: peer {peer}, {item.type} x{payload.Amount}, origin {payload.Origin}, slot {payload.SlotIndex}, runtime id {runtimeId}.");
 
+        if (payload.Origin == DropOriginWire.SharedContainer)
+        {
+            // 容器权威状态广播（全部客户端），背包无变化 → ActionResult 不带背包 payload
+            try
+            {
+                var containerState = runtime.Replication.CaptureAuthoritativeInventory(originContainer);
+                var stateBytes = ReplicationProtocolCodec.Encode(containerState);
+                foreach (var readyPeer in runtime.ReadyPeers.ToArray())
+                    runtime.Queue(readyPeer, ProtocolMessageType.InventoryState, stateBytes);
+            }
+            catch (Exception error) { runtime.LogWarning($"丢弃后广播容器状态失败：{error.Message}"); }
+            return new ActionResultMessage(request.RequestId, request.Kind, runtimeId, false, 1, Array.Empty<byte>());
+        }
         if (peer == 0)
         {
             // Host 本地：广播权威背包给所有客户端
-            var hostState = CaptureHostInventory();
+            var hostState = CaptureLocalPlayerInventory();
             var payloadBytes = ReplicationProtocolCodec.Encode(hostState);
             foreach (var readyPeer in runtime.ReadyPeers.ToArray())
                 runtime.Queue(readyPeer, ProtocolMessageType.PlayerInventoryState, payloadBytes);
@@ -137,10 +171,11 @@ public sealed class DarkwoodWorldAuthorityService
         }
     }
 
-    private PlayerInventoryStatePayload CaptureHostInventory()
+    /// <summary>捕获本机玩家真实背包（Host 广播权威背包 / 客户端漂移上报共用）。</summary>
+    internal static PlayerInventoryStatePayload CaptureLocalPlayerInventory()
     {
         var player = Player.Instance;
-        if (player?.Inventory == null || player.Hotbar == null) throw new InvalidOperationException("Host 玩家库存不可用。");
+        if (player?.Inventory == null || player.Hotbar == null) throw new InvalidOperationException("玩家库存不可用。");
         return new PlayerInventoryStatePayload(
             ToWire(player.Inventory.slots),
             ToWire(player.Hotbar.slots));

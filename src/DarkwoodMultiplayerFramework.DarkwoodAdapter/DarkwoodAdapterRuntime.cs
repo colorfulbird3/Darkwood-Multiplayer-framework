@@ -135,6 +135,20 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private float scheduledStopAt;
     private float nextRegistryAudit;
     private float nextLoadDiag;
+    private float nextSyncDiag;
+    private float nextRegistryRebuildWarnAt;
+    /// <summary>权威注册表代际：主机每次重建递增；客户端按代际决定是否清空旧映射重绑。</summary>
+    private int registryGeneration;
+    /// <summary>主机权威描述符清单（构建 BindingManifest 用，World Stable 后一次生成）。</summary>
+    private EntityBindingEntryWire[] authoritativeDescriptors = Array.Empty<EntityBindingEntryWire>();
+    private byte[] bindingManifestBytes = Array.Empty<byte>();
+    private Guid bindingTransferId;
+    private Coroutine? hostRegistryStabilizer;
+    /// <summary>客户端：本地候选就绪标志（稳定化循环完成后置位，替代本地 hash 注册表握手）。</summary>
+    private bool clientCandidatesReady;
+    private int clientCandidatesCount;
+    private string clientCandidateDigest = string.Empty;
+    private int lastBindingGeneration = -1;
     private long acceptedActions;
     private long rejectedActions;
     private long duplicateActions;
@@ -177,7 +191,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Session.Error = string.Empty;
         Session.IsMultiplayerActive = true;
         log?.LogInfo($"主机正在监听 TCP 端口 {Port}（访客上限 {hostSession.MaxPeers}，联机人数 {ConfiguredPlayerCount}）。");
-        StartCoroutine(DelayedRegistryRebuild(90f)); // 世界生成完成后重建注册表（修复主机注册表 1762 vs 客户端 3253 实体缺失）
+        hostRegistryStabilizer = StartCoroutine(StabilizeHostRegistry()); // World Stable → Build generation → Binding → Snapshot → Ready
     }
 
     public void ConnectClient()
@@ -224,7 +238,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         if (clientSession != null) { clientSession.Dispose(); clientSession = null; }
         if (hostSession != null) { hostSession.Dispose(); hostSession = null; }
         if(hostLootScaleCoroutine!=null){StopCoroutine(hostLootScaleCoroutine);hostLootScaleCoroutine=null;}
-        outgoing.Clear(); readyPeers.Clear(); pendingActions.Clear();Players.Reset();SaveState.Reset();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();missingEntities.Clear(); nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; replication.RestoreSimulation();  ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; scheduledStopAt=0f; Combat?.Reset();
+        outgoing.Clear(); readyPeers.Clear(); pendingActions.Clear(); resyncedDropRequests.Clear();Players.Reset();SaveState.Reset();actionCache.Clear();cachedActionResults.Clear();cachedActionRejections.Clear();cachedActionOwners.Clear();missingEntities.Clear(); nextInventoryDelta=0f; nextProfileAutosave=0f; hostLootScaleScanComplete=false; hostLootScaleScanStarted=false; replication.RestoreSimulation(); replication.ResetDeltaDiagnostics(); clientCandidatesReady=false; clientCandidatesCount=0; clientCandidateDigest=string.Empty; lastBindingGeneration=-1; bindingAssembler=null;  ActiveClientSaveDirectory=string.Empty; sessionError=string.Empty; scheduledStopAt=0f; Combat?.Reset();
  Session.Reset();
  SetState(ConnectionState.Disconnected);
  }
@@ -262,10 +276,16 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 
         SetState(DetectState());
-        if (registryDirty && IsNetworkConnected() && Player.Instance != null)
+        if (registryDirty && Session.IsHost && readyPeers.Count == 0 && Player.Instance != null)
         {
             RebuildRegistry();
             SetState(DetectState());
+        }
+        else if (registryDirty && Session.IsHost && readyPeers.Count > 0 && Time.unscaledTime >= nextRegistryRebuildWarnAt)
+        {
+            // 联机 Ready 后禁止无协议 Clear + Rebuild 整个注册表（场景切换会先通知客户端重连）
+            nextRegistryRebuildWarnAt = Time.unscaledTime + 10f;
+            log?.LogWarning("注册表需要重建但已有客户端就绪：禁止无协议重建（等待客户端全部断开或场景切换重连）。");
         }
         // 第七刀：主机/客户端周期逻辑分离（单一入口，不再 if/else 交错）。
         if (Session.IsHost) TickHost();
@@ -277,12 +297,27 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     internal DarkwoodMultiplayerFramework.Protocol.InventoryStateMessage CaptureAuthoritativeInventoryForHost(DarkwoodMultiplayerFramework.Core.EntityId id) => replication.CaptureAuthoritativeInventory(id);
 
-    private System.Collections.IEnumerator DelayedRegistryRebuild(float delay)
+    /// <summary>主机权威注册表稳定化：World Stable（实体计数连续 3 秒不变）后构建一次，不再延迟重建。</summary>
+    private IEnumerator StabilizeHostRegistry()
     {
-        yield return new WaitForSeconds(delay);
-        if (hostSession == null || registry == null) yield break;
-        registryDirty = true;
-        log?.LogInfo("注册表延迟重建：等待世界生成完成后重新扫描，补齐运行中生成的实体。");
+        yield return new WaitForSeconds(2f);
+        if (hostSession == null) yield break;
+        var previousCount = -1;
+        var stableChecks = 0;
+        var deadline = Time.realtimeSinceStartup + 150f;
+        while (Time.realtimeSinceStartup < deadline)
+        {
+            if (hostSession == null) yield break;
+            if (Player.Instance == null) { yield return new WaitForSeconds(1f); continue; }
+            if (registry == null) registryDirty = true; // 触发一次构建（Update 驱动）
+            yield return new WaitForSeconds(1f);
+            if (registry == null) continue;
+            if (registry.Count == previousCount) { stableChecks++; if (stableChecks >= 3) break; }
+            else { stableChecks = 0; previousCount = registry.Count; }
+        }
+        if (hostSession == null) { yield break; }
+        if (registry == null) { log?.LogWarning("主机注册表稳定化超时（150 秒），注册表未构建，客户端将无法加入。"); yield break; }
+        log?.LogInfo($"主机权威注册表已稳定：第 {registryGeneration} 代，{registry.Count} 实体，{authoritativeDescriptors.Length} 描述符，摘要 {RegistryDigest}。");
     }
 
     private void TickHost()
@@ -292,6 +327,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         {
             nextRegistryAudit = Time.unscaledTime + 30f;
             log?.LogInfo($"主机注册表巡检：{registry?.Count ?? 0} 实体 / 共享容器 {replication.SharedInventoryCount} / 运行时实体 {RuntimeEntities.PendingCount}。");
+        }
+        if (Time.unscaledTime >= nextSyncDiag)
+        {
+            nextSyncDiag = Time.unscaledTime + 10f;
+            log?.LogInfo($"[SYNC] host generation={registryGeneration} entities={registry?.Count ?? 0} deltaChanged={replication.LastDeltaChangedCount} deltaSent={replication.LastDeltaSentCount}");
         }
         if(hostSession!=null&&!registryDirty&&registry!=null)EnsureHostExistingLootScaled();
         if (hostSession != null && readyPeers.Count>0 && !registryDirty && Time.unscaledTime>=nextDelta)
@@ -312,6 +352,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private void TickClient()
     {
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready)replication.Interpolate(Time.unscaledDeltaTime*12f);
+        if (Time.unscaledTime >= nextSyncDiag)
+        {
+            nextSyncDiag = Time.unscaledTime + 10f;
+            log?.LogInfo($"[SYNC] client generation={replication.RegistryGeneration} bound={replication.BoundEntityCount} delta received={replication.DeltaReceived} applied={replication.DeltaApplied} missing={replication.DeltaMissing}");
+        }
         TrySendClientRegistryReady();
         RetrySnapshotAcknowledgement();
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready&&Time.unscaledTime>=nextPose){nextPose=Time.unscaledTime+(1f/15f);SendLocalPose();}
@@ -322,8 +367,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     private void TrySendClientRegistryReady()
     {
-        if (SaveState.IsSnapshotReady || SaveState.IsSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || registry == null || Player.Instance == null) return;
-        if (!SaveState.IsRegistryStabilized) return; // 等待注册表稳定化循环完成（世界流式加载）
+        if (SaveState.IsSnapshotReady || SaveState.IsSnapshotManifestReceived || clientSession == null || !clientSession.HandshakeComplete || registryDirty || !clientCandidatesReady || Player.Instance == null) return;
+        if (!SaveState.IsRegistryStabilized) return; // 等待本地候选稳定化循环完成（世界流式加载）
         var lifecycle = clientSession.Session.Lifecycle;
         if (lifecycle.State == ConnectionState.LoadingSave) lifecycle.MoveTo(ConnectionState.BuildingRegistry);
         if (lifecycle.State != ConnectionState.BuildingRegistry && lifecycle.State != ConnectionState.ApplyingSnapshot) return;
@@ -331,10 +376,10 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         SaveState.MarkRegistryRequestSent();
         SaveState.MarkRegistryRequestRetry(Time.realtimeSinceStartup + 5f);
         SaveState.SetProgress("正在请求世界快照");
-        log?.LogInfo($"客户端已发送注册表握手：{registry.Count} 个实体，摘要 {RegistryDigest}，场景 {CurrentScene}。");
+        log?.LogInfo($"客户端已发送注册表握手：{clientCandidatesCount} 个本地候选，摘要 {clientCandidateDigest}，场景 {CurrentScene}。");
         try
         {
-            clientSession.Send(ProtocolMessageType.Ready, ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene, RegistryDigest)));
+            clientSession.Send(ProtocolMessageType.Ready, ReplicationProtocolCodec.Encode(new ReadyMessage(CurrentScene, clientCandidateDigest)));
             if (lifecycle.State == ConnectionState.BuildingRegistry) lifecycle.MoveTo(ConnectionState.ApplyingSnapshot);
         }
         catch (Exception error) { SaveState.ClearRegistryRequestSent(); FailClient("REGISTRY_REQUEST_FAILED", error); }
@@ -385,8 +430,12 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         }
         registry = next;
         replication.Rebuild(scanner);
+        registryGeneration++;
+        authoritativeDescriptors = scanner.BuildAuthoritativeDescriptors(replication.AllEntities);
+        bindingManifestBytes = ReplicationProtocolCodec.Encode(authoritativeDescriptors);
+        bindingTransferId = Guid.NewGuid();
         RegistryDigest = next.ComputeDigest();
         registryDirty = false;
-        log?.LogInfo($"实体注册表已就绪：{next.Count} 个实体，{collisions} 个 ID 冲突，摘要 {RegistryDigest}，场景 {CurrentScene}。");
+        log?.LogInfo($"实体注册表已就绪（第 {registryGeneration} 代）：{next.Count} 个实体，{collisions} 个 ID 冲突，描述符 {authoritativeDescriptors.Length} 个，摘要 {RegistryDigest}，场景 {CurrentScene}。");
     }
 }
