@@ -129,22 +129,27 @@ public sealed partial class DarkwoodAdapterRuntime
         var activeSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         var targetScene = profile.chapter >= 2 ? "chapter2" : "chapter1";
         var worldGen = Singleton<WorldGenerator>.Instance;
-        if (string.Equals(activeSceneName, targetScene, StringComparison.Ordinal) && worldGen != null)
+        var sceneMatches = string.Equals(activeSceneName, targetScene, StringComparison.Ordinal);
+        var loadingNow = worldGen != null && worldGen.percentLoaded < 90f;
+        if (sceneMatches && worldGen != null && (loadingNow || clientWorldFreshForSession))
         {
             var currentManager = Singleton<SaveManager>.Instance;
             if (currentManager != null) AttachLoadFinishedCallback(currentManager);
-            if (worldGen.percentLoaded >= 90f)
-            {
-                log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{(int)worldGen.percentLoaded}%），直接推进联机流程。");
-                OnDownloadedSaveFinished();
-            }
-            else
+            if (loadingNow)
             {
                 SaveState.MarkLoadStarted(Time.unscaledTime);
                 log?.LogInfo($"目标场景 {targetScene} 已是当前场景且存档恢复进行中（{(int)worldGen.percentLoaded}%），跳过重复场景加载，等待完成。");
+                yield break;
             }
+            log?.LogInfo($"目标场景 {targetScene} 已完成存档恢复（{(int)worldGen.percentLoaded}%）且为本会话新鲜世界，直接推进联机流程。");
+            OnDownloadedSaveFinished();
             yield break;
         }
+        // FIX-019：场景还在但 worldGen 不是本会话加载的新鲜世界（上次失败残留，世界已被部分快照污染）
+        // 或场景不在目标 → 必须重新 LoadScene 从本次下载的存档恢复干净世界。
+        if (sceneMatches && worldGen != null)
+            log?.LogWarning($"当前场景 {activeSceneName} 中的世界非本会话新鲜存档（fresh={clientWorldFreshForSession}），重新加载 {targetScene} 以恢复干净世界。");
+        clientWorldFreshForSession = false;
         LogMessage($"正在切换到章节场景 {targetScene} 并启动存档恢复（约 2 秒后 WorldGenerator.Start 调度 SaveManager.Load）。");UnityEngine.SceneManagement.SceneManager.LoadScene(targetScene);global::Core.mainMenu=false;}catch(Exception error){FailClient("SAVE_LOAD_FAILED",error);}
     }
 
@@ -154,7 +159,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(Time.timeScale<=0.01f){Time.timeScale=1f;LogMessage("已强制恢复 timeScale=1（加载期间曾被冻结）。");}
         // FIX-018：LoadDownloadedSave 设置的 forbidInputs/buttonsDisabled 必须在此恢复。
         // 真机：客户端打开共享容器后无法退出（UI 关闭按钮被 buttonsDisabled 禁用 / 输入被 forbidInputs 锁）。
-        global::Core.forbidInputs=false;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=false;
+        global::Core.forbidInputs=false;var controller=Singleton<Controller>.Instance;if(controller!=null)controller.buttonsDisabled=false;clientWorldFreshForSession=true;
         var manager=Singleton<SaveManager>.Instance;if(manager!=null)manager.onFinishedLoading=(saveDelegate)Delegate.Remove(manager.onFinishedLoading,new saveDelegate(OnDownloadedSaveFinished));if(clientSession==null||!clientSession.HandshakeComplete||clientSession.Session.Lifecycle.State==ConnectionState.Failed){log?.LogWarning("客户端连接已断开，忽略已完成的存档加载回调。");return;}if(clientSession.Session.Lifecycle.State==ConnectionState.LoadingSave)clientSession.Session.Lifecycle.MoveTo(ConnectionState.BuildingRegistry);registryDirty=true;StartCoroutine(WaitForRegistryThenReady());
     }
 
