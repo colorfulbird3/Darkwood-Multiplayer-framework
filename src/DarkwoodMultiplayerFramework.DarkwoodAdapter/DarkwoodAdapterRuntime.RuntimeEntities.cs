@@ -116,22 +116,28 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleActionResult(ActionResultMessage result)
     {
         if(!pendingActions.Remove(result.RequestId))return;
-        if(result.Payload.Length>0)
+        // P0-D：按 Action 类型分派——ContainerGrab → 快照吸附；Drop/HeldToInventory Accepted → 无条件清 cursor。
+        if(result.Kind==ActionKindWire.ContainerGrab)
         {
-            // P0-D/E：按 Action 类型分派——ContainerGrab 返回 HeldItemState（吸附鼠标）；其余返回玩家背包状态。
-            if(result.Kind==ActionKindWire.ContainerGrab)
+            // P0-2：用请求时保存的原始 InvItemClass 快照恢复原版 cursor（copy constructor 保留 UIInvItem/slot）。
+            if (pendingGrabSnapshots.TryGetValue(result.RequestId, out var snapshot))
             {
-                // P0-2：用请求时保存的原始 InvItemClass 快照恢复原版 cursor（copy constructor 保留 UIInvItem/slot）。
-                if (pendingGrabSnapshots.TryGetValue(result.RequestId, out var snapshot))
-                {
-                    pendingGrabSnapshots.Remove(result.RequestId);
-                    AttachHeldItemFromSnapshot(snapshot);
-                }
+                pendingGrabSnapshots.Remove(result.RequestId);
+                AttachHeldItemFromSnapshot(snapshot);
             }
-            else if(result.Kind==ActionKindWire.HeldToInventory) { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); ClearHeldItem(); }
-            else if(result.Kind==ActionKindWire.DropItem) { try{ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));}catch(Exception){} ClearHeldItem(); }
-            else ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
         }
+        else if(result.Kind==ActionKindWire.HeldToInventory)
+        {
+            if (result.Payload.Length > 0) ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
+            ClearHeldItem();
+        }
+        else if(result.Kind==ActionKindWire.DropItem)
+        {
+            // P0-D：Drop Accepted 本身就意味着 cursor 应清，绝不依赖 payload 长度。
+            if (result.Payload.Length > 0) try { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); } catch (Exception) { }
+            ClearHeldItem();
+        }
+        else if(result.Payload.Length>0) ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
         log?.LogInfo($"已应用主机权威操作结果：请求 {result.RequestId}，类型 {result.Kind}，目标 {result.TargetValue:X16}，版本 {result.Revision}。");
     }
 
@@ -171,6 +177,19 @@ public sealed partial class DarkwoodAdapterRuntime
         foreach(var body in player.GetComponentsInChildren<Rigidbody>(true)){body.velocity=Vector3.zero;body.angularVelocity=Vector3.zero;}
         ApplyPlayerInventory(profile.Inventory);
         if(!profile.Downed&&profile.Health>0f)player.setHealth(profile.Health);
+        // P0-C：立即向 Host 上报真实背包完整拓扑（含全部空槽 → 长度即容量），
+        // 否则 Host 影子槽位数量停留在 GuestProfile 旧值 → placeItem 目标槽被判 INVALID_TARGET_SLOT。
+        try
+        {
+            // P0-C：不管处于 LoadingWorld/Ready 哪个阶段，只要会话活着就上报（Host 随时可按真实容量重建 shadow）。
+            if (clientSession != null)
+            {
+                var localState = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+                clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(localState));
+                log?.LogInfo($"[HELD] 已上报真实背包拓扑：backpack {localState.Backpack.Length} 槽 / hotbar {localState.Hotbar.Length} 槽。");
+            }
+        }
+        catch (Exception error) { log?.LogWarning($"上报真实背包拓扑失败：{error.Message}"); }
         log?.LogInfo($"已应用访客档案：出生点 ({profile.X:F1},{profile.Y:F1},{profile.Z:F1})，第 {profile.Day} 天，第 {profile.JoinCount} 次加入。");
     }
 

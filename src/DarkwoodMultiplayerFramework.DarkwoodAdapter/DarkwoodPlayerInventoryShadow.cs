@@ -98,12 +98,23 @@ internal sealed class DarkwoodPlayerInventoryShadow
     }
 
     public enum HeldPlaceResult : byte { Placed, Stacked, Occupied, Invalid }
+    /// <summary>客户端最近一次上报的真实背包/快捷栏容量（P0-C：阴影槽拓扑必须与客户端 UI 对齐）。0 = 尚未上报。</summary>
+    public int BackpackCapacity;
+    public int HotbarCapacity;
     /// <summary>P0-3：原版 InvSlot.placeItem 语义按目标槽放置：空 → place；同类可堆叠 → stack；占用 → Occupied。</summary>
     public HeldPlaceResult PlaceAt(bool fromHotbar,int slotIndex,InvItemClass source)
     {
-        var slots = fromHotbar ? hotbar : backpack;
-        if(source==null||InvItemClass.isNull(source)||source.baseClass==null||slotIndex<0||slotIndex>=slots.Count)return HeldPlaceResult.Invalid;
-        var slot=slots[slotIndex];
+        var capacity = fromHotbar ? HotbarCapacity : BackpackCapacity;
+        if(source==null||InvItemClass.isNull(source)||source.baseClass==null)return HeldPlaceResult.Invalid;
+        if(capacity>0&&(slotIndex<0||slotIndex>=capacity))return HeldPlaceResult.Invalid;
+        var targetList = fromHotbar ? hotbar : backpack;
+        var count = targetList.Count;
+        // P0-C：只扩到客户端上报的真实容量；绝不无限扩到任意网络输入索引。
+        var limit = capacity>0?capacity:count;
+        if(slotIndex<0)return HeldPlaceResult.Invalid;
+        if(slotIndex>=limit)return HeldPlaceResult.Invalid;
+        while (targetList.Count <= slotIndex) targetList.Add(new Slot());
+        var slot=targetList[slotIndex];
         if(string.IsNullOrEmpty(slot.Type))
         {
             slot.Type=source.type;slot.Stackable=source.baseClass.stackable;slot.MaxAmount=Math.Max(1,source.baseClass.maxAmount);
@@ -120,11 +131,13 @@ internal sealed class DarkwoodPlayerInventoryShadow
         return HeldPlaceResult.Occupied;
     }
 
-    /// <summary>客户端上报真实背包后整体重建（本地合成/搜尸体等漂移收敛）。</summary>
+    /// <summary>客户端上报真实背包后整体重建（本地合成/搜尸体等漂移收敛）。wire 含全部空槽 → 长度即真实容量。</summary>
     public void Rebuild(InventorySlotWire[] backpackWire, InventorySlotWire[] hotbarWire, Action<string>? warn = null)
     {
         backpack.Clear();
         hotbar.Clear();
+        BackpackCapacity = backpackWire?.Length ?? 0;
+        HotbarCapacity = hotbarWire?.Length ?? 0;
         Restore(backpackWire, backpack, warn);
         Restore(hotbarWire, hotbar, warn);
     }

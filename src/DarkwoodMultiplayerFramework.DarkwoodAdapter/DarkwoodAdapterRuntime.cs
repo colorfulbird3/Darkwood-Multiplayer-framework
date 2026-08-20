@@ -151,6 +151,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private float nextRegistryAudit;
     private float nextLoadDiag;
     private float nextSyncDiag;
+    private float nextGhostScan;
     private float nextRegistryRebuildWarnAt;
     /// <summary>权威注册表代际：主机每次重建递增；客户端按代际决定是否清空旧映射重绑。</summary>
     private int registryGeneration;
@@ -379,6 +380,24 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         "BoxCollider","BoxCollider2D","CircleCollider2D","PolygonCollider2D","CapsuleCollider2D","SphereCollider",
         "Rigidbody","Rigidbody2D","tk2dSprite","tk2dSpriteAnimator","Animator","Animation","TrailRenderer","LineRenderer",
     };
+    /// <summary>P0-H：客户端周期诊断——扫描世界掉落物（itemInv/deathDrop），未注册且在 runtime mirror/replication 之外 = ghost（联机下必须为 0）。</summary>
+    private void ScanGhostDroppedItems()
+    {
+        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
+        var ghosts = new List<string>();
+        foreach (var inv in UnityEngine.Object.FindObjectsOfType<Inventory>())
+        {
+            if (inv == null) continue;
+            if (inv.invType != Inventory.InvType.itemInv && inv.invType != Inventory.InvType.deathDrop) continue;
+            if (RuntimeEntities.IsKnownDroppedMirror(inv)) continue;
+            if (replication.TryGetId(inv, out _)) continue;
+            var it = inv.slots != null && inv.slots.Count > 0 ? inv.slots[0].invItem : null;
+            ghosts.Add($"{inv.name}@{inv.transform.position} {(it != null ? it.type : "?")}");
+            if (ghosts.Count >= 5) break;
+        }
+        if (ghosts.Count > 0) log?.LogWarning($"[RUNTIME-GHOST] 发现 {ghosts.Count} 个本地未注册掉落物（联机下必须为 0）：{string.Join(" | ", ghosts)}");
+    }
+
     private void RunWorldAudit()
     {
         if (registry == null || registry.Count == 0) return;
@@ -485,9 +504,13 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         {
             nextSyncDiag = Time.unscaledTime + 10f;
             log?.LogInfo($"[SYNC] client generation={replication.RegistryGeneration} bound={replication.BoundEntityCount} delta received={replication.DeltaReceived} applied={replication.DeltaApplied} missing={replication.DeltaMissing}");
-            // P1：per-kind 同步统计（定位怪物/门/窗/Item 哪类不同步）
             log?.LogInfo($"[SYNC-KIND] Character received={replication.KindReceived[1]} applied={replication.KindApplied[1]} missing={replication.KindMissing[1]} | Door received={replication.KindReceived[2]} applied={replication.KindApplied[2]} missing={replication.KindMissing[2]} | Window received={replication.KindReceived[3]} applied={replication.KindApplied[3]} missing={replication.KindMissing[3]} | Item received={replication.KindReceived[4]} applied={replication.KindApplied[4]} missing={replication.KindMissing[4]} | Inventory received={replication.KindReceived[5]} applied={replication.KindApplied[5]} missing={replication.KindMissing[5]}");
             replication.ResetKindDiagnostics();
+        }
+        if (Time.unscaledTime >= nextGhostScan)
+        {
+            nextGhostScan = Time.unscaledTime + 30f;
+            ScanGhostDroppedItems();
         }
         TrySendClientRegistryReady();
         RetrySnapshotAcknowledgement();

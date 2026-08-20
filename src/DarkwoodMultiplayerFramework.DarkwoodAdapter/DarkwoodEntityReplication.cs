@@ -141,7 +141,27 @@ public sealed class DarkwoodEntityReplication
         entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);
         return wire;
     }
-    public void ApplyDespawns(IEnumerable<EntityStateWire> states){foreach(var s in states){var id=new EntityId(s.Value,s.Persistent);if(!entities.TryGetValue(id,out var component))continue;if(component is Character character)frozen.Remove(character);component.gameObject.SetActive(false);bindings.Remove(id);targets.Remove(id);last.Remove(id);lastInventories.Remove(id);entities.Remove(id);}}
+    public void ApplyDespawns(IEnumerable<EntityStateWire> states)
+    {
+        foreach (var s in states)
+        {
+            var id = new EntityId(s.Value, s.Persistent);
+            if (!entities.TryGetValue(id, out var component) && !bindings.TryGetValue(id, out _)) continue;
+            if (component != null && component is Character character) frozen.Remove(character);
+            // P0-E：先 100% 无条件收敛注册表（Unity 对象死了也必须清 EntityId），再 best-effort 视觉清理。
+            var bindingRoot = (UnityEngine.Object)null;
+            var bindingRootAlive = false;
+            try { if (bindings.TryGetValue(id, out var binding2) && binding2.Root != null) { bindingRoot = binding2.Root; bindingRootAlive = true; } } catch (Exception) { }
+            entities.Remove(id); bindings.Remove(id); targets.Remove(id); last.Remove(id); lastInventories.Remove(id);
+            var componentAlive = component != null;
+            var visualDisabled = false;
+            var root = (UnityEngine.GameObject)null;
+            try { if (bindingRootAlive && bindingRoot) root = (UnityEngine.GameObject)bindingRoot; } catch (Exception) { }
+            try { if (root == null && component != null) root = component.gameObject; } catch (Exception) { }
+            try { if (root != null) { root.SetActive(false); visualDisabled = true; } } catch (Exception error) { DarkwoodAdapterRuntime.Instance?.log?.LogWarning($"[WORLD-LIFE] despawn 视觉清理失败（已忽略）：id={id} {error.Message}"); }
+            DarkwoodAdapterRuntime.Instance?.log?.LogInfo($"[WORLD-LIFE] despawn applied id={id} componentAlive={componentAlive} bindingRootAlive={bindingRootAlive} visualDisabled={visualDisabled}");
+        }
+    }
     public bool TryGetComponent(EntityId id,out Component component)=>entities.TryGetValue(id,out component!);
     /// <summary>Captures and commits fresh revisions for the given components (immediate authoritative broadcast helper).</summary>
     public EntityStateWire[] CaptureEntities(IEnumerable<Component> components)

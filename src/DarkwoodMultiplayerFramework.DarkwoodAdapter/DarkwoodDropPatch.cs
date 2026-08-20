@@ -24,12 +24,14 @@ internal static class DarkwoodDropPatch
             return true;
 
         var payload = BuildPayload(_item);
-        if (payload.SlotIndex < 0 && payload.Origin == DropOriginWire.PlayerSlot)
-            return true;
+        // P0-A 优先级 4：来源无法解析时直接阻断原版（绝不静默放行 singleplayer spawn）。
+        if (payload.Origin == DropOriginWire.PlayerSlot && payload.SlotIndex < 0)
+        {
+            DarkwoodAdapterRuntime.LogMessage("[HELD] drop-resolve unresolved：阻断原版 Drop（cursorMatch=否 slot 缺失）");
+            return false;
+        }
 
         // P0-5：绝不提前清 cursor / pickedUpItem——Drop 是乐观保底语义，失败时物品必须留在手上。
-        // 清除动作只在 Host Accepted（RuntimeEntitySpawn + ActionResult）后由 ack 路径执行；Rejected 保持原样。
-
         var player = Player.Instance;
         if (player != null) { try { player.refreshRecipes(); } catch (Exception) { } }
 
@@ -40,8 +42,12 @@ internal static class DarkwoodDropPatch
         }
 
         if (runtime.IsClient)
-            // P0-C：来源只解析一次（Prefix 里已有 payload），绝不二次 BuildPayload（否则 UI/握持状态已变 → 解析失败 → Drop 被拒）。
-            return runtime.TryRequestDrop(payload);
+        {
+            // P0-B：READY 联机下无论请求是否发出，原版 spawnDroppedInvItem（客户端本地世界 mutation）都绝不允许运行。
+            var sent = runtime.TryRequestDrop(payload);
+            if (!sent) DarkwoodAdapterRuntime.LogMessage("[HELD] drop request could not be sent; cursor retained");
+            return false;
+        }
 
         return true;
     }
@@ -49,20 +55,21 @@ internal static class DarkwoodDropPatch
     internal static DropItemPayload BuildPayload(InvItemClass item)
     {
         var player = Player.Instance;
-        var slot = item.slot;
         var runtime = DarkwoodAdapterRuntime.Instance;
-        // P0-7：鼠标手持物品（原版"Cursor held item"）不区分端——Host/Client 都用 Controller.pickedUpItem 识别。
-        // 绝不能因为它仍指向已被 grabItem 清空的源容器槽而误判为 SharedContainer（→ SLOT_EMPTY → Drop 失败）。
-        if (slot == null || slot.inventory == null)
+        // P0-A：判定优先级 1 —— Controller.pickedUpItem == item → HeldItem。
+        // 绝不要求 slot==null：AttachHeldItemFromSnapshot 用 copy constructor 保留旧 slot（指向已清空的容器槽），
+        // 若先判 slot 会被误判成 SharedContainer → SLOT_EMPTY → Drop 失败。
+        var controller = Singleton<Controller>.Instance;
+        var cursorMatch = controller != null && !InvItemClass.isNull(controller.pickedUpItem) && ReferenceEquals(controller.pickedUpItem, item);
+        if (cursorMatch)
         {
-            var controller = Singleton<Controller>.Instance;
-            if (controller != null && !InvItemClass.isNull(controller.pickedUpItem) && ReferenceEquals(controller.pickedUpItem, item))
-            {
-                var pos0 = player != null ? player._transform.position : Vector3.zero;
-                var rot0 = player != null ? player._transform.rotation : Quaternion.identity;
-                return new DropItemPayload(false, -1, Math.Max(1, item.amount), pos0.x, pos0.y, pos0.z, rot0.x, rot0.y, rot0.z, rot0.w, DropOriginWire.HeldItem);
-            }
+            var pos0 = player != null ? player._transform.position : Vector3.zero;
+            var rot0 = player != null ? player._transform.rotation : Quaternion.identity;
+            DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=是 slotPresent={(item.slot != null ? "是" : "否")} slotInventoryType={(item.slot?.inventory != null ? item.slot.inventory.invType.ToString() : "无")} finalOrigin=HeldItem");
+            return new DropItemPayload(false, -1, Math.Max(1, item.amount), pos0.x, pos0.y, pos0.z, rot0.x, rot0.y, rot0.z, rot0.w, DropOriginWire.HeldItem);
         }
+
+        var slot = item.slot;
         var fromHotbar = false;
         var slotIndex = -1;
         var origin = DropOriginWire.PlayerSlot;
@@ -73,13 +80,13 @@ internal static class DarkwoodDropPatch
             var invType = slot.inventory.invType;
             if (invType == Inventory.InvType.hotbar || invType == Inventory.InvType.playerInv)
             {
+                // 优先级 2：玩家背包/快捷栏
                 fromHotbar = invType == Inventory.InvType.hotbar;
                 slotIndex = slot.inventory.slots.IndexOf(slot);
             }
             else
             {
-                // 手上物品的来源是容器（共享容器/尸体/商人等）：槽位属于来源容器，
-                // 不能按玩家背包槽位解读——带上容器 ID 让 Host 从权威容器扣减。
+                // 优先级 3：共享容器
                 origin = DropOriginWire.SharedContainer;
                 slotIndex = slot.inventory.slots.IndexOf(slot);
                 if (runtime != null && runtime.TryGetEntityId(slot.inventory, out var containerId))

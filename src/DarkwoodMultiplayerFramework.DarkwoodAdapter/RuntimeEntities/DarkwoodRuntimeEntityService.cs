@@ -240,6 +240,15 @@ public sealed class DarkwoodRuntimeEntityService
         runtime.log?.LogInfo($"[RUNTIME] despawn recv id={despawn.RuntimeEntityId} 原因={despawn.Reason} mirror 已销毁，replication 已卸载。");
     }
 
+    /// <summary>P0-H：诊断用——该组件是否属于已知的 runtime dropped 镜像（Host 分配过 ID 的合法掉落物）。</summary>
+    public bool IsKnownDroppedMirror(Component c)
+    {
+        if (c == null) return false;
+        foreach (var kv in clientInventoryMirrors)
+            if (kv.Value != null && ReferenceEquals(kv.Value, c)) return true;
+        return false;
+    }
+
     private void SpawnLootContainerMirror(RuntimeEntitySpawnMessage spawn)
     {
         try
