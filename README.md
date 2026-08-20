@@ -48,7 +48,7 @@ dotnet build '.\src\DarkwoodMultiplayerFramework.sln' -c Release -m:1 -p:MSBuild
 dotnet test '.\tests\DarkwoodMultiplayerFramework.UnitTests\DarkwoodMultiplayerFramework.UnitTests.csproj'
 ```
 
-24 unit tests currently pass. The in-game loopback test covers handshake → save transfer → snapshot → READY.
+Unit tests and SelfTests pass; counts are recorded from the actual run at each release in the matching `RELEASE-NOTES-<version>.md` (latest: 50 unit tests / 85 SelfTests). The in-game loopback test covers handshake → save transfer → snapshot → READY.
 
 See `docs/` for architecture notes and problem write-ups. See `CONTRIBUTING.md` for development rules.
 
