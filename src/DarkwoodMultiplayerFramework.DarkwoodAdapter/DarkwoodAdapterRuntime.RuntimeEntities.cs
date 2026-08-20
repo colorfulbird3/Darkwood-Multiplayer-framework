@@ -116,8 +116,33 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleActionResult(ActionResultMessage result)
     {
         if(!pendingActions.Remove(result.RequestId))return;
-        if(result.Payload.Length>0)ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
+        if(result.Payload.Length>0)
+        {
+            // P0-D/E：按 Action 类型分派——ContainerGrab 返回 HeldItemState（吸附鼠标）；其余返回玩家背包状态。
+            if(result.Kind==ActionKindWire.ContainerGrab) AttachHeldItem(ReplicationProtocolCodec.DecodeHeldItemState(result.Payload));
+            else if(result.Kind==ActionKindWire.HeldToInventory) { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); ClearHeldItem(); }
+            else if(result.Kind==ActionKindWire.DropItem) { /* 背包可能在 drop 中被扣减：Host 返回 shadow → 应用 */ try{ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));}catch(Exception){} }
+            else ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
+        }
         log?.LogInfo($"已应用主机权威操作结果：请求 {result.RequestId}，类型 {result.Kind}，目标 {result.TargetValue:X16}，版本 {result.Revision}。");
+    }
+
+    /// <summary>P0-D/E：恢复原版 cursor 吸附——主机的 HeldItem 权威已成立，客户端仅在本地把物品挂上鼠标（原版 grabItem 的核心语义）。</summary>
+    internal static void AttachHeldItem(HeldItemStatePayload held)
+    {
+        if(held.IsEmpty)return;
+        var controller=Singleton<Controller>.Instance;
+        if(controller==null)return;
+        if(!InvItemClass.isNull(controller.pickedUpItem))return; // 已有手持不覆盖
+        controller.pickedUpItem=new InvItemClass(held.Type,held.Durability,held.Amount,(InvItem.ModifierQuality)held.Quality,held.Recipe);
+        var player=Player.Instance;
+        if(player!=null)try{player.cursor.hasItemMenu=false;}catch(Exception){}
+        DarkwoodAdapterRuntime.LogMessage($"[RUNTIME] held attach: {held.Type} x{held.Amount} → cursor（pickedUpItem）。");
+    }
+    internal static void ClearHeldItem()
+    {
+        var controller=Singleton<Controller>.Instance;
+        if(controller!=null&&!InvItemClass.isNull(controller.pickedUpItem))controller.pickedUpItem=null;
     }
 
     internal static void ApplyPlayerInventory(PlayerInventoryStatePayload state)

@@ -30,7 +30,16 @@ public sealed class DarkwoodWorldAuthorityService
         InvItemClass item;
         Inventory? sourceContainer = null;
         var originContainer = default(EntityId);
-        if (payload.Origin == DropOriginWire.SharedContainer)
+        if (payload.Origin == DropOriginWire.HeldItem)
+        {
+            // P0-D/E：鼠标手持物品 —— 从该玩家权威 HeldItem 扣减（不放背包、不经槽）。
+            if (!runtime.TryGetHeldItem(peer, out var held) || held.IsEmpty) { reject(peer, request, "NOT_HOLDING", 0); return null; }
+            var take = Math.Max(1, Math.Min(payload.Amount, held.Amount));
+            item = new InvItemClass(held.Type, held.Durability, take, (InvItem.ModifierQuality)held.Quality, held.Recipe);
+            if (held.Amount <= take) runtime.SetHeldItem(peer, null);
+            else runtime.SetHeldItem(peer, new HeldItemStatePayload(held.Type, held.Amount - take, held.Durability, held.Quality, held.Recipe));
+        }
+        else if (payload.Origin == DropOriginWire.SharedContainer)
         {
             // 手上物品来自容器（共享容器/尸体/商人）：从权威容器扣减，影子背包不动。
             if (payload.ContainerValue == 0) { reject(peer, request, "CONTAINER_NOT_FOUND", 0); return null; }

@@ -50,15 +50,42 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
-    public bool TryRequestDrop(InvItemClass item)
+    public bool TryRequestDrop(DropItemPayload payload)
     {
-        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||InvItemClass.isNull(item))return false;
-        var payload=DarkwoodDropPatch.BuildPayload(item);
-        if(payload.SlotIndex<0)return false;
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;
+        if(payload.SlotIndex<0&&payload.Origin==DropOriginWire.PlayerSlot)return false;
         var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.DropItem,0,false,0,ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"Drop request {request.RequestId} sent: hotbar={payload.FromHotbar}, slot={payload.SlotIndex}, amount={payload.Amount}.");
+        log?.LogInfo($"[RUNTIME] Drop request {request.RequestId} sent: origin={payload.Origin} hotbar={payload.FromHotbar} slot={payload.SlotIndex} amount={payload.Amount}.");
+        return true;
+    }
+
+    // P0-D/E：共享容器 grab → 鼠标 HeldItem（Host 权威）。
+    public bool TryRequestContainerGrab(InvSlot slot)
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
+        var inventory=slot.inventory;
+        if(inventory==null||!DarkwoodEntityStateAdapter.IsShared(inventory))return false;
+        if(!TryGetEntityId(inventory,out var containerId))return false;
+        var slotIndex=inventory.slots.IndexOf(slot);
+        if(slotIndex<0)return false;
+        var payload=new ContainerGrabPayload(slotIndex,Math.Max(1,slot.itemAmount));
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerGrab,containerId.Value,containerId.IsPersistent,0,ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId]=request;
+        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"[RUNTIME] ContainerGrab request {request.RequestId} sent: container {containerId} slot {slotIndex} amount {payload.Amount}.");
+        return true;
+    }
+
+    // P0-D/E：鼠标 HeldItem 放回玩家背包（Host shadow.Add）。
+    public bool TryRequestHeldToInventory()
+    {
+        if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.HeldToInventory,0,false,0,Array.Empty<byte>());
+        pendingActions[request.RequestId]=request;
+        clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"[RUNTIME] HeldToInventory request {request.RequestId} sent（held→backpack）。");
         return true;
     }
 

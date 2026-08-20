@@ -35,6 +35,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     void IMultiplayerRuntimeHost.ScheduleStop(float delay) => ScheduleStop(delay);
     void IMultiplayerRuntimeHost.LogInfo(string message) => log?.LogInfo(message);
     void IMultiplayerRuntimeHost.LogWarning(string message) => log?.LogWarning(message);
+    // P0-D/E：权威 HeldItem 读写（World/Entities 经接口访问）。
+    void IMultiplayerRuntimeHost.SetHeldItem(int peer, HeldItemStatePayload? held) { if (held is null) HeldItems.Remove(peer); else HeldItems[peer] = held.Value; }
+    bool IMultiplayerRuntimeHost.TryGetHeldItem(int peer, out HeldItemStatePayload held) => HeldItems.TryGetValue(peer, out held);
     public static DarkwoodAdapterRuntime? Instance { get; private set; }
     public bool ClientSaveLoadPending { get => SaveState.ClientSaveLoadPending; set => SaveState.ClientSaveLoadPending = value; }
     public static void LogMessage(string message) => Instance?.log?.LogInfo(message);
@@ -87,7 +90,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     /// <summary>战斗服务（血量/倒地/怪物伤害/攻击锚点/无敌/营救会话的唯一入口）。</summary>
     internal DarkwoodCombatService Combat { get; private set; } = null!;
     /// <summary>玩家服务（远端坐标/背包影子/Guest 档案的唯一入口）。</summary>
-    internal DarkwoodPlayerService Players { get; private set; } = null!;
+    public DarkwoodPlayerService Players { get; private set; } = null!;
+    // P0-D/E：每玩家的权威鼠标手持物品（远端玩家由 Host 维护；Host 本机走原版 pickedUpItem，不需这里）。
+    public readonly Dictionary<int, HeldItemStatePayload> HeldItems = new Dictionary<int, HeldItemStatePayload>();
     /// <summary>存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
     internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
     internal DarkwoodWorldAuthorityService World { get; private set; } = null!;
@@ -433,7 +438,13 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
             try
             {
                 var delta=replication.CaptureDeltas();
-                if(delta.Length>0){var payload=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,delta,Array.Empty<EntityStateWire>()));foreach(var peer in readyPeers.ToArray())Queue(peer,ProtocolMessageType.EntityDelta,payload);}
+                var despawns=replication.TakePendingAuthoritativeDespawns();
+                if(delta.Length>0||despawns.Length>0)
+                {
+                    var payload=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,delta,despawns));
+                    foreach(var peer in readyPeers.ToArray())Queue(peer,ProtocolMessageType.EntityDelta,payload);
+                    if(despawns.Length>0)log?.LogInfo($"[WORLD-LIFE] persistent despawn 广播 {despawns.Length} 个（tick {serverTick}）。");
+                }
             }
             catch(Exception error){log?.LogError($"TickHost.Delta 子系统异常（已隔离）：{error}");}
         }

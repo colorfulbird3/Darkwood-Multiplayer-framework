@@ -155,7 +155,7 @@ internal static class DarkwoodContainerPutPatch
     }
 }
 
-/// <summary>Grab/controller-pickup from a shared container runs locally and reports the container state.</summary>
+/// <summary>P0-D/E：从共享容器 grab → 主机权威 HeldItem（鼠标吸附 cursor），不再直接进背包。</summary>
 [HarmonyPatch]
 internal static class DarkwoodContainerGrabPatch
 {
@@ -172,7 +172,7 @@ internal static class DarkwoodContainerGrabPatch
         if (__instance?.inventory == null || !DarkwoodEntityStateAdapter.IsShared(__instance.inventory)) return true;
         if (runtime.IsClient)
         {
-            runtime.TryRequestContainerTake(__instance);
+            runtime.TryRequestContainerGrab(__instance);
             return false;
         }
         return true;
@@ -200,11 +200,32 @@ internal static class DarkwoodContainerDragDestinationPatch
         yield return AccessTools.Method(typeof(InvSlot), nameof(InvSlot.swapItems), Type.EmptyTypes);
     }
 
-    private static void Prefix(InvSlot __instance, out Inventory? __state)
+    private static bool Prefix(InvSlot __instance, out Inventory? __state)
     {
         // 记录拖拽来源（可能是共享容器），执行后来源容器状态可能已变化，需一并上报。
         var picked = Singleton<Controller>.Instance?.pickedUpItem;
         __state = picked?.slot?.inventory;
+        // P0-D/E：鼠标手持物品（HeldItem）放进玩家背包——改发 HeldToInventory（Host shadow.Add），阻止本地放置
+        //（原版 placeItem 依赖 pickedUpItem.slot，而生成本地无 slot → 会 NullRef/卡住）。
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime != null && runtime.IsClient && runtime.State == DarkwoodMultiplayerFramework.Core.ConnectionState.Ready && !runtime.replication.ApplyingRemote)
+        {
+            if (!InvItemClass.isNull(picked) && __instance?.inventory != null)
+            {
+                var invType = __instance.inventory.invType;
+                if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar)
+                {
+                    runtime.TryRequestHeldToInventory();
+                    return false;
+                }
+                if (DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
+                {
+                    DarkwoodAdapterRuntime.LogMessage("[RUNTIME] held→共享容器暂不支持：请先放回背包或丢到地面。");
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static void Postfix(InvSlot __instance, Inventory? __state)

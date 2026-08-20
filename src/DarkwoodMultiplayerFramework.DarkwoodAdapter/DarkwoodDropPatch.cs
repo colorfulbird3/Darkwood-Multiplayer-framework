@@ -50,10 +50,8 @@ internal static class DarkwoodDropPatch
         }
 
         if (runtime.IsClient)
-        {
-            runtime.TryRequestDrop(_item);
-            return false;
-        }
+            // P0-C：来源只解析一次（Prefix 里已有 payload），绝不二次 BuildPayload（否则 UI/握持状态已变 → 解析失败 → Drop 被拒）。
+            return runtime.TryRequestDrop(payload);
 
         return true;
     }
@@ -63,6 +61,17 @@ internal static class DarkwoodDropPatch
         var player = Player.Instance;
         var slot = item.slot;
         var runtime = DarkwoodAdapterRuntime.Instance;
+        // P0-D/E：鼠标手持物品（原版"Cursor held item"无背包槽）→ Origin=HeldItem，Host 从权威 HeldItem 扣减。
+        if ((slot == null || slot.inventory == null) && runtime != null && runtime.IsClient)
+        {
+            var controller = Singleton<Controller>.Instance;
+            if (controller != null && !InvItemClass.isNull(controller.pickedUpItem) && ReferenceEquals(controller.pickedUpItem, item))
+            {
+                var pos0 = player != null ? player._transform.position : Vector3.zero;
+                var rot0 = player != null ? player._transform.rotation : Quaternion.identity;
+                return new DropItemPayload(false, -1, Math.Max(1, item.amount), pos0.x, pos0.y, pos0.z, rot0.x, rot0.y, rot0.z, rot0.w, DropOriginWire.HeldItem);
+            }
+        }
         var fromHotbar = false;
         var slotIndex = -1;
         var origin = DropOriginWire.PlayerSlot;

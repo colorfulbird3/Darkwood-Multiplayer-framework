@@ -20,6 +20,10 @@ internal interface IMultiplayerRuntimeHost
     DarkwoodEntityReplication Replication { get; }
     /// <summary>玩家服务（Combat 的倒地/营救需要读远端坐标）。</summary>
     DarkwoodPlayerService Players { get; }
+    /// <summary>每玩家权威鼠标手持物品（P0-D/E：World 从 HeldItems 扣减 drop 来源）。</summary>
+    /// <param name="held">null 表示清除该玩家的手持物品。</param>
+    void SetHeldItem(int peer, HeldItemStatePayload? held);
+    bool TryGetHeldItem(int peer, out HeldItemStatePayload held);
     /// <summary>本机玩家 ID（客户端 = 握手分配的 PeerId，主机 = 0，未连接 = -1）。</summary>
     int LocalPeerId { get; }
 

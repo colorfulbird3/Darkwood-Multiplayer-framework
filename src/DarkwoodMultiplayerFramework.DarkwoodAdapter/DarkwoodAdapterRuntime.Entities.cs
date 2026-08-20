@@ -59,6 +59,8 @@ public sealed partial class DarkwoodAdapterRuntime
             case ActionKindWire.DropItem: HandleDropRequest(peer,request);return;
             case ActionKindWire.ContainerTake: HandleContainerTakeRequest(peer,request);return;
             case ActionKindWire.ContainerPut: HandleContainerPutRequest(peer,request);return;
+            case ActionKindWire.ContainerGrab: HandleContainerGrabRequest(peer,request);return;
+            case ActionKindWire.HeldToInventory: HandleHeldToInventoryRequest(peer,request);return;
             case ActionKindWire.ItemInteract: HandleItemInteractRequest(peer,request);return;
             default: RejectAction(peer,request,"UNSUPPORTED_ACTION",0);return;
         }
@@ -78,17 +80,41 @@ public sealed partial class DarkwoodAdapterRuntime
         // The remote player's inventory is represented by a host-side shadow until
         // the Inventory Transaction protocol is introduced. Never mutate Host's
         // local Player inventory while applying a remote request.
+        // P0-A：成功事务 → 分生命周期。
+        //  - Runtime 实体（dropped item，Persistent=false）：走 RuntimeEntityDespawn 专用生命周期，
+        //    绝不能只发普通 EntityDelta.Despawn（否则客户端 mirror/registry 不清理，留下 ghost 包袱）。
+        //  - Persistent 实体：继续 EntityDelta.Despawns。
+        ActionResultMessage result = default;
+        if (!id.IsPersistent && RuntimeEntities != null)
+        {
+            shadow.Add(source);
+            droppedInventory.slots[0].removeItem();
+            droppedInventory.refreshItems();
+            ulong rev=0; if (replication.TryGetState(id, out var st)) rev = st.Revision;
+            RuntimeEntities.BroadcastDespawn(id.Value, RuntimeEntityDespawnReason.Collected); // 广播 RuntimeEntityDespawn → 客户端 HandleDespawn 清理
+            replication.UnregisterRuntimeEntity(id);
+            serverTick++;
+            rev++; // 客户端 ack 用
+            if (item != null) try { UnityEngine.Object.Destroy(item.gameObject); } catch (Exception) { }
+            result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,rev,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
+            RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(rev),string.Empty)));acceptedActions++;
+            cachedActionResults[request.RequestId]=result;
+            cachedActionOwners[request.RequestId]=peer;
+            Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
+            log?.LogInfo($"[RUNTIME] pickup id={id} peer={peer} {pickup.ItemType} x{pickup.Amount} → RuntimeEntityDespawn(PickedUp)+unregister，包袱销毁。");
+            return;
+        }
         shadow.Add(source);
         droppedInventory.slots[0].removeItem();
         droppedInventory.refreshItems();
         var despawn=replication.MarkDespawned(id);serverTick++;
-        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,despawn.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
+        result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,despawn.Revision,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
         RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(despawn.Revision),string.Empty)));acceptedActions++;
         cachedActionResults[request.RequestId]=result;
         cachedActionOwners[request.RequestId]=peer;
         Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
         var delta=ReplicationProtocolCodec.Encode(new EntityDeltaMessage(CurrentScene,serverTick,Array.Empty<EntityStateWire>(),new[]{despawn}));foreach(var readyPeer in readyPeers.ToArray())Queue(readyPeer,ProtocolMessageType.EntityDelta,delta);
-        log?.LogInfo($"Pickup accepted {request.RequestId}: peer {peer}, {pickup.ItemType} x{pickup.Amount}, target {id}, revision {despawn.Revision}.");
+        log?.LogInfo($"[RUNTIME] pickup id={id} peer={peer} {pickup.ItemType} x{pickup.Amount}（persistent despawn）。");
     }
 
     private void HandleItemInteractRequest(int peer,ActionRequestMessage request)
@@ -131,6 +157,52 @@ public sealed partial class DarkwoodAdapterRuntime
         cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
         Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
         log?.LogInfo($"ContainerTake accepted {request.RequestId}: peer {peer}, {item.type} x{amount}, container {id}, slot {payload.SlotIndex}.");
+    }
+
+    // P0-D/E：共享容器 grab → 该玩家权威 HeldItem（鼠标手持）。客户端据此恢复原版 cursor UX。
+    private void HandleContainerGrabRequest(int peer,ActionRequestMessage request)
+    {
+        ContainerGrabPayload payload;
+        try{payload=ReplicationProtocolCodec.DecodeContainerGrab(request.Payload);}
+        catch(Exception error){RejectAction(peer,request,"INVALID_GRAB_PAYLOAD",0);log?.LogWarning($"ContainerGrab payload rejected from peer {peer}: {error.Message}");return;}
+        var id=new EntityId(request.TargetValue,request.TargetPersistent);
+        if(!replication.TryGetInventory(id,out var container)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
+        if(!DarkwoodEntityStateAdapter.IsShared(container)){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
+        if(payload.SlotIndex<0||payload.SlotIndex>=container.slots.Count){RejectAction(peer,request,"SLOT_OUT_OF_RANGE",0);return;}
+        var slot=container.slots[payload.SlotIndex];
+        if(InvItemClass.isNull(slot.invItem)){RejectAction(peer,request,"SLOT_EMPTY",0);return;}
+        var amount=Math.Max(1,Math.Min(payload.Amount>0?payload.Amount:slot.invItem.amount,slot.invItem.amount));
+        // 已有 HeldItem 未清 → 拒绝（防覆盖丢物品）
+        if(HeldItems.ContainsKey(peer)){RejectAction(peer,request,"ALREADY_HOLDING",0);return;}
+        // 事务：容器扣 → HeldItem
+        var held=new HeldItemStatePayload(slot.invItem.type,amount,slot.invItem.durability,(int)slot.invItem.modifierQuality,slot.invItem.isRecipe);
+        slot.invItem.amount-=amount;
+        if(slot.invItem.amount<=0)slot.removeItem();
+        slot.inventory?.refreshItems();
+        HeldItems[peer]=held;
+        var state=replication.CaptureAuthoritativeInventory(id);
+        BroadcastInventory(state);
+        var result=new ActionResultMessage(request.RequestId,request.Kind,id.Value,id.IsPersistent,state.Revision,ReplicationProtocolCodec.Encode(held));
+        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(state.Revision),string.Empty)));acceptedActions++;
+        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
+        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
+        log?.LogInfo($"[RUNTIME] ContainerGrab accepted {request.RequestId}: peer {peer}, {held.Type} x{held.Amount} → HeldItem（cursor），容器 {id} 槽 {payload.SlotIndex}。");
+    }
+
+    // P0-D/E：鼠标 HeldItem 放回玩家背包（Host shadow.Add → HeldItem 清空 → 返回背包状态）。
+    private void HandleHeldToInventoryRequest(int peer,ActionRequestMessage request)
+    {
+        if(!HeldItems.TryGetValue(peer,out var held)||held.IsEmpty){RejectAction(peer,request,"NOT_HOLDING",0);return;}
+        if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
+        var item=new InvItemClass(held.Type,held.Durability,held.Amount,(InvItem.ModifierQuality)held.Quality,held.Recipe);
+        if(!shadow.CanAdd(item)){RejectAction(peer,request,"INVENTORY_FULL",0);return;}
+        HeldItems.Remove(peer);
+        shadow.Add(item);
+        var result=new ActionResultMessage(request.RequestId,request.Kind,0,false,0,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
+        RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(0),string.Empty)));acceptedActions++;
+        cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
+        Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
+        log?.LogInfo($"[RUNTIME] HeldToInventory accepted: peer {peer}, {held.Type} x{held.Amount} → 背包。");
     }
 
     private void HandleContainerPutRequest(int peer,ActionRequestMessage request)
