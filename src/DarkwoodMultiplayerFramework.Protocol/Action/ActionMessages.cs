@@ -16,7 +16,9 @@ public enum ActionKindWire : byte
     DropItem = 8,
     ItemInteract = 9,
     ContainerMove = 10,
-    DeployItem = 11
+    DeployItem = 11,
+    ContainerGrab = 12,       // 从共享容器 grab 到鼠标（HeldItem）——P0-D/E
+    HeldToInventory = 13      // 鼠标 HeldItem 放回玩家背包——P0-D/E
 }
 
 /// <summary>Drop 来源：决定 Host 从哪个权威状态扣减物品。</summary>
@@ -25,7 +27,24 @@ public enum DropOriginWire : byte
     /// <summary>玩家自己的背包/快捷栏槽位（Host 从权威影子背包读槽）。</summary>
     PlayerSlot = 0,
     /// <summary>手上物品来自容器（共享容器/尸体/商人）——槽位属于来源容器，Host 从权威容器扣减。</summary>
-    SharedContainer = 1
+    SharedContainer = 1,
+    /// <summary>鼠标上手持的物品（Host 从该玩家 authoritative HeldItem 扣减）——P0-D/E。</summary>
+    HeldItem = 2
+}
+
+/// <summary>HeldItem（鼠标手持物品）的权威状态。客户端只据其恢复原版 cursor UI。</summary>
+public readonly struct HeldItemStatePayload
+{
+    public HeldItemStatePayload(string type,int amount,float durability,int quality,bool recipe)
+    {Type=type;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;}
+    public string Type { get; } public int Amount { get; } public float Durability { get; } public int Quality { get; } public bool Recipe { get; }
+    public bool IsEmpty => string.IsNullOrEmpty(Type) || Amount <= 0;
+}
+
+public readonly struct ContainerGrabPayload
+{
+    public ContainerGrabPayload(int slotIndex,int amount){SlotIndex=slotIndex;Amount=amount;}
+    public int SlotIndex { get; } public int Amount { get; }
 }
 
 /// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>
