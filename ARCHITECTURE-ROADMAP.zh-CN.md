@@ -1,32 +1,32 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.9-beta.4（2026-08-17）
+> 最后更新：0.8.9-beta.7（2026-08-20）
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.9-beta.4**（0.8.9 收尾：IMultiplayerRuntimeHost 窄依赖、Player 状态封装、SaveState 行为化、FaultInjectingTransport） |
-| 集成验证 | **VERIFY-001 核心玩法矩阵通过**（0.8.7）；**VERIFY-002 回环自测全链路通过**（详见 `docs/VERIFY-002.md`，0.8.9-beta.4 重构后复测通过）；0.8.8 新功能双机矩阵进行中 |
-| 下一开发版本 | 0.8.9 剩余工程（SelfTests 全量迁 xUnit / RuntimeEntityService 字典收拢 / UDP-KCP 评估）或新玩法 |
+| 当前发布版本 | **0.8.9-beta.7**（Host 权威实体 ID + 绑定清单 + 真实世界稳定门；存档传输/剥离修复；HeldItem 物品事务；Runtime 实体生命周期；World State Adapter 开端） |
+| 集成验证 | 构建 0 错 / xUnit 50/50 / SelfTests 85/85 / 回环自测全链路通过（见 RELEASE-NOTES-0.8.9-beta.7.md） |
+| 下一开发版本 | 发电机/灯光/事件类权威 transition；捕兽夹 armed/triggered/occupied 状态；World Adapter 覆盖审计高频对象 |
 | 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
 
 版本路线：
 
 ```text
-0.8.7-beta.1            ← 0.8.7 收口（VERIFY-001）
+0.8.7-beta.1            ← 主机权威实体注册表（冷启动自举）
         ↓
-0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换 + 回环自测（已完成）
+0.8.8-alpha.1..6        ← Runtime Entity 生命周期 + 场景切换 + 回环自测
         ↓
-0.8.8-beta.1..5         ← 封版 + Container Revision + 实机二轮修复（掉落物/夹子同步/营救/Despawn 定向）
+0.8.8-beta.1..5         ← 封版 + Container Revision + 实机修复（掉落物/夹子同步/营救/Despawn 定向）
         ↓
-0.8.9-beta.4            ← 0.8.9 收尾（服务拆分 + 传输抽象 + 故障注入测试；wire 未变）
+0.8.9-beta.6            ← 实体 ID/Binding 重构 + 世界稳定门 + 存档传输修复
         ↓
-0.8.8/0.8.9 实机矩阵    ← 双机验证 Runtime Entity / 掉落物 / 场景切换 / 长时稳定性
+0.8.9-beta.7            ← 当前发布：HeldItem 物品事务 + Runtime 生命周期 + World Adapter 开端 + 容错诊断
         ↓
-0.8.9+                  ← 剩余工程（xUnit 全量迁移 / RuntimeEntityService 收拢 / UDP-KCP 评估）→ 稳定性
+0.8.9 实机矩阵          ← 双机验证物品链 / 发电机大世界状态 / 长时稳定性
         ↓
-0.9.0-alpha             ← 恢复横向扩展玩法
+0.9.0                    ← 恢复横向扩展玩法
 ```
 
 ---
