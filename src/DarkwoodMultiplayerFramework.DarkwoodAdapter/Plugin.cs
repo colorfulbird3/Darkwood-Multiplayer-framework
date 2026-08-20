@@ -15,8 +15,8 @@ public sealed class Plugin : BaseUnityPlugin
     // BepInEx 5 parses this value as System.Version while scanning plugins.
     // A SemVer prerelease suffix (for example 0.8.7-alpha.1) makes the
     // chainloader silently skip the assembly and report "0 plugins to load".
-    public const string PluginVersion = "0.8.9.10";
-    public const string DisplayVersion = "0.8.9-beta.10";
+    public const string PluginVersion = "0.8.9.7";
+    public const string DisplayVersion = "0.8.9-beta.7";
     public const string Version = DisplayVersion;
 
     private GameObject? runtimeObject;
