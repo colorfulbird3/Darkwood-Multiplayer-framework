@@ -215,7 +215,7 @@ internal static class DarkwoodContainerDragDestinationPatch
                 var invType = __instance.inventory.invType;
                 if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar)
                 {
-                    runtime.TryRequestHeldToInventory();
+                    runtime.TryRequestHeldToInventory(invType == Inventory.InvType.hotbar, __instance.inventory.slots.IndexOf(__instance));
                     return false;
                 }
                 if (DarkwoodEntityStateAdapter.IsShared(__instance.inventory))

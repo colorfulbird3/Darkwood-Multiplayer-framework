@@ -97,6 +97,29 @@ internal sealed class DarkwoodPlayerInventoryShadow
         var slot=source[slotIndex];slot.Amount-=amount;if(slot.Amount==0)Clear(slot);return true;
     }
 
+    public enum HeldPlaceResult : byte { Placed, Stacked, Occupied, Invalid }
+    /// <summary>P0-3：原版 InvSlot.placeItem 语义按目标槽放置：空 → place；同类可堆叠 → stack；占用 → Occupied。</summary>
+    public HeldPlaceResult PlaceAt(bool fromHotbar,int slotIndex,InvItemClass source)
+    {
+        var slots = fromHotbar ? hotbar : backpack;
+        if(source==null||InvItemClass.isNull(source)||source.baseClass==null||slotIndex<0||slotIndex>=slots.Count)return HeldPlaceResult.Invalid;
+        var slot=slots[slotIndex];
+        if(string.IsNullOrEmpty(slot.Type))
+        {
+            slot.Type=source.type;slot.Stackable=source.baseClass.stackable;slot.MaxAmount=Math.Max(1,source.baseClass.maxAmount);
+            slot.Amount=source.baseClass.stackable?Math.Min(source.amount,slot.MaxAmount):1;slot.Durability=source.durability;slot.Quality=(int)source.modifierQuality;slot.Recipe=source.isRecipe;
+            return HeldPlaceResult.Placed;
+        }
+        if(slot.Stackable&&slot.Type==source.type&&slot.Amount<slot.MaxAmount)
+        {
+            var add=Math.Min(source.amount,slot.MaxAmount-slot.Amount);
+            slot.Durability=InvItemClass.getStackedDurability(ToItemClass(slot),source,add);
+            slot.Amount+=add;
+            return HeldPlaceResult.Stacked;
+        }
+        return HeldPlaceResult.Occupied;
+    }
+
     /// <summary>客户端上报真实背包后整体重建（本地合成/搜尸体等漂移收敛）。</summary>
     public void Rebuild(InventorySlotWire[] backpackWire, InventorySlotWire[] hotbarWire, Action<string>? warn = null)
     {

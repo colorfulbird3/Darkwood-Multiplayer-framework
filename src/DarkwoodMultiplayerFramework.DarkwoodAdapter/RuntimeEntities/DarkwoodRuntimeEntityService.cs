@@ -50,8 +50,15 @@ public sealed class DarkwoodRuntimeEntityService
     {
         var message = BuildSpawn(kind, prototypeId, position, rotation, initialState);
         if (message.RuntimeEntityId == 0) return 0;
-        foreach (var readyPeer in runtime.readyPeers.ToArray()) SendSpawnTo(readyPeer, message);
-        runtime.log?.LogInfo($"主机已广播运行时实体生成：ID {message.RuntimeEntityId}，类型 {kind}，原型 {prototypeId}，tick {runtime.serverTick}。");
+        // P0-6：BroadcastSpawn 必须登记 recipient bookkeeping（dispatch.TryMark），
+        // 否则 BroadcastDespawn 只发 WasSent==true 的 peer 时，收到过 Spawn 的客户端永远收不到 Despawn（ghost）。
+        foreach (var readyPeer in runtime.readyPeers.ToArray())
+        {
+            dispatch.TryMark(message.RuntimeEntityId, readyPeer);
+            SendSpawnTo(readyPeer, message);
+            runtime.log?.LogInfo($"[RUNTIME] spawn id={message.RuntimeEntityId} peer={readyPeer} kind={kind} proto={prototypeId}");
+        }
+        runtime.log?.LogInfo($"[RUNTIME] spawn 广播完成：ID {message.RuntimeEntityId}，类型 {kind}，tick {runtime.serverTick}。");
         return message.RuntimeEntityId;
     }
 
@@ -61,9 +68,11 @@ public sealed class DarkwoodRuntimeEntityService
         if (!runtime.Session.IsHost || !registry.Remove(runtimeEntityId)) return false;
         var payload = ReplicationProtocolCodec.Encode(new RuntimeEntityDespawnMessage(runtimeEntityId, runtime.serverTick, reason));
         foreach (var readyPeer in runtime.readyPeers.ToArray())
-            if (dispatch.WasSent(runtimeEntityId, readyPeer))
-                runtime.Queue(readyPeer, ProtocolMessageType.RuntimeEntityDespawn, payload);
-        runtime.log?.LogInfo($"主机已广播运行时实体移除：ID {runtimeEntityId}，原因 {reason}，tick {runtime.serverTick}。");
+        {
+            var wasSent = dispatch.WasSent(runtimeEntityId, readyPeer);
+            if (wasSent) runtime.Queue(readyPeer, ProtocolMessageType.RuntimeEntityDespawn, payload);
+            runtime.log?.LogInfo($"[RUNTIME] despawn id={runtimeEntityId} peer={readyPeer} 原因={reason} dispatchWasSent={wasSent}");
+        }
         return true;
     }
 
@@ -212,13 +221,14 @@ public sealed class DarkwoodRuntimeEntityService
         else if (spawn.Kind == RuntimeEntityKind.Enemy) SpawnEnemyMirror(spawn);
     }
 
-    /// <summary>客户端处理 Despawn：移除登记 + 销毁镜像。未登记的 ID 静默忽略（beta.5）。</summary>
+    /// <summary>客户端处理 Despawn：移除登记 + 销毁镜像 + 从 replication 卸载（P0-A：dropped item 不能留 ghost EntityId）。未登记的 ID 静默忽略（beta.5）。</summary>
     public void HandleDespawn(RuntimeEntityDespawnMessage despawn)
     {
         if (!registry.Remove(despawn.RuntimeEntityId)) return;
         if (clientInventoryMirrors.TryGetValue(despawn.RuntimeEntityId, out var mirror))
         {
             clientInventoryMirrors.Remove(despawn.RuntimeEntityId);
+            runtime.replication.UnregisterRuntimeEntity(new EntityId(despawn.RuntimeEntityId, false));
             if (mirror != null) UnityEngine.Object.Destroy(mirror.gameObject);
         }
         if (clientEnemyMirrors.TryGetValue(despawn.RuntimeEntityId, out var enemy))
@@ -227,7 +237,7 @@ public sealed class DarkwoodRuntimeEntityService
             runtime.replication.UnregisterRuntimeEntity(new EntityId(despawn.RuntimeEntityId, false));
             if (enemy != null) UnityEngine.Object.Destroy(enemy.gameObject);
         }
-        runtime.log?.LogInfo($"客户端已移除运行时实体：ID {despawn.RuntimeEntityId}，原因 {despawn.Reason}。");
+        runtime.log?.LogInfo($"[RUNTIME] despawn recv id={despawn.RuntimeEntityId} 原因={despawn.Reason} mirror 已销毁，replication 已卸载。");
     }
 
     private void SpawnLootContainerMirror(RuntimeEntitySpawnMessage spawn)

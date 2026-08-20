@@ -119,25 +119,36 @@ public sealed partial class DarkwoodAdapterRuntime
         if(result.Payload.Length>0)
         {
             // P0-D/E：按 Action 类型分派——ContainerGrab 返回 HeldItemState（吸附鼠标）；其余返回玩家背包状态。
-            if(result.Kind==ActionKindWire.ContainerGrab) AttachHeldItem(ReplicationProtocolCodec.DecodeHeldItemState(result.Payload));
+            if(result.Kind==ActionKindWire.ContainerGrab)
+            {
+                // P0-2：用请求时保存的原始 InvItemClass 快照恢复原版 cursor（copy constructor 保留 UIInvItem/slot）。
+                if (pendingGrabSnapshots.TryGetValue(result.RequestId, out var snapshot))
+                {
+                    pendingGrabSnapshots.Remove(result.RequestId);
+                    AttachHeldItemFromSnapshot(snapshot);
+                }
+            }
             else if(result.Kind==ActionKindWire.HeldToInventory) { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); ClearHeldItem(); }
-            else if(result.Kind==ActionKindWire.DropItem) { /* 背包可能在 drop 中被扣减：Host 返回 shadow → 应用 */ try{ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));}catch(Exception){} }
+            else if(result.Kind==ActionKindWire.DropItem) { try{ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));}catch(Exception){} ClearHeldItem(); }
             else ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload));
         }
         log?.LogInfo($"已应用主机权威操作结果：请求 {result.RequestId}，类型 {result.Kind}，目标 {result.TargetValue:X16}，版本 {result.Revision}。");
     }
 
-    /// <summary>P0-D/E：恢复原版 cursor 吸附——主机的 HeldItem 权威已成立，客户端仅在本地把物品挂上鼠标（原版 grabItem 的核心语义）。</summary>
-    internal static void AttachHeldItem(HeldItemStatePayload held)
+    // P0-2：恢复原版 cursor 吸附（InvSlot.grabItem 的 copy-constructor 语义，保留 UIInvItem/slot/数量）。
+    // 绝不重建一个缺 UIInvItem/slot 的残缺 InvItemClass。
+    internal static void AttachHeldItemFromSnapshot(InvItemClass snapshot)
     {
-        if(held.IsEmpty)return;
+        if(snapshot==null||InvItemClass.isNull(snapshot))return;
         var controller=Singleton<Controller>.Instance;
         if(controller==null)return;
         if(!InvItemClass.isNull(controller.pickedUpItem))return; // 已有手持不覆盖
-        controller.pickedUpItem=new InvItemClass(held.Type,held.Durability,held.Amount,(InvItem.ModifierQuality)held.Quality,held.Recipe);
+        var sourceSlot=snapshot.slot;
+        controller.pickedUpItem=new InvItemClass(snapshot);
         var player=Player.Instance;
         if(player!=null)try{player.cursor.hasItemMenu=false;}catch(Exception){}
-        DarkwoodAdapterRuntime.LogMessage($"[RUNTIME] held attach: {held.Type} x{held.Amount} → cursor（pickedUpItem）。");
+        try{var ui=Singleton<UI>.Instance;if(ui?.InventorySelectionPrompt!=null&&sourceSlot?.UIInvSlot!=null)ui.InventorySelectionPrompt.Show(sourceSlot.UIInvSlot);}catch(Exception){}
+        DarkwoodAdapterRuntime.LogMessage($"[HELD] cursor attach: UIInvItem={(controller.pickedUpItem.UIInvItem!=null?"有":"无")} slot={(controller.pickedUpItem.slot!=null?"有":"无")} amount={controller.pickedUpItem.amount}。");
     }
     internal static void ClearHeldItem()
     {

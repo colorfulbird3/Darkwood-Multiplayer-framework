@@ -47,6 +47,13 @@ public readonly struct ContainerGrabPayload
     public int SlotIndex { get; } public int Amount { get; }
 }
 
+/// <summary>P0-3：HeldToInventory 必须带真实目标槽（原版 InvSlot.placeItem 语义：empty→place / 同类可堆叠→stack）。</summary>
+public readonly struct HeldToInventoryPayload
+{
+    public HeldToInventoryPayload(bool fromHotbar,int targetSlot){FromHotbar=fromHotbar;TargetSlot=targetSlot;}
+    public bool FromHotbar { get; } public int TargetSlot { get; }
+}
+
 /// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>
 public readonly struct DropItemPayload
 {

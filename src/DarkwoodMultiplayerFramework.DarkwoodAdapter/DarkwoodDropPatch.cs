@@ -27,19 +27,9 @@ internal static class DarkwoodDropPatch
         if (payload.SlotIndex < 0 && payload.Origin == DropOriginWire.PlayerSlot)
             return true;
 
-        // 原版 spawnDroppedInvItem 被拦截后不会执行 pickedUpItem 复位（80885-80892），
-        // 否则拖拽/丢弃光标会卡在"丢弃"状态。这里手动执行等价清理。
-        try
-        {
-            var controller = Singleton<Controller>.Instance;
-            if (controller != null && controller.pickedUpItem == _item)
-            {
-                var ui = controller.pickedUpItem.UIInvItem;
-                if (ui != null && ui.transform != null) ui.despawn();
-                controller.pickedUpItem = null;
-            }
-        }
-        catch (Exception) { /* UI 清理失败不阻断丢弃 */ }
+        // P0-5：绝不提前清 cursor / pickedUpItem——Drop 是乐观保底语义，失败时物品必须留在手上。
+        // 清除动作只在 Host Accepted（RuntimeEntitySpawn + ActionResult）后由 ack 路径执行；Rejected 保持原样。
+
         var player = Player.Instance;
         if (player != null) { try { player.refreshRecipes(); } catch (Exception) { } }
 
@@ -61,8 +51,9 @@ internal static class DarkwoodDropPatch
         var player = Player.Instance;
         var slot = item.slot;
         var runtime = DarkwoodAdapterRuntime.Instance;
-        // P0-D/E：鼠标手持物品（原版"Cursor held item"无背包槽）→ Origin=HeldItem，Host 从权威 HeldItem 扣减。
-        if ((slot == null || slot.inventory == null) && runtime != null && runtime.IsClient)
+        // P0-7：鼠标手持物品（原版"Cursor held item"）不区分端——Host/Client 都用 Controller.pickedUpItem 识别。
+        // 绝不能因为它仍指向已被 grabItem 清空的源容器槽而误判为 SharedContainer（→ SLOT_EMPTY → Drop 失败）。
+        if (slot == null || slot.inventory == null)
         {
             var controller = Singleton<Controller>.Instance;
             if (controller != null && !InvItemClass.isNull(controller.pickedUpItem) && ReferenceEquals(controller.pickedUpItem, item))

@@ -169,9 +169,10 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!replication.TryGetInventory(id,out var container)){RejectAction(peer,request,"CONTAINER_NOT_FOUND",0);return;}
         if(!DarkwoodEntityStateAdapter.IsShared(container)){RejectAction(peer,request,"NOT_SHARED_CONTAINER",0);return;}
         if(payload.SlotIndex<0||payload.SlotIndex>=container.slots.Count){RejectAction(peer,request,"SLOT_OUT_OF_RANGE",0);return;}
-        var slot=container.slots[payload.SlotIndex];
-        if(InvItemClass.isNull(slot.invItem)){RejectAction(peer,request,"SLOT_EMPTY",0);return;}
-        var amount=Math.Max(1,Math.Min(payload.Amount>0?payload.Amount:slot.invItem.amount,slot.invItem.amount));
+        var slot = container.slots[payload.SlotIndex];
+        if (InvItemClass.isNull(slot.invItem)) { RejectAction(peer, request, "SLOT_EMPTY", 0); return; }
+        // P0-1：原版 grabItem 拿整个 InvItemClass/整堆；数量以权威槽为准（不信任客户端 amount）。
+        var amount = Math.Max(1, slot.invItem.amount);
         // 已有 HeldItem 未清 → 拒绝（防覆盖丢物品）
         if(HeldItems.ContainsKey(peer)){RejectAction(peer,request,"ALREADY_HOLDING",0);return;}
         // 事务：容器扣 → HeldItem
@@ -189,20 +190,25 @@ public sealed partial class DarkwoodAdapterRuntime
         log?.LogInfo($"[RUNTIME] ContainerGrab accepted {request.RequestId}: peer {peer}, {held.Type} x{held.Amount} → HeldItem（cursor），容器 {id} 槽 {payload.SlotIndex}。");
     }
 
-    // P0-D/E：鼠标 HeldItem 放回玩家背包（Host shadow.Add → HeldItem 清空 → 返回背包状态）。
+    // P0-D/E + P0-3：鼠标 HeldItem 放回玩家背包指定槽（原版 placeItem 语义：empty→place / 同类→stack）。
     private void HandleHeldToInventoryRequest(int peer,ActionRequestMessage request)
     {
+        HeldToInventoryPayload payload;
+        try{payload=ReplicationProtocolCodec.DecodeHeldToInventory(request.Payload);}
+        catch(Exception error){RejectAction(peer,request,"INVALID_HELD_PLACE_PAYLOAD",0);log?.LogWarning($"HeldToInventory payload rejected from peer {peer}: {error.Message}");return;}
         if(!HeldItems.TryGetValue(peer,out var held)||held.IsEmpty){RejectAction(peer,request,"NOT_HOLDING",0);return;}
         if(!Players.TryGetInventory(peer,out var shadow)){RejectAction(peer,request,"PLAYER_INVENTORY_MISSING",0);return;}
         var item=new InvItemClass(held.Type,held.Durability,held.Amount,(InvItem.ModifierQuality)held.Quality,held.Recipe);
-        if(!shadow.CanAdd(item)){RejectAction(peer,request,"INVENTORY_FULL",0);return;}
+        var place=shadow.PlaceAt(payload.FromHotbar,payload.TargetSlot,item);
+        if(place!=DarkwoodPlayerInventoryShadow.HeldPlaceResult.Placed&&place!=DarkwoodPlayerInventoryShadow.HeldPlaceResult.Stacked)
+        { RejectAction(peer,request,place==DarkwoodPlayerInventoryShadow.HeldPlaceResult.Occupied?"SLOT_OCCUPIED":"INVALID_TARGET_SLOT",0);
+          log?.LogInfo($"[HELD] place-rejected peer={peer} {held.Type} x{held.Amount} 目标={(payload.FromHotbar?"hotbar":"playerInv")}:{payload.TargetSlot} result={place}。"); return; }
         HeldItems.Remove(peer);
-        shadow.Add(item);
         var result=new ActionResultMessage(request.RequestId,request.Kind,0,false,0,ReplicationProtocolCodec.Encode(shadow.CaptureState()));
         RemoveEvictedAction(actionCache.Store(new NetworkActionResult(request.RequestId,true,new StateVersion(0),string.Empty)));acceptedActions++;
         cachedActionResults[request.RequestId]=result;cachedActionOwners[request.RequestId]=peer;
         Queue(peer,ProtocolMessageType.ActionResult,ReplicationProtocolCodec.Encode(result));
-        log?.LogInfo($"[RUNTIME] HeldToInventory accepted: peer {peer}, {held.Type} x{held.Amount} → 背包。");
+        log?.LogInfo($"[HELD] place-accepted peer={peer} {held.Type} x{held.Amount} 目标={(payload.FromHotbar?"hotbar":"playerInv")}:{payload.TargetSlot} result={place}。");
     }
 
     private void HandleContainerPutRequest(int peer,ActionRequestMessage request)

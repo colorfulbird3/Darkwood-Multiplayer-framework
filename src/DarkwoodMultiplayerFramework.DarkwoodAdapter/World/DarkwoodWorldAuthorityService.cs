@@ -30,14 +30,28 @@ public sealed class DarkwoodWorldAuthorityService
         InvItemClass item;
         Inventory? sourceContainer = null;
         var originContainer = default(EntityId);
+        HeldItemStatePayload? resolvedHeld = null;
         if (payload.Origin == DropOriginWire.HeldItem)
         {
-            // P0-D/E：鼠标手持物品 —— 从该玩家权威 HeldItem 扣减（不放背包、不经槽）。
-            if (!runtime.TryGetHeldItem(peer, out var held) || held.IsEmpty) { reject(peer, request, "NOT_HOLDING", 0); return null; }
-            var take = Math.Max(1, Math.Min(payload.Amount, held.Amount));
-            item = new InvItemClass(held.Type, held.Durability, take, (InvItem.ModifierQuality)held.Quality, held.Recipe);
-            if (held.Amount <= take) runtime.SetHeldItem(peer, null);
-            else runtime.SetHeldItem(peer, new HeldItemStatePayload(held.Type, held.Amount - take, held.Durability, held.Quality, held.Recipe));
+            if (peer == 0)
+            {
+                // P0-7：Host 本地鼠标手持——从原版 Controller.pickedUpItem 读（权威 local cursor）。
+                // 绝不能回它的 slot（原版 copy constructor 会复制 slot，且该槽已被 grabItem 清空 → SLOT_EMPTY）。
+                var controller = Singleton<Controller>.Instance;
+                if (controller == null || InvItemClass.isNull(controller.pickedUpItem)) { reject(peer, request, "NOT_HOLDING", 0); return null; }
+                item = new InvItemClass(controller.pickedUpItem);
+                if (payload.Amount > item.amount) { reject(peer, request, "INSUFFICIENT_AMOUNT", 0); return null; }
+                item.amount = Math.Max(1, payload.Amount);
+                resolvedHeld = new HeldItemStatePayload(item.type, item.amount, item.durability, (int)item.modifierQuality, item.isRecipe);
+            }
+            else
+            {
+                // P0-4：远端 HeldItem —— 只读 resolve（不扣），commit 阶段才扣。
+                if (!runtime.TryGetHeldItem(peer, out var held) || held.IsEmpty) { reject(peer, request, "NOT_HOLDING", 0); return null; }
+                var take = Math.Max(1, Math.Min(payload.Amount, held.Amount));
+                item = new InvItemClass(held.Type, held.Durability, take, (InvItem.ModifierQuality)held.Quality, held.Recipe);
+                resolvedHeld = held;
+            }
         }
         else if (payload.Origin == DropOriginWire.SharedContainer)
         {
@@ -87,8 +101,29 @@ public sealed class DarkwoodWorldAuthorityService
             return null;
         }
 
-        // 创建成功 → 按来源扣减（扣减失败防御性回滚：销毁已创建的掉落物）
-        if (payload.Origin == DropOriginWire.SharedContainer)
+        // 创建成功 → 按来源扣减（P0-4：严格单来源 commit，HeldItem 绝不继续进 shadow；扣减失败防御性回滚）
+        if (payload.Origin == DropOriginWire.HeldItem)
+        {
+            // P0-4/P0-7：只从 HeldItem 权威扣（远端 HeldItems / Host Controller.pickedUpItem），禁止碰 player shadow。
+            if (peer == 0)
+            {
+                var controller = Singleton<Controller>.Instance;
+                if (controller != null && !InvItemClass.isNull(controller.pickedUpItem))
+                {
+                    var ui = controller.pickedUpItem.UIInvItem;
+                    if (ui != null && ui.transform != null) try { ui.despawn(); } catch (Exception) { }
+                    controller.pickedUpItem = null;
+                }
+            }
+            else if (resolvedHeld.HasValue)
+            {
+                var held = resolvedHeld.Value;
+                var take = Math.Max(1, Math.Min(payload.Amount, held.Amount));
+                if (held.Amount <= take) runtime.SetHeldItem(peer, null);
+                else runtime.SetHeldItem(peer, new HeldItemStatePayload(held.Type, held.Amount - take, held.Durability, held.Quality, held.Recipe));
+            }
+        }
+        else if (payload.Origin == DropOriginWire.SharedContainer)
         {
             var sourceSlot = sourceContainer!.slots[payload.SlotIndex];
             sourceSlot.invItem.amount -= payload.Amount;
@@ -106,6 +141,14 @@ public sealed class DarkwoodWorldAuthorityService
         }
         else
         {
+            // 仅 PlayerSlot origin 才从玩家 shadow 扣（HeldItem/SharedContainer 已有各自分支）。
+            if (payload.Origin != DropOriginWire.PlayerSlot)
+            {
+                UnityEngine.Object.Destroy(dropped.gameObject);
+                runtimeEntities.BroadcastDespawn(runtimeId, RuntimeEntityDespawnReason.Destroyed);
+                reject(peer, request, "UNRESOLVED_SOURCE", 0);
+                return null;
+            }
             if (!runtime.Players.TryGetInventory(peer, out var shadow) || !shadow.Remove(payload.FromHotbar, payload.SlotIndex, payload.Amount))
             {
                 UnityEngine.Object.Destroy(dropped.gameObject);

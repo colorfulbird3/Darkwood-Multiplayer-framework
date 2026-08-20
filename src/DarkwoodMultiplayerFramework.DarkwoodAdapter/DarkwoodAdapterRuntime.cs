@@ -93,6 +93,9 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     public DarkwoodPlayerService Players { get; private set; } = null!;
     // P0-D/E：每玩家的权威鼠标手持物品（远端玩家由 Host 维护；Host 本机走原版 pickedUpItem，不需这里）。
     public readonly Dictionary<int, HeldItemStatePayload> HeldItems = new Dictionary<int, HeldItemStatePayload>();
+    // P0-2：ContainerGrab 请求发送前保存原始 InvItemClass 快照（copy constructor 保留 UIInvItem/slot），
+    //        ack 后据此恢复原版 cursor 吸附（绝不重建残缺 InvItemClass）。
+    private readonly Dictionary<Guid, InvItemClass> pendingGrabSnapshots = new Dictionary<Guid, InvItemClass>();
     /// <summary>存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
     internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
     internal DarkwoodWorldAuthorityService World { get; private set; } = null!;

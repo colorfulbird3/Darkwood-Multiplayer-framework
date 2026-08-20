@@ -68,24 +68,28 @@ public sealed partial class DarkwoodAdapterRuntime
         var inventory=slot.inventory;
         if(inventory==null||!DarkwoodEntityStateAdapter.IsShared(inventory))return false;
         if(!TryGetEntityId(inventory,out var containerId))return false;
-        var slotIndex=inventory.slots.IndexOf(slot);
-        if(slotIndex<0)return false;
-        var payload=new ContainerGrabPayload(slotIndex,Math.Max(1,slot.itemAmount));
+        var slotIndex = inventory.slots.IndexOf(slot);
+        if (slotIndex < 0) return false;
+        // P0-1：原版 InvSlot.grabItem() 拿整个 InvItemClass（整堆），绝不是 1 个。
+        var payload = new ContainerGrabPayload(slotIndex, Math.Max(1, slot.invItem.amount));
         var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.ContainerGrab,containerId.Value,containerId.IsPersistent,0,ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId]=request;
+        // P0-2：在本地容器权威更新清空 source slot 之前保存原始整个槽快照（原版 grabItem 语义）。
+        if (slot.invItem != null && !InvItemClass.isNull(slot.invItem)) pendingGrabSnapshots[request.RequestId] = new InvItemClass(slot.invItem);
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"[RUNTIME] ContainerGrab request {request.RequestId} sent: container {containerId} slot {slotIndex} amount {payload.Amount}.");
+        log?.LogInfo($"[HELD] grab request: source={containerId} slot={slotIndex} type={(slot.invItem!=null?slot.invItem.type:"?")} amount={payload.Amount} uiPresent={(slot.invItem!=null&&slot.invItem.UIInvItem!=null)} sourceSlotPresent={(slot.invItem!=null&&slot.invItem.slot!=null)}。");
         return true;
     }
 
-    // P0-D/E：鼠标 HeldItem 放回玩家背包（Host shadow.Add）。
-    public bool TryRequestHeldToInventory()
+    // P0-D/E：鼠标 HeldItem 放回玩家背包指定槽（原版 placeItem 语义，Host shadow 按槽 commit）。
+    public bool TryRequestHeldToInventory(bool fromHotbar, int targetSlot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;
-        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.HeldToInventory,0,false,0,Array.Empty<byte>());
+        var payload=new HeldToInventoryPayload(fromHotbar,targetSlot);
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.HeldToInventory,0,false,0,ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
-        log?.LogInfo($"[RUNTIME] HeldToInventory request {request.RequestId} sent（held→backpack）。");
+        log?.LogInfo($"[HELD] place-intent target={(fromHotbar?"hotbar":"playerInv")}:{targetSlot}（HeldToInventory）。");
         return true;
     }
 
