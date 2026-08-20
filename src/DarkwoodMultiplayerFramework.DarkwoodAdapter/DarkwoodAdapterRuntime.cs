@@ -96,6 +96,26 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     // P0-2：ContainerGrab 请求发送前保存原始 InvItemClass 快照（copy constructor 保留 UIInvItem/slot），
     //        ack 后据此恢复原版 cursor 吸附（绝不重建残缺 InvItemClass）。
     private readonly Dictionary<Guid, InvItemClass> pendingGrabSnapshots = new Dictionary<Guid, InvItemClass>();
+    // P0-I：AuthorityReplayScope —— 客户端在 Host Accepted 后，在该作用域内直接执行 Darkwood 原版交互方法。
+    // Scope 内：replication.ApplyingRemote=true + ReplayingAuthoritativeAction=true —— 所有 Interaction Patch 据此放行原版且绝不二次发 Intent。
+    private int replayScopeDepth;
+    public bool ReplayingAuthoritativeAction => replayScopeDepth > 0;
+    public AuthorityReplayScopeHandle BeginAuthorityReplay()
+    {
+        replayScopeDepth++;
+        replication.BeginRemoteApply();
+        return new AuthorityReplayScopeHandle(this);
+    }
+    public sealed class AuthorityReplayScopeHandle : IDisposable
+    {
+        private readonly DarkwoodAdapterRuntime runtime;
+        public AuthorityReplayScopeHandle(DarkwoodAdapterRuntime runtime) { this.runtime = runtime; }
+        public void Dispose()
+        {
+            if (runtime.replayScopeDepth > 0) runtime.replayScopeDepth--;
+            if (runtime.replayScopeDepth <= 0) { runtime.replayScopeDepth = 0; runtime.replication.EndRemoteApply(); }
+        }
+    }
     /// <summary>存档/快照传输服务（传输状态与就绪标志的唯一入口）。</summary>
     internal DarkwoodSaveTransferService SaveState { get; private set; } = null!;
     internal DarkwoodWorldAuthorityService World { get; private set; } = null!;

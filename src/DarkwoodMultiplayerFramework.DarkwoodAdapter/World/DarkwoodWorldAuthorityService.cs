@@ -42,7 +42,7 @@ public sealed class DarkwoodWorldAuthorityService
                 item = new InvItemClass(controller.pickedUpItem);
                 if (payload.Amount > item.amount) { reject(peer, request, "INSUFFICIENT_AMOUNT", 0); return null; }
                 item.amount = Math.Max(1, payload.Amount);
-                resolvedHeld = new HeldItemStatePayload(item.type, item.amount, item.durability, (int)item.modifierQuality, item.isRecipe);
+                resolvedHeld = new HeldItemStatePayload(item.type, item.amount, item.durability, (int)item.modifierQuality, item.isRecipe, item.ammo);
             }
             else
             {
@@ -120,7 +120,7 @@ public sealed class DarkwoodWorldAuthorityService
                 var held = resolvedHeld.Value;
                 var take = Math.Max(1, Math.Min(payload.Amount, held.Amount));
                 if (held.Amount <= take) runtime.SetHeldItem(peer, null);
-                else runtime.SetHeldItem(peer, new HeldItemStatePayload(held.Type, held.Amount - take, held.Durability, held.Quality, held.Recipe));
+                else runtime.SetHeldItem(peer, new HeldItemStatePayload(held.Type, held.Amount - take, held.Durability, held.Quality, held.Recipe, held.Ammo));
             }
         }
         else if (payload.Origin == DropOriginWire.SharedContainer)

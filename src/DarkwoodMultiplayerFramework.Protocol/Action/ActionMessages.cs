@@ -18,7 +18,8 @@ public enum ActionKindWire : byte
     ContainerMove = 10,
     DeployItem = 11,
     ContainerGrab = 12,       // 从共享容器 grab 到鼠标（HeldItem）——P0-D/E
-    HeldToInventory = 13      // 鼠标 HeldItem 放回玩家背包——P0-D/E
+    HeldToInventory = 13,     // 鼠标 HeldItem 放回玩家背包——P0-D/E
+    PlayerGrab = 14           // 从自己背包/快捷栏 grab 到鼠标（Host HeldItems 权威）——P0-E/F
 }
 
 /// <summary>Drop 来源：决定 Host 从哪个权威状态扣减物品。</summary>
@@ -35,9 +36,9 @@ public enum DropOriginWire : byte
 /// <summary>HeldItem（鼠标手持物品）的权威状态。客户端只据其恢复原版 cursor UI。</summary>
 public readonly struct HeldItemStatePayload
 {
-    public HeldItemStatePayload(string type,int amount,float durability,int quality,bool recipe)
-    {Type=type;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;}
-    public string Type { get; } public int Amount { get; } public float Durability { get; } public int Quality { get; } public bool Recipe { get; }
+    public HeldItemStatePayload(string type,int amount,float durability,int quality,bool recipe,int ammo=0)
+    {Type=type;Amount=amount;Durability=durability;Quality=quality;Recipe=recipe;Ammo=ammo;}
+    public string Type { get; } public int Amount { get; } public float Durability { get; } public int Quality { get; } public bool Recipe { get; } public int Ammo { get; }
     public bool IsEmpty => string.IsNullOrEmpty(Type) || Amount <= 0;
 }
 
@@ -52,6 +53,13 @@ public readonly struct HeldToInventoryPayload
 {
     public HeldToInventoryPayload(bool fromHotbar,int targetSlot){FromHotbar=fromHotbar;TargetSlot=targetSlot;}
     public bool FromHotbar { get; } public int TargetSlot { get; }
+}
+
+/// <summary>P0-E/F：从玩家自己的背包/快捷栏 grab 到鼠标（Host HeldItems 权威）。原版 grab 是整个槽。</summary>
+public readonly struct PlayerGrabPayload
+{
+    public PlayerGrabPayload(bool fromHotbar,int slotIndex){FromHotbar=fromHotbar;SlotIndex=slotIndex;}
+    public bool FromHotbar { get; } public int SlotIndex { get; }
 }
 
 /// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>

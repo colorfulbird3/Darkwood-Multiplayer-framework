@@ -11,6 +11,9 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 public sealed class DarkwoodEntityReplication
 {
     private readonly Dictionary<EntityId,Component> entities=new Dictionary<EntityId,Component>(); private readonly Dictionary<EntityId,WorldEntityBinding> bindings=new Dictionary<EntityId,WorldEntityBinding>(); private readonly Dictionary<EntityId,EntityStateWire> last=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,EntityStateWire> targets=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,InventoryStateMessage> lastInventories=new Dictionary<EntityId,InventoryStateMessage>(); private readonly HashSet<Character> frozen=new HashSet<Character>(); private readonly HashSet<Character> deadCharacters=new HashSet<Character>(); private ulong revision; public bool ApplyingRemote {get;private set;}
+    // P0-I（决策：AuthorityReplayScope 进入时也置 ApplyingRemote，防止 Replay 内原版交互再发 Intent）。
+    public void BeginRemoteApply()=>ApplyingRemote=true;
+    public void EndRemoteApply()=>ApplyingRemote=false;
     // P0-2/P0-3：实体已销毁（Unity destroyed/missing）的限频诊断（每实体每 10s 打一次，避免刷屏）。
     private readonly Dictionary<EntityId,float> staleLoggedAt=new Dictionary<EntityId,float>();
     // P1：per-kind 同步统计（0=未知 1=Character 2=Door 3=Window 4=Item 5=Inventory）。Host 用 Changed/Sent；Client 用 Received/Applied/Missing。

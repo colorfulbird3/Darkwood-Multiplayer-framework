@@ -82,6 +82,23 @@ public sealed partial class DarkwoodAdapterRuntime
     }
 
     // P0-D/E：鼠标 HeldItem 放回玩家背包指定槽（原版 placeItem 语义，Host shadow 按槽 commit）。
+    // P0-E/F：从自己背包/快捷栏 grab 整槽到鼠标（Host HeldItems 权威，原版 grab 整 stack）。
+    public bool TryRequestPlayerGrab(InvSlot slot)
+    {
+        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || slot == null) return false;
+        if (slot.inventory == null || InvItemClass.isNull(slot.invItem)) return false;
+        var idx = slot.inventory.slots.IndexOf(slot);
+        if (idx < 0) return false;
+        var hotbar = slot.inventory.invType == Inventory.InvType.hotbar;
+        var payload = new PlayerGrabPayload(hotbar, idx);
+        var request = new ActionRequestMessage(Guid.NewGuid(), clientSession.PeerId, ActionKindWire.PlayerGrab, 0, false, 0, ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId] = request;
+        if (slot.invItem != null && !InvItemClass.isNull(slot.invItem)) pendingGrabSnapshots[request.RequestId] = new InvItemClass(slot.invItem);
+        clientSession.Send(ProtocolMessageType.ActionRequest, ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"[HELD] player-grab request: {(hotbar ? "hotbar" : "playerInv")}:{idx} {slot.invItem.type} x{slot.invItem.amount}。");
+        return true;
+    }
+
     public bool TryRequestHeldToInventory(bool fromHotbar, int targetSlot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;

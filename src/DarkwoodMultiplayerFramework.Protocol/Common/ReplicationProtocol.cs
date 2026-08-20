@@ -42,7 +42,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9-beta.7";
+    public const string Framework = "0.8.9-beta.8";
 }
 
 public static class ReplicationProtocolCodec
@@ -103,10 +103,12 @@ public static class ReplicationProtocolCodec
     // P0-D/E：容器 grab→HeldItem / HeldToInventory payload
     public static byte[] Encode(ContainerGrabPayload m)=>Write(w=>{w.Write(m.SlotIndex);w.Write(m.Amount);});
     public static ContainerGrabPayload DecodeContainerGrab(byte[] p)=>Read(p,r=>new ContainerGrabPayload(r.ReadInt32(),r.ReadInt32()));
-    public static byte[] Encode(HeldItemStatePayload m)=>Write(w=>{WriteString(w,m.Type);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);});
-    public static HeldItemStatePayload DecodeHeldItemState(byte[] p)=>Read(p,r=>new HeldItemStatePayload(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
+    public static byte[] Encode(HeldItemStatePayload m)=>Write(w=>{WriteString(w,m.Type);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);w.Write(m.Ammo);});
+    public static HeldItemStatePayload DecodeHeldItemState(byte[] p)=>Read(p,r=>new HeldItemStatePayload(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean(),r.ReadInt32()));
     public static byte[] Encode(HeldToInventoryPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.TargetSlot);});
     public static HeldToInventoryPayload DecodeHeldToInventory(byte[] p)=>Read(p,r=>new HeldToInventoryPayload(r.ReadBoolean(),r.ReadInt32()));
+    public static byte[] Encode(PlayerGrabPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.SlotIndex);});
+    public static PlayerGrabPayload DecodePlayerGrab(byte[] p)=>Read(p,r=>new PlayerGrabPayload(r.ReadBoolean(),r.ReadInt32()));
     public static byte[] Encode(ContainerPutPayload m)=>Write(w=>{w.Write(m.Hotbar);w.Write(m.SlotIndex);w.Write(m.DestinationSlotIndex);w.Write(m.Amount);});
     public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});

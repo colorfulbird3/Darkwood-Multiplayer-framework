@@ -168,8 +168,19 @@ internal static class DarkwoodContainerGrabPatch
     private static bool Prefix(InvSlot __instance)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null || runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
-        if (__instance?.inventory == null || !DarkwoodEntityStateAdapter.IsShared(__instance.inventory)) return true;
+        if (runtime == null) return true;
+        // P0-I：主机已批准、AuthorityReplayScope 内复演原版 grabItem → 直接放行，绝不二次发 Intent。
+        if (runtime.ReplayingAuthoritativeAction) return true;
+        if (runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
+        var invType = __instance?.inventory?.invType ?? Inventory.InvType.playerInv;
+        // P0-E/F：玩家自己背包/快捷栏 grab → 同样走 Host HeldItems 权威（原版 grab 整槽），杜绝"客户端本地抢飞、Host 不知情"。
+        // 拦截本地原版 mutation → 等 Host ack 后用全新 UIInvItem 吸附。
+        if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar)
+        {
+            if (runtime.IsClient) { runtime.TryRequestPlayerGrab(__instance); return false; }
+            return true; // Host 本地玩家照常走原版
+        }
+        if (!DarkwoodEntityStateAdapter.IsShared(__instance.inventory)) return true;
         if (runtime.IsClient)
         {
             runtime.TryRequestContainerGrab(__instance);

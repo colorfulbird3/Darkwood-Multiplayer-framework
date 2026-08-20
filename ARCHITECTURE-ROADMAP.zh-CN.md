@@ -1,15 +1,16 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.9-beta.7（2026-08-20）
+> 最后更新：0.8.9-beta.8（2026-08-20）
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
 | 当前发布版本 | **0.8.9-beta.7**（Host 权威实体 ID + 绑定清单 + 真实世界稳定门；存档传输/剥离修复；HeldItem 物品事务；Runtime 实体生命周期；World State Adapter 开端） |
-| 集成验证 | 构建 0 错 / xUnit 50/50 / SelfTests 85/85 / 回环自测全链路通过（见 RELEASE-NOTES-0.8.9-beta.7.md） |
-| 下一开发版本 | 发电机/灯光/事件类权威 transition；捕兽夹 armed/triggered/occupied 状态；World Adapter 覆盖审计高频对象 |
-| 权威模型 | **Hybrid Authority / Trust Mode**（见下） |
+| 进行中 | **0.8.9-beta.8 — 客户端交互 Replay 架构**（Container→Cursor / Backpack→Cursor / pick→Cursor / place / stack / swap / drop 全部改为 Intent→Host Authority→Client Replay 原版 Darkwood→Reconcile） |
+| 集成验证 | beta.7：构建 0 错 / Unit 50 / Self 85 / 回环通过；beta.8 见 RELEASE-NOTES 当次实测 |
+| 权威模型 | **Hybrid Authority / Trust Mode**：Client 不持有 Authority，但可在 Host Accepted 后于 `AuthorityReplayScope` 内**直接执行 Darkwood 原版 interaction 方法**（grabItem/placeItem/...）——"不拥有 Authority" ≠ "不执行原版 interaction code"。 |
+| 下一开发版本 | 发电机/灯光/事件类权威 transition（同一 Replay 思想）、捕兽夹 typed 状态、World Adapter 覆盖审计高频对象 |
 
 版本路线：
 
