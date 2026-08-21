@@ -43,13 +43,48 @@ internal static class DarkwoodDropPatch
 
         if (runtime.IsClient)
         {
-            // P0-B：READY 联机下无论请求是否发出，原版 spawnDroppedInvItem（客户端本地世界 mutation）都绝不允许运行。
-            var sent = runtime.TryRequestDrop(payload);
-            if (!sent) DarkwoodAdapterRuntime.LogMessage("[HELD] drop request could not be sent; cursor retained");
-            return false;
+            // v0.9.0 Trusted Client：允许原版 spawnDroppedInvItem 本地执行（生成掉落物）——
+            // Postfix 捕获本地对象 → 上报 Host（扣减权威 + 分配 EntityId + 广播 Spawn）→ 本地对象复用为 mirror。
+            return true;
         }
 
         return true;
+    }
+
+    // v0.9.0：捕获本地原版生成的掉落物并上报（Host 扣减 + EntityId + 广播；本地对象将复用为 mirror）。
+    private static void Postfix(InvItemClass _item)
+    {
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
+        var player = Player.Instance;
+        Inventory? captured = null;
+        if (player != null)
+        {
+            var origin = player._transform.position;
+            try
+            {
+                foreach (var itemObj in UnityEngine.Object.FindObjectsOfType<Item>(false))
+                {
+                    if (itemObj == null || !itemObj.isDroppedItem) continue;
+                    if (runtime.replication.TryGetId(itemObj, out _)) continue; // 已注册（其他来源）
+                    var inv = DarkwoodDroppedItemAccessor.GetInventory(itemObj);
+                    if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) continue;
+                    if (inv.slots[0].invItem.type != _item.type) continue;
+                    if (Vector3.Distance(itemObj.transform.position, origin) > 4f) continue;
+                    captured = inv; break;
+                }
+            }
+            catch (Exception) { }
+        }
+        runtime.SetPendingLocalDrop(captured, _item.type, _item.amount, player != null ? player._transform.position : Vector3.zero);
+        var payload = BuildPayload(_item);
+        if (payload.Origin == DropOriginWire.PlayerSlot && payload.SlotIndex < 0)
+        {
+            DarkwoodAdapterRuntime.LogMessage("[HELD] drop-resolve unresolved（本地已生成）：对象将作为未注册 ghost 清理。");
+            return;
+        }
+        if (!runtime.TryRequestDrop(payload))
+            DarkwoodAdapterRuntime.LogMessage("[HELD] drop request could not be sent; local object pending cleanup");
     }
 
     internal static DropItemPayload BuildPayload(InvItemClass item)
@@ -65,7 +100,7 @@ internal static class DarkwoodDropPatch
         {
             var pos0 = player != null ? player._transform.position : Vector3.zero;
             var rot0 = player != null ? player._transform.rotation : Quaternion.identity;
-            DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=是 slotPresent={(item.slot != null ? "是" : "否")} slotInventoryType={(item.slot?.inventory != null ? item.slot.inventory.invType.ToString() : "无")} finalOrigin=HeldItem");
+            DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=是 slotPresent={(item.slot != null ? "是" : "否")} slotInventoryType={(item.slot?.inventory != null ? item.slot.inventory.invType.ToString() : "无")} ownership=CursorOwned finalOrigin=HeldItem");
             return new DropItemPayload(false, -1, Math.Max(1, item.amount), pos0.x, pos0.y, pos0.z, rot0.x, rot0.y, rot0.z, rot0.w, DropOriginWire.HeldItem);
         }
 
@@ -80,9 +115,10 @@ internal static class DarkwoodDropPatch
             var invType = slot.inventory.invType;
             if (invType == Inventory.InvType.hotbar || invType == Inventory.InvType.playerInv)
             {
-                // 优先级 2：玩家背包/快捷栏
+                // 优先级 2：玩家背包/快捷栏（ownership=InventoryOwned——Drop 只在此判定槽内来源）
                 fromHotbar = invType == Inventory.InvType.hotbar;
                 slotIndex = slot.inventory.slots.IndexOf(slot);
+                DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=否 ownership=InventoryOwned slotInventoryType={invType} slotIndex={slotIndex} finalOrigin=PlayerSlot");
             }
             else
             {

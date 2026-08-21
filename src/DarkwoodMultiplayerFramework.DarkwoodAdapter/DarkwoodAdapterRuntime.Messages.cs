@@ -99,6 +99,31 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
+    // 阶段二：光标 HeldItem → 共享容器（Host 权威：空→放/同类→stack/异类→swap）。
+    public bool TryRequestHeldToContainer(EntityId containerId, int slotIndex)
+    {
+        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive) return false;
+        if (InvItemClass.isNull(Singleton<Controller>.Instance?.pickedUpItem)) return false;
+        var payload = new HeldToContainerPayload(slotIndex);
+        var request = new ActionRequestMessage(Guid.NewGuid(), clientSession.PeerId, ActionKindWire.HeldToContainer, containerId.Value, containerId.IsPersistent, 0, ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId] = request;
+        clientSession.Send(ProtocolMessageType.ActionRequest, ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"[CONTAINER] held-to-container request: 容器 {containerId}:{slotIndex}，{Singleton<Controller>.Instance.pickedUpItem.type} x{Singleton<Controller>.Instance.pickedUpItem.amount}。");
+        return true;
+    }
+
+    // 阶段二：世界状态对象交互意图（发电机 toggle 等）——Host 原版执行后即时广播权威状态。
+    public bool TryRequestStateObjectInteract(EntityId id, string interaction)
+    {
+        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive) return false;
+        var payload = new StateObjectIntentPayload(interaction);
+        var request = new ActionRequestMessage(Guid.NewGuid(), clientSession.PeerId, ActionKindWire.StateObjectInteract, id.Value, id.IsPersistent, 0, ReplicationProtocolCodec.Encode(payload));
+        pendingActions[request.RequestId] = request;
+        clientSession.Send(ProtocolMessageType.ActionRequest, ReplicationProtocolCodec.Encode(request));
+        log?.LogInfo($"[INTENT] state-object interact：{id} interaction={interaction}");
+        return true;
+    }
+
     public bool TryRequestHeldToInventory(bool fromHotbar, int targetSlot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;

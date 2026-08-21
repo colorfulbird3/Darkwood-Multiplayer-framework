@@ -43,20 +43,21 @@ public readonly struct HandshakeReject
 
 public readonly struct HandshakeResult
 {
-    public HandshakeResult(bool accepted, string errorCode) { Accepted=accepted; ErrorCode=errorCode; }
+    public HandshakeResult(bool accepted, string errorCode, string errorDetail = "") { Accepted=accepted; ErrorCode=errorCode; ErrorDetail=errorDetail; }
     public bool Accepted { get; }
     public string ErrorCode { get; }
+    public string ErrorDetail { get; }
 }
 
 public static class HandshakeValidator
 {
     public static HandshakeResult Validate(ProtocolIdentity host, ProtocolIdentity client)
     {
-        if (!string.Equals(host.FrameworkVersion, client.FrameworkVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_FRAMEWORK_VERSION");
-        if (!string.Equals(host.GameVersion, client.GameVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_GAME_BUILD");
+        if (!string.Equals(host.FrameworkVersion, client.FrameworkVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_FRAMEWORK_VERSION", $"host={host.FrameworkVersion}; client={client.FrameworkVersion}");
+        if (!string.Equals(host.GameVersion, client.GameVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_GAME_BUILD", $"host={host.GameVersion}; client={client.GameVersion}");
         return new HandshakeResult(true, string.Empty);
     }
-    private static HandshakeResult Reject(string code) => new HandshakeResult(false, code);
+    private static HandshakeResult Reject(string code, string detail = "") => new HandshakeResult(false, code, detail);
 }
 
 public static class HandshakeProtocolCodec

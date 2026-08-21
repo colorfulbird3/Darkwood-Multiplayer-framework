@@ -80,7 +80,7 @@ public sealed class ClientHandshakeSession : IDisposable
             var hello = HandshakeProtocolCodec.DecodeServerHello(envelope.Payload);
             RequireMatchingEnvelope(envelope, hello.Identity);
             var validation = HandshakeValidator.Validate(hello.Identity, Session.Identity);
-            if (!validation.Accepted) { Fail(validation.ErrorCode); return; }
+            if (!validation.Accepted) { Fail(string.IsNullOrEmpty(validation.ErrorDetail) ? validation.ErrorCode : $"{validation.ErrorCode} ({validation.ErrorDetail})"); return; }
             HostSessionId = envelope.SessionId; PeerId = hello.PeerId; HandshakeComplete = true;
             Session.Lifecycle.MoveTo(ConnectionState.SaveTransfer); HandshakeSucceeded?.Invoke();
         }
@@ -172,7 +172,7 @@ public sealed class HostHandshakeSession : IDisposable
             var hello = HandshakeProtocolCodec.DecodeClientHello(envelope.Payload);
             if (envelope.ProtocolVersion != ProtocolVersions.EnvelopeProtocol) throw new InvalidDataException("Envelope protocol version differs from the framework constant.");
             var result = HandshakeValidator.Validate(Identity, hello.Identity);
-            if (!result.Accepted) { Reject(connectionId, result.ErrorCode); return; }
+            if (!result.Accepted) { Reject(connectionId, string.IsNullOrEmpty(result.ErrorDetail) ? result.ErrorCode : $"{result.ErrorCode} ({result.ErrorDetail})"); return; }
             if (!peer.Ready && MaxPeers >= 0 && ReadyPeerCount >= MaxPeers) { Reject(connectionId, "SESSION_FULL"); return; }
             peer.Identity = hello.Identity; peer.GuestKey = hello.GuestKey ?? string.Empty; peer.Ready = true;
             Send(connectionId, ProtocolMessageType.ServerHello, HandshakeProtocolCodec.Encode(new ServerHello(Identity, connectionId)));

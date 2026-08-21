@@ -2,13 +2,47 @@
 
 ## 状态
 
-Fixed in code —— awaiting real-machine verification（0.8.9-beta.8）
+Fixed in code —— awaiting real-machine verification（0.8.9-beta.8 迭代二）
 
-## 用户现象
+## 真机已确认（beta.8 首测）
 
-1. 客户端从共享容器 grab 后：物品逻辑进 held、`UIInvItem != null`，但**鼠标只显示"丢弃"文字，没有物品图标/数量**。
-2. 客户端从自己背包拿到 rag 后：本地 `pickedUpItem` 存在，但任何网络操作（Place / Drop）都返回 `NOT_HOLDING`。
-3. 地面拾取直接进背包（与原版"光标拿取"体验不符）。
+- ✅ Container → Cursor 的 Authority Replay **成功**：`[REPLAY] InvSlot.grabItem success` + `[CURSOR] uiActiveInHierarchy=True sprite=91/InvItem amountLabel=2 hostHeldKnown=True`。
+- ✅ Cursor Drop 成功；Host `RuntimeEntitySpawn` 成功。
+- ❌ beta.8 首测未通过项：Cursor→Backpack 全 `INVALID_TARGET_SLOT`；多个 Runtime DroppedItem 一段时间后 Host `ENTITY_NOT_FOUND`（Client mirror 残留）；World Pickup→Cursor 网络成功但 `UIInvItem` 缺失。
+  **禁止把 beta.8 整体标 Real-machine verified。**
+
+## 本轮修复（beta.8 迭代二，fixed in code）
+
+- **P0-1（INVALID_TARGET_SLOT）**：拓扑强门——Trigger Ready 门补发真实背包拓扑（含全槽容量）+ Host `TopologyReady` gate（未就绪 → `PLAYER_INVENTORY_NOT_READY`，绝不猜容量/误拒）；`[HELD] place-validate` 完整诊断。
+- **P0-2（ENTITY_NOT_FOUND / mirror 残留）**：原子 `RegisterAndBroadcastDroppedItem`（ID→registry→replication binding→生命周期监视→bookkeeping→spawn 一步到位）；TickHost 生命周期监视按"Unity 对象真消失"才 Despawn（原先误判"本轮扫描未见"→吞实体）；`ENTITY_NOT_FOUND` 前 `[RUNTIME-CHECK]` 诊断（bindingAlive/rootAlive/inventoryAlive/itemAlive/trackedByLifecycle）。
+- **P0-3（World Pickup 无 UI）**：world mirror 无 UI 槽 → `grabItem` 后若 cursor `UIInvItem` 缺失/inactive，用**原版 `createInvItemIcon` 等价**（`Core.AddPrefab "UI/InvItem"`+setUISprite+refresh+数量）补全新 UI 并挂到 UI 根；`[REPLAY] result=visual-failed` 才算失败（P0-I）。
+- **P0-G**：`CreateDroppedItem` 对照原版补齐抛掷初速度；Host 掉落物复用原版 `spawnDroppedInvItem` 的初始化序列（AddPrefab/createItem/addToSaveable/WorldGrid/velocity）。
+- **P1-A**：掉落物点击不再同时发 `ItemActivate`（只走 Pickup intent）。
+- **P1-B**：`PlaceAt` partial stack 不再吞 Held remainder——不能完整放入即为 `SLOT_OCCUPIED`（原版 placeItem 不拆分）。
+
+## 本轮修复（beta.8 迭代三，fixed in code）
+
+- **P0-A/C（不再用 grabItem 伪造 World Pickup）**：原版 `Item.getDroppedItem` = `transferItemAllToPlayer`（进背包，不产生 cursor）；Host 已把 World→HeldItems 定格（权威）→ 客户端按权威 `HeldItemState` **独立构造** cursor（`new InvItemClass(type,dura,amount,qual,recipe)` + 恒存宿主槽 `initialize`），完全脱离 mirror。
+- **P0-B（dangling source）**：`pickedUpItem.slot` 指向恒存宿主槽（玩家背包槽0），不再指向将被销毁的 mirror slot → `placeItem` 不再 NRE。
+- **P0-E（sprite 全错 32/InvItem）**：全新 `createInvItemIcon`（AddPrefab "UI/InvItem"+initialize+setUISprite+refresh+数量），sprite 由真实 baseClass 决定，绝不复用 mirror/prefab 默认 UI。
+- **P0-D（强 invariant 诊断）**：`[CURSOR-WORLD]` + `[CURSOR-WORLD-AFTER-DESPAWN]`——slotInventoryAlive 必须 True、UI 存活、sprite 匹配。
+- **P0-F/G（Host Empty↔Client Holding 软锁）**：HeldToInventory ack 后无论 Replay 成败都强制 reconcile（Apply 权威背包 + ClearHeldItem + refreshRecipes + `[RECONCILE]`）。
+- **P0-H（NOT_HOLDING 自愈）**：客户端收到 `NOT_HOLDING/ALREADY_HOLDING` 且本地 pickedUpItem≠null → 清 stale cursor + 上报真实背包 + `[HELD-DESYNC]`；连带恢复容器交互（P0-I）。
+
+## 本轮修复（beta.8 迭代四，fixed in code）
+
+- **问题1（World Pickup 全显示同一把枪）根因**：原版 `InvItemClass.setUISprite()`/`refresh()` 仅当 **`slot.inventory.open`** 才设真实图标（`Sprite.SetSprite(baseClass.iconType)+Build()`）。World Pickup 时玩家背包 UI 关闭 → open=false → sprite 停留在 `"UI/InvItem"` 预制默认（枪，spriteId=32）。Container grab 正常是因源容器已打开。
+  - mirror 创建改原版 `slot.createItem(type,amount,dura,quality,recipe)`（按 Type 重建，绝不复制 prefab 默认 InvItem/UI/baseClass/sprite）；`[DROP-MIRROR]` 诊断。
+  - ReplayPickedUpWorldItem：Ensure mirror 按 Host 权威 Type 重建（不符才 createItem）→ 原版 `slot.grabItem()` → UI 缺失时 `createInvItemIcon`（主动 `sprite.SetSprite(baseClass.iconType)+Build()`，不受 open 约束）→ 恒存宿主槽防 dangling；`[PICKUP-REPLAY]` 诊断。sprite 全部来自原生物品定义（无人工映射）。
+- **问题2（客户端旧存档带入联机）**：新增 **Inventory bootstrap 门**：新 `GuestProfileApplied` 消息；Host 在收到客户端应用 Host 权威档案的 ack 前，客户端上报**只取容量（topology-only）、忽略内容**（`[INV-BOOTSTRAP] ignored client inventory content before host seed`）；GuestProfile seed 由 Host `ResolveGuestProfile`（新→空/starter kit；返回→Host GuestProfiles 恢复）建立；客户端 ApplyGuestProfile 后**清 stale cursor + 权威 replace 背包 + ack**。之后 drift 收敛才允许更新 shadow 内容。
+- **回归**：B（stale inventory isolation）已加回环自检 `[SELFTEST-BOOTSTRAP] ...=PASS`；A（多类型 sprite）/D（cursor isolation）留真机（`[CURSOR-WORLD]`/`[DROP-MIRROR]`/`[PICKUP-REPLAY]`）。
+
+## 剩余风险 / 已知限制
+
+- 玩家背包 grab 的 ammo/modifiers 尚未在 shadow 中保存（ContainerGrab 已带 ammo；PlayerGrab shadow 副本 ammo 暂 0）。
+- held→共享容器放置暂不支持（提示放回背包/丢地面）。
+- 本轮修复（拓扑门/原子注册/World pickup UI/P1）**尚未真机验证**。
+- wire 未变（仍 beta.8，两端同版即可）。
 
 ## 根因
 

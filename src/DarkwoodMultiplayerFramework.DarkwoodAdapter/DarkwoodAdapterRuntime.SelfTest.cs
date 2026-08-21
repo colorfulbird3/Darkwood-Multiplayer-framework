@@ -31,11 +31,53 @@ public sealed partial class DarkwoodAdapterRuntime
     /// <summary>已做过漂移收敛重试的请求（防止无限重试循环）。</summary>
     private readonly HashSet<Guid> resyncedDropRequests = new HashSet<Guid>();
 
+    // P0-2 回归 B：bootstrap 门关闭时，客户端上报的"旧存档物品内容"必须被忽略（仅容量）——Host shadow 内容保持 GuestProfile seed。
+    public void RunInventoryBootstrapSelfCheck(int peer)
+    {
+        try
+        {
+            if (peer <= 0 || !Players.TryGetInventory(peer, out _)) return; // 仅远端 peer 有效（host 0 是本地）
+            var stale = new PlayerInventoryStatePayload(
+                new[] { new InventorySlotWire("rag", 99, 1f, 0, false) },
+                Array.Empty<InventorySlotWire>());
+            Players.RebuildInventoryTopologyOnly(peer, stale);
+            bool pass;
+            if (!Players.TryGetInventory(peer, out var after)) pass = false;
+            else
+            {
+                bool hasRag = after.TryPeek(false, 0, -1, out var s0) && s0.Type == "rag";
+                pass = !hasRag; // 内容未被污染（无 rag）
+            }
+            log?.LogInfo($"[SELFTEST-BOOTSTRAP] B(stale inventory isolation)={(pass ? "PASS" : "FAIL — Host shadow 被客户端旧内容污染")} peer={peer}");
+        }
+        catch (Exception error) { log?.LogWarning($"[SELFTEST-BOOTSTRAP] B 回归异常：{error.Message}"); }
+    }
+
     private void HandleActionRejected(ActionRejectedMessage rejected)
     {
         if(!pendingActions.TryGetValue(rejected.RequestId,out var request))return;
         pendingActions.Remove(rejected.RequestId);
         log?.LogWarning($"主机拒绝联机操作 {rejected.RequestId}：{rejected.ErrorCode}，主机版本 {rejected.CurrentRevision}。");
+        // P0-H：NOT_HOLDING/ALREADY_HOLDING = Host 与 Client 的 HeldItem 权威漂移——Host 已是 Empty，
+        // Client 若仍粘着 stale cursor 必须清，否则打不开容器 + 无限 NOT_HOLDING 循环（永久软锁）。
+        if ((rejected.ErrorCode == "NOT_HOLDING" || rejected.ErrorCode == "ALREADY_HOLDING")
+            && (request.Kind == ActionKindWire.DropItem || request.Kind == ActionKindWire.HeldToInventory
+                || request.Kind == ActionKindWire.ContainerGrab || request.Kind == ActionKindWire.PlayerGrab
+                || request.Kind == ActionKindWire.Pickup))
+        {
+            var before = Singleton<Controller>.Instance;
+            if (before != null && !InvItemClass.isNull(before.pickedUpItem))
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[HELD-DESYNC] host=Empty client={before.pickedUpItem.type} x{before.pickedUpItem.amount} reason={rejected.ErrorCode} action=reconcile-clear");
+                ClearHeldItem();
+                try { var pl = Player.Instance; if (pl != null) pl.refreshRecipes(); } catch (Exception) { }
+            }
+            // 顺手上报真实背包（让 Host 影子与客户端真实对齐，后续交互可用）。
+            if (clientSession != null && request.Kind != ActionKindWire.ContainerGrab)
+            {
+                try { var topo = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory(); clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(topo)); } catch (Exception) { }
+            }
+        }
         Player.Instance?.displayMessage("联机操作被主机拒绝："+rejected.ErrorCode);
 
         // 背包漂移收敛：槽位类拒绝说明主机影子背包与客户端真实背包不一致

@@ -42,7 +42,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9-beta.8";
+    public const string Framework = "0.8.9.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -97,6 +97,8 @@ public static class ReplicationProtocolCodec
     public static byte[] Encode(ActionRejectedMessage m)=>Write(w=>{RequireActionId(m.RequestId);w.Write(m.RequestId.ToByteArray());w.Write((byte)m.Kind);w.Write(m.TargetValue);w.Write(m.TargetPersistent);w.Write(m.CurrentRevision);WriteString(w,m.ErrorCode);});
     public static ActionRejectedMessage DecodeActionRejected(byte[] p)=>Read(p,r=>{var id=new Guid(ReadExact(r,16));RequireActionId(id);var kind=ReadActionKind(r);return new ActionRejectedMessage(id,kind,r.ReadUInt64(),r.ReadBoolean(),r.ReadUInt64(),ReadString(r));});
     public static byte[] Encode(PickupResultPayload m)=>Write(w=>{WriteString(w,m.ItemType);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);});
+    public static byte[] Encode(PickupPayload m)=>Write(w=>{WriteString(w,m.ItemType);w.Write(m.Amount);});
+    public static PickupPayload DecodePickup(byte[] p)=>Read(p,r=>new PickupPayload(ReadString(r),r.ReadInt32()));
     public static PickupResultPayload DecodePickupResult(byte[] p)=>Read(p,r=>new PickupResultPayload(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
     public static byte[] Encode(ContainerTakePayload m)=>Write(w=>{w.Write(m.SlotIndex);w.Write(m.Amount);});
     public static ContainerTakePayload DecodeContainerTake(byte[] p)=>Read(p,r=>new ContainerTakePayload(r.ReadInt32(),r.ReadInt32()));
@@ -109,10 +111,16 @@ public static class ReplicationProtocolCodec
     public static HeldToInventoryPayload DecodeHeldToInventory(byte[] p)=>Read(p,r=>new HeldToInventoryPayload(r.ReadBoolean(),r.ReadInt32()));
     public static byte[] Encode(PlayerGrabPayload m)=>Write(w=>{w.Write(m.FromHotbar);w.Write(m.SlotIndex);});
     public static PlayerGrabPayload DecodePlayerGrab(byte[] p)=>Read(p,r=>new PlayerGrabPayload(r.ReadBoolean(),r.ReadInt32()));
+    public static byte[] Encode(HeldToContainerPayload m)=>Write(w=>w.Write(m.SlotIndex));
+    public static HeldToContainerPayload DecodeHeldToContainer(byte[] p)=>Read(p,r=>new HeldToContainerPayload(r.ReadInt32()));
+    public static byte[] Encode(StateObjectIntentPayload m)=>Write(w=>WriteString(w,m.Interaction));
+    public static StateObjectIntentPayload DecodeStateObjectIntent(byte[] p)=>Read(p,r=>new StateObjectIntentPayload(ReadString(r)));
+    public static byte[] Encode(PlayerActionPayload m)=>Write(w=>WriteString(w,m.Action));
+    public static PlayerActionPayload DecodePlayerAction(byte[] p)=>Read(p,r=>new PlayerActionPayload(ReadString(r)));
     public static byte[] Encode(ContainerPutPayload m)=>Write(w=>{w.Write(m.Hotbar);w.Write(m.SlotIndex);w.Write(m.DestinationSlotIndex);w.Write(m.Amount);});
     public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
-    public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});
-    public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r)));
+    public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.Revision);w.Write(m.PlayerId);});
+    public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.Health);w.Write(m.MaxHealth);w.Write(m.Downed);});
     public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadBoolean());});
     public static byte[] Encode(GuestProfileRecord m)=>Write(w=>{w.Write((byte)GuestProfileFormatVersion);WriteString(w,m.GuestKey);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.LastSeenUtcTicks);});

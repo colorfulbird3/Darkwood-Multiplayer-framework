@@ -316,6 +316,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         replication.Adapters.Register(new World.DoorStateAdapter());
         replication.Adapters.Register(new World.WindowStateAdapter());
         replication.Adapters.Register(new World.GenericItemStateAdapter());
+        replication.Adapters.Register(new World.GeneratorStateAdapter());
+        replication.Adapters.Register(new World.LightStateAdapter());
     }
 
     /// <summary>延迟停服（战斗服务的全员倒地结局回调）。</summary>
@@ -328,6 +330,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         catch (Exception error) { FailClient("TRANSPORT_TICK_FAILED",error); }
         PumpOutgoing();
         Players.RemotePlayers.Tick();
+        TickPendingLocalDrop(); // v0.9.0 Trusted Client Drop：临时本地对象超时清理
         var scene = CurrentScene;
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 

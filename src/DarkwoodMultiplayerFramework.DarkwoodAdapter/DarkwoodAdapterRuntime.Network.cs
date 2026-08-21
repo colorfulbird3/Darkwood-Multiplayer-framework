@@ -445,7 +445,10 @@ var appliedInventories=0;var failedInventories=0;var loggedFailures=0;var skippe
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||item==null)return false;
         if(!replication.TryGetId(item,out var id)||!replication.TryGetState(id,out var state)){log?.LogWarning("Pickup was not sent because the target has no registered EntityId.");return true;}
-        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.Pickup,id.Value,id.IsPersistent,state.Revision,Array.Empty<byte>());
+        // 阶段三：payload 携带真实物品类型/数量（供 Host 校验）——从 dropped Inventory 槽读取（Item 组件本身无 type/amount）。
+        string pickupType=string.Empty; int pickupAmount=1;
+        try { var inv=DarkwoodDroppedItemAccessor.GetInventory(item); if(inv!=null&&inv.slots!=null&&inv.slots.Count>0&&!InvItemClass.isNull(inv.slots[0].invItem)){pickupType=inv.slots[0].invItem.type??string.Empty;pickupAmount=Math.Max(1,inv.slots[0].invItem.amount);} } catch (Exception) { }
+        var request=new ActionRequestMessage(Guid.NewGuid(),clientSession.PeerId,ActionKindWire.Pickup,id.Value,id.IsPersistent,state.Revision,ReplicationProtocolCodec.Encode(new PickupPayload(pickupType,pickupAmount)));
         pendingActions[request.RequestId]=request;
         clientSession.Send(ProtocolMessageType.ActionRequest,ReplicationProtocolCodec.Encode(request));
         log?.LogInfo($"Pickup request {request.RequestId} sent for {id} revision {state.Revision}.");

@@ -87,7 +87,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 runtime.Players.TryGetInventory(peer.PeerId, out var shadow);
                 var hostMaxHealth = Player.Instance != null ? Player.Instance.maxHealth : 100f;
                 runtime.Combat.RegisterPeer(peer.PeerId, hostMaxHealth); // 血量状态归战斗服务
-                runtime.Queue(peer.PeerId, ProtocolMessageType.GuestProfile, ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(), spawn.x, spawn.y, spawn.z, record.Day, record.JoinCount, hostMaxHealth, hostMaxHealth, false)));
+                runtime.Queue(peer.PeerId, ProtocolMessageType.GuestProfile, ReplicationProtocolCodec.Encode(new GuestProfileMessage(shadow.CaptureState(peer.PeerId), spawn.x, spawn.y, spawn.z, record.Day, record.JoinCount, hostMaxHealth, hostMaxHealth, false)));
                 runtime.Players.PersistGuestProfile(peer.PeerId);
             }
             runtime.Queue(peer.PeerId, ProtocolMessageType.Ready, ReplicationProtocolCodec.Encode(new ReadyMessage(runtime.CurrentScene, runtime.RegistryDigest)));
@@ -132,16 +132,32 @@ public sealed partial class DarkwoodAdapterRuntime
         private readonly DarkwoodAdapterRuntime runtime;
         public HostInventoryHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
-        public bool Handles(ProtocolMessageType type) => runtime.IsHost && (type == ProtocolMessageType.InventoryState || type == ProtocolMessageType.PlayerInventoryState);
+        public bool Handles(ProtocolMessageType type) => runtime.IsHost && (type == ProtocolMessageType.InventoryState || type == ProtocolMessageType.PlayerInventoryState || type == ProtocolMessageType.GuestProfileApplied);
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
+            if (envelope.MessageType == ProtocolMessageType.GuestProfileApplied)
+            {
+                // P0-2：客户端已应用 Host GuestProfile 权威背包 → 开放该 peer 的 inventory 漂移收敛（此后上报内容才允许更新 shadow）。
+                runtime.Players.MarkInventoryBootstrapReady(peer.PeerId);
+                if (runtime.AutoSelfTest) runtime.RunInventoryBootstrapSelfCheck(peer.PeerId);
+                runtime.log?.LogInfo($"[INV-BOOTSTRAP] peer={peer.PeerId} GuestProfile 已应用并 ack → inventory bootstrap complete，此后 drift report 才可更新 shadow 内容。");
+                return;
+            }
             if (envelope.MessageType == ProtocolMessageType.PlayerInventoryState)
             {
                 // 客户端真实背包上报（漂移收敛）：重建该玩家的权威影子背包
                 var state = ReplicationProtocolCodec.DecodePlayerInventoryState(envelope.Payload);
+                // P0-2：bootstrap 门——Host GuestProfile seed 应用 + 客户端 ack 之前，上报只取真实容量（topology），
+                // 绝不允许客户端旧存档/本地单机背包内容覆盖 Host 权威 shadow。
+                if (!runtime.Players.IsInventoryBootstrapReady(peer.PeerId))
+                {
+                    runtime.Players.RebuildInventoryTopologyOnly(peer.PeerId, state);
+                    runtime.log?.LogInfo($"[INV-BOOTSTRAP] ignored client inventory content before host seed（peer {peer.PeerId}，仅容量 backpack={state.Backpack.Length}/hotbar={state.Hotbar.Length}）");
+                    return;
+                }
                 if (runtime.Players.RebuildInventory(peer.PeerId, state))
-                    runtime.log?.LogInfo($"主机已按客户端真实背包重建影子：玩家 {peer.PeerId}。");
+                    runtime.log?.LogInfo($"[INV-BOOTSTRAP] 主机已按客户端真实背包重建影子（gate open）：玩家 {peer.PeerId}。");
                 return;
             }
             var inventory = ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload);
@@ -333,7 +349,8 @@ public sealed partial class DarkwoodAdapterRuntime
             type == ProtocolMessageType.SceneChange || type == ProtocolMessageType.ActionResult ||
             type == ProtocolMessageType.ActionRejected || type == ProtocolMessageType.RescueProgress ||
             type == ProtocolMessageType.AllDowned || type == ProtocolMessageType.GuestProfile ||
-            type == ProtocolMessageType.Ready || type == ProtocolMessageType.Error;
+            type == ProtocolMessageType.Ready || type == ProtocolMessageType.Error ||
+            type == ProtocolMessageType.PlayerAction;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -357,6 +374,27 @@ public sealed partial class DarkwoodAdapterRuntime
                     if (lifecycle != ConnectionState.ApplyingSnapshot && lifecycle != ConnectionState.Ready)
                         throw new InvalidDataException("Guest profile arrived outside the joining phase.");
                     runtime.Players.ApplyGuestProfile(profile);
+                    // P0-2：应用 Host 权威背包后——清本机残留/stale cursor（含旧存档牵连的 GUI），
+                    // 上报真实容量拓扑，然后 ack 告诉 Host"GuestProfile 已应用"（开放 bootstrap 门）。
+                    try { DarkwoodAdapterRuntime.ClearHeldItem(); var pl = global::Player.Instance; if (pl != null) pl.refreshRecipes(); } catch (Exception) { }
+                    try
+                    {
+                        var topo = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+                        if (runtime.clientSession != null) runtime.clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(topo));
+                        runtime.log?.LogInfo($"[INV-BOOTSTRAP] GuestProfile 应用后上报容量 topology：backpack {topo.Backpack.Length} / hotbar {topo.Hotbar.Length}。");
+                    }
+                    catch (Exception) { }
+                    if (runtime.clientSession != null)
+                    {
+                        runtime.clientSession.Send(ProtocolMessageType.GuestProfileApplied, Array.Empty<byte>());
+                        runtime.log?.LogInfo("[INV-BOOTSTRAP] GuestProfile 已应用并 ack → 本轮联机背包以 Host 权威为准（不携带客户端旧存档）。");
+                    }
+                    break;
+                }
+                case ProtocolMessageType.PlayerAction:
+                {
+                    var pa = ReplicationProtocolCodec.DecodePlayerAction(envelope.Payload);
+                    runtime.log?.LogInfo($"[EVENT] playerAction recv: {pa.Action}（其他玩家动作事件——播放钩子在此扩展）");
                     break;
                 }
                 case ProtocolMessageType.Ready:
@@ -369,6 +407,18 @@ public sealed partial class DarkwoodAdapterRuntime
                     runtime.SaveState.SetProgress("联机已就绪");
                     if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.ApplyingSnapshot)
                         runtime.clientSession.Session.Lifecycle.MoveTo(ConnectionState.Ready);
+                    // P0-A：进入 Ready 的瞬间补发一次真实背包拓扑（含全槽容量）——保证 Host 在第一笔物品交互前 InventoryTopologyReady=true，
+                    // 不再依赖"某次漂移上报碰运气"，杜绝 INVALID_TARGET_SLOT / 猜容量。
+                    try {
+                        var runtime2 = runtime;
+                        var pl = global::Player.Instance;
+                        if (runtime2.clientSession != null && pl != null && pl.Inventory != null && pl.Inventory.slots != null && pl.Hotbar != null)
+                        {
+                            var topo = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+                            runtime2.clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(topo));
+                            runtime.log?.LogInfo($"[PLAYER-INV] topology 上报（Ready 门）：backpack {topo.Backpack.Length} / hotbar {topo.Hotbar.Length}。");
+                        }
+                    } catch (Exception error) { runtime.log?.LogWarning($"[PLAYER-INV] Ready 门拓扑上报失败：{error.Message}"); }
                     runtime.log?.LogInfo($"客户端联机已就绪：场景 {ready.Scene}，注册表摘要 {ready.RegistryDigest}。");
                     break;
                 }

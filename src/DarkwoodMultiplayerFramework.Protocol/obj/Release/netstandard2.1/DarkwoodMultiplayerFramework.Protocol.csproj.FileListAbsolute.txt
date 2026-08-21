@@ -1,0 +1,10 @@
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.deps.json
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.pdb
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.csproj.AssemblyReference.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.GeneratedMSBuildEditorConfig.editorconfig
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.AssemblyInfoInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.AssemblyInfo.cs
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.csproj.CoreCompileInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Protocol\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Protocol.pdb

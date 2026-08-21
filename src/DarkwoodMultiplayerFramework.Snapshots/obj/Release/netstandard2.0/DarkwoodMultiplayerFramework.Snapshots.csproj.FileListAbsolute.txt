@@ -1,0 +1,13 @@
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\bin\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.deps.json
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\bin\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\bin\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.pdb
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\bin\Release\netstandard2.0\DarkwoodMultiplayerFramework.Core.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\bin\Release\netstandard2.0\DarkwoodMultiplayerFramework.Core.pdb
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.csproj.AssemblyReference.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.GeneratedMSBuildEditorConfig.editorconfig
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.AssemblyInfoInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.AssemblyInfo.cs
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.csproj.CoreCompileInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.csproj.CopyComplete
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Snapshots\obj\Release\netstandard2.0\DarkwoodMultiplayerFramework.Snapshots.pdb

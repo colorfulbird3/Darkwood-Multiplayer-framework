@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "xdOgQYFJopMVx6iaxv218pcwUf5pnFU5D+Rx4+XYO1DqR+xZYvdTfeCF/40SRlsxpo7xRjU/vz9gpZMWlf9Vzg==",
+  "success": true,
+  "projectFilePath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Protocol\\DarkwoodMultiplayerFramework.Protocol.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\bird\\.nuget\\packages\\microsoft.netcore.platforms\\1.1.0\\microsoft.netcore.platforms.1.1.0.nupkg.sha512",
+    "C:\\Users\\bird\\.nuget\\packages\\netstandard.library\\2.0.3\\netstandard.library.2.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

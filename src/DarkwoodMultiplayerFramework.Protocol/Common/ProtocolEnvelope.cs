@@ -34,6 +34,8 @@ public enum ProtocolMessageType : ushort
     RuntimeEntitySpawn = 60,
     RuntimeEntityDespawn = 61,
     SceneChange = 62,
+    GuestProfileApplied = 63,
+    PlayerAction = 64,
     Error = 255
 }
 

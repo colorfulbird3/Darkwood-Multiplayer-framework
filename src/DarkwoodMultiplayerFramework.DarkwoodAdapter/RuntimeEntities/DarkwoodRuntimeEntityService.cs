@@ -79,6 +79,47 @@ public sealed class DarkwoodRuntimeEntityService
     private void SendSpawnTo(int peer, RuntimeEntitySpawnMessage message)
         => runtime.Queue(peer, ProtocolMessageType.RuntimeEntitySpawn, ReplicationProtocolCodec.Encode(message));
 
+    /// <summary>P0-E/F：原子注册并广播一个由 Host 主动创建的掉落物——分配 ID → registry → replication binding → 生命周期监视(hostInventories) → recipient bookkeeping → spawn 发送。
+    /// 绝不允许出现"客户端已收到 Spawn 而 Host binding/registry 尚未登记"（否则客户端永久保留 mirror、Host 却 ENTITY_NOT_FOUND）。</summary>
+    public ulong RegisterAndBroadcastDroppedItem(Inventory dropped, Vector3 position, Quaternion rotation, byte[]? initialState = null)
+    {
+        if (!runtime.Session.IsHost || dropped == null) return 0;
+        var message = BuildSpawn(RuntimeEntityKind.DroppedItem, "Items/DroppedItem", position, rotation, initialState);
+        if (message.RuntimeEntityId == 0) return 0;
+        var id = message.RuntimeEntityId;
+        // 1) registry      2) replication binding      3) 生命周期监视
+        registry.Register(new RuntimeEntityRecord(id, RuntimeEntityKind.DroppedItem, "Items/DroppedItem", runtime.CurrentScene, runtime.serverTick));
+        runtime.replication.RegisterBinding(new WorldEntityBinding { Id = new EntityId(id, false), Root = dropped.gameObject, Primary = dropped, Inventory = dropped, Item = dropped.GetComponentInChildren<Item>(), Kind = WorldEntityKind.DroppedItem });
+        hostInventories[dropped] = id; // ★ 从此进入 TickHost 生命周期监视（stale → authoritative despawn）
+        // 4) recipient bookkeeping  5) spawn 发送（登记完成后才可发）
+        foreach (var readyPeer in runtime.readyPeers.ToArray())
+        {
+            dispatch.TryMark(id, readyPeer);
+            SendSpawnTo(readyPeer, message);
+            runtime.log?.LogInfo($"[RUNTIME] spawn id={id} peer={readyPeer} kind=DroppedItem proto=Items/DroppedItem");
+        }
+        runtime.log?.LogInfo($"[RUNTIME] RegisterAndBroadcastDroppedItem 完成：ID {id}，registry+binding+生命周期监视+广播 一步到位。");
+        return id;
+    }
+
+    /// <summary>RUNTIME-CHECK 诊断：Host 返回 ENTITY_NOT_FOUND（对 runtime 实体）之前调用，定位是"binding 丢失"还是"对象真死"。</summary>
+    public void DumpRuntimeCheck(ulong runtimeId)
+    {
+        if (!runtime.Session.IsHost) return;
+        var id = new EntityId(runtimeId, false);
+        var bindingAlive = runtime.replication.TryGetBinding(id, out var binding);
+        string rootAlive = "?" , invAlive = "?", itemAlive = "?";
+        if (bindingAlive)
+        {
+            try { rootAlive = (binding.Root != null && (UnityEngine.Object)binding.Root != null) ? "True" : "False"; } catch (Exception) { rootAlive = "False"; }
+            try { invAlive = (binding.Inventory != null && (UnityEngine.Object)binding.Inventory != null) ? "True" : "False"; } catch (Exception) { invAlive = "False"; }
+            try { itemAlive = (binding.Item != null && (UnityEngine.Object)binding.Item != null) ? "True" : "False"; } catch (Exception) { itemAlive = "False"; }
+        }
+        bool tracked = false;
+        foreach (var kv in hostInventories) if (kv.Value == runtimeId) { tracked = true; break; }
+        runtime.log?.LogInfo($"[RUNTIME-CHECK] id={runtimeId} bindingAlive={(bindingAlive ? "True" : "False")} rootAlive={rootAlive} inventoryAlive={invAlive} itemAlive={itemAlive} trackedByLifecycle={tracked}");
+    }
+
     /// <summary>主机周期：扫描新实体 + 销毁检测 + 范围门控单播（每 5 秒）。</summary>
     public void TickHost()
     {
@@ -149,14 +190,23 @@ public sealed class DarkwoodRuntimeEntityService
             foreach (var readyPeer in runtime.readyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.EntityDelta, deltaPayload);
             runtime.log?.LogInfo($"主机检测到 {despawnWires.Count} 个持久实体被销毁，已广播移除（夹子/物品等世界状态同步）。");
         }
+        // P0-F：显式注册（原子 API / 扫描发现）的掉落物生命周期监视——只按"Unity 对象真消失"清理并广播 Despawn，
+        // 绝不能因"本轮扫描没再遇到它"就误判销毁（主动 Drop 的实体已进 hostInventories，扫描 TryGetId 命中会 continue，天然不进 seenDropped）。
         foreach (var pair in hostInventories.ToArray())
         {
-            if (pair.Key == null || (!seen.Contains(pair.Key) && !seenDropped.Contains(pair.Key)))
+            var inv = pair.Key;
+            bool dead = false;
+            if (inv == null) dead = true;
+            else try { dead = inv.gameObject == null || !inv.gameObject.activeInHierarchy; } catch (Exception) { dead = true; }
+            if (dead)
             {
                 hostInventories.Remove(pair.Key);
                 pendingEvents.Remove(pair.Value);
-                dispatch.ClearEvent(pair.Value);
+                // ★ 先广播 Despawn（依赖 dispatch.WasSent 判断收件人），再清 dispatch，否则 Despawn 发不出去。
                 BroadcastDespawn(pair.Value, RuntimeEntityDespawnReason.Collected);
+                dispatch.ClearEvent(pair.Value);
+                runtime.replication.UnregisterRuntimeEntity(new EntityId(pair.Value, false));
+                runtime.log?.LogInfo($"[RUNTIME-CHECK] id={pair.Value} 生命周期：Host Unity 掉落物真消失 → 已广播 Despawn + unregister（Client 必须随之清理 mirror）。");
             }
         }
         foreach (var pair in hostEnemies.ToArray())
@@ -238,6 +288,22 @@ public sealed class DarkwoodRuntimeEntityService
             if (enemy != null) UnityEngine.Object.Destroy(enemy.gameObject);
         }
         runtime.log?.LogInfo($"[RUNTIME] despawn recv id={despawn.RuntimeEntityId} 原因={despawn.Reason} mirror 已销毁，replication 已卸载。");
+        // P0-D：World pickup 镜像销毁后验证 cursor 完全独立于 runtime mirror（pickedSlotInventoryAlive 必须 True，UI 存活）。
+        // 绝不出现 slotPresent=True / slotInventoryAlive=False 的 dangling。
+        try
+        {
+            var c = Singleton<Controller>.Instance;
+            if (c != null && !InvItemClass.isNull(c.pickedUpItem))
+            {
+                var it = c.pickedUpItem;
+                bool slotAlive = false; string slotInv = "无";
+                try { if (it.slot != null && it.slot.inventory != null) { slotAlive = it.slot.inventory.gameObject != null && it.slot.inventory.gameObject.activeInHierarchy; slotInv = it.slot.inventory.invType.ToString(); } } catch (Exception) { slotAlive = false; }
+                bool uiAlive = false; string spr = "无";
+                try { if (it.UIInvItem != null) { uiAlive = it.UIInvItem.gameObject != null && it.UIInvItem.gameObject.activeInHierarchy; if (it.UIInvItem.sprite != null) spr = it.UIInvItem.sprite.spriteId.ToString(); } } catch (Exception) { }
+                runtime.log?.LogInfo($"[CURSOR-WORLD-AFTER-DESPAWN] type={it.type} amount={it.amount} pickedUpItem=有 slotInventoryAlive={slotAlive} slotInventoryType={slotInv} uiAlive={uiAlive} spriteId={spr}");
+            }
+        }
+        catch (Exception) { }
     }
 
     /// <summary>P0-H：诊断用——该组件是否属于已知的 runtime dropped 镜像（Host 分配过 ID 的合法掉落物）。</summary>
@@ -275,19 +341,38 @@ public sealed class DarkwoodRuntimeEntityService
     {
         try
         {
-            var go = global::Core.AddPrefab("Items/DroppedItem", new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
-            if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
-            var dropped = go.GetComponent<Inventory>();
-            if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
-            if (spawn.InitialState.Length > 0)
+            // v0.9.0 Trusted Client：drop 发起者本地已用原版 spawnDroppedInvItem 生成了掉落物——
+            // 若与本次 Host spawn 匹配（类型/位置），直接复用为 mirror（不重复 Instantiate，杜绝双份/ghost）。
+            var pending = runtime.TakePendingLocalDrop(spawn);
+            Inventory dropped;
+            GameObject go;
+            if (pending != null)
             {
-                var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
-                if (state.Slots.Length > 0)
+                dropped = pending;
+                go = dropped.gameObject;
+                runtime.log?.LogInfo($"[TRUST] 复用本地原版掉落物为 mirror：ID {spawn.RuntimeEntityId}（Trusted Client 本地创建）");
+            }
+            else
+            {
+                go = global::Core.AddPrefab("Items/DroppedItem", new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
+                dropped = go.GetComponent<Inventory>();
+                if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
+                if (spawn.InitialState.Length > 0)
                 {
-                    var s = state.Slots[0];
-                    var slot = dropped.slots[0];
-                    slot.inventory = dropped;
-                    slot.createItem(new InvItemClass(s.Type, s.Durability, s.Amount, (InvItem.ModifierQuality)s.Quality, s.Recipe));
+                    var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
+                    if (state.Slots.Length > 0)
+                    {
+                        var s = state.Slots[0];
+                        var slot = dropped.slots[0];
+                        slot.inventory = dropped;
+                        // P0-1：镜像物品必须经原版按 type 创建链（createItem(string,...) → new InvItemClass(type,...) + initialize），
+                        // 绝不复制 DroppedItem prefab 默认 InvItem/UI/baseClass/sprite；InitialState 仅作为权威数据。
+                        if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
+                        slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
+                        try { dropped.refreshItems(); } catch (Exception) { }
+                        runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} slotType={(slot.invItem != null ? slot.invItem.type : "?")} baseClass={(slot.invItem != null && slot.invItem.baseClass != null ? slot.invItem.baseClass.type : "?")} amount={(slot.invItem != null ? slot.invItem.amount : 0)} spriteName=无(世界对象无UI槽，光标UI由Host权威Held重建)");
+                    }
                 }
             }
             // 保留碰撞器：镜像可被点击拾取（Pickup Patch 拦截并转发 Host）

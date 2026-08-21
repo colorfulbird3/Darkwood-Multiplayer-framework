@@ -1,0 +1,10 @@
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.deps.json
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\bin\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.pdb
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.csproj.AssemblyReference.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.GeneratedMSBuildEditorConfig.editorconfig
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.AssemblyInfoInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.AssemblyInfo.cs
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.csproj.CoreCompileInputs.cache
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.dll
+F:\SteamLibrary\steamapps\common\Darkwood\Darkwood Multiplayer framework-GitHub\src\DarkwoodMultiplayerFramework.Rendering\obj\Release\netstandard2.1\DarkwoodMultiplayerFramework.Rendering.pdb

@@ -1,0 +1,48 @@
+{
+  "runtimeTarget": {
+    "name": ".NETStandard,Version=v2.1/",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETStandard,Version=v2.1": {},
+    ".NETStandard,Version=v2.1/": {
+      "DarkwoodMultiplayerFramework.Network/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Protocol": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Network.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Core/1.0.0": {
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Core.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Protocol.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DarkwoodMultiplayerFramework.Network/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

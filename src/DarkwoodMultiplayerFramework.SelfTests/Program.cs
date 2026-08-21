@@ -274,7 +274,7 @@ static void RunTelepathyLoopback(bool compatible)
         Thread.Sleep(1);
     }
     if(compatible) Require(accepted && client.HandshakeComplete && client.PeerId>=0 && client.HostSessionId==host.SessionId && client.Session.Lifecycle.State==ConnectionState.SaveTransfer && host.ReadyPeerCount==1);
-    else Require(!accepted && rejected=="INCOMPATIBLE_FRAMEWORK_VERSION" && client.LastError=="INCOMPATIBLE_FRAMEWORK_VERSION" && client.Session.Lifecycle.State==ConnectionState.Failed && host.ReadyPeerCount==0);
+    else Require(!accepted && rejected!.StartsWith("INCOMPATIBLE_FRAMEWORK_VERSION", StringComparison.Ordinal) && client.LastError!.StartsWith("INCOMPATIBLE_FRAMEWORK_VERSION", StringComparison.Ordinal) && client.Session.Lifecycle.State==ConnectionState.Failed && host.ReadyPeerCount==0);
 }
 static string FindTelepathy()
 {

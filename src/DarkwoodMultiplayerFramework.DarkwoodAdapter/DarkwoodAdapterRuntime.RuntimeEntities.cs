@@ -123,7 +123,11 @@ public sealed partial class DarkwoodAdapterRuntime
         {
             case ActionKindWire.ContainerGrab: TryReplayContainerGrab(req,result); break;
             case ActionKindWire.PlayerGrab: TryReplayPlayerGrab(req,result); break;
-            case ActionKindWire.Pickup: ReplayPickedUpWorldItem(req,result); break;
+            case ActionKindWire.Pickup:
+                // 阶段三：WorldDroppedItem → 直接进背包（原版语义）——ack 携带权威 InventorySnapshot，直接 Apply（不 Replay cursor、不进 pickedUpItem）。
+                if (result.Payload.Length > 0) try { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); } catch (Exception) { }
+                break;
+            case ActionKindWire.HeldToContainer: ReplayHeldToContainer(req,result); break;
             case ActionKindWire.HeldToInventory: ReplayPlaceToDestination(req,result); break;
             case ActionKindWire.DropItem: ReplayDropCursorCleanup(); break;
             default:
@@ -163,25 +167,99 @@ public sealed partial class DarkwoodAdapterRuntime
         DumpCursor(controller.pickedUpItem);
         return true;
     }
-    private bool ReplayPickedUpWorldItem(ActionRequestMessage req, ActionResultMessage result)
+    // ── 阶段二：HeldToContainer ack → 原版 Replay（Host 已 commit；空/stack→placeItem，swap→swapItems）──
+    private bool ReplayHeldToContainer(ActionRequestMessage req, ActionResultMessage result)
     {
-        var id=new EntityId(req.TargetValue,req.TargetPersistent);
-        var controller=Singleton<Controller>.Instance;
-        if(controller==null||!InvItemClass.isNull(controller.pickedUpItem))return false;
-        if(!replication.TryGetInventory(id,out var inv)){log?.LogWarning($"[REPLAY] Pickup：本地掉落物反射已清理（despawn 早于 ack？顺序错误）。");return false;}
-        if(inv.slots==null||inv.slots.Count==0||InvItemClass.isNull(inv.slots[0].invItem))return false;
-        var slot=inv.slots[0];
-        try{using(BeginAuthorityReplay()){slot.grabItem();}}catch(Exception error){log?.LogWarning($"[REPLAY] Pickup grabItem 失败：{error.Message}");return false;}
-        // 把 cursor UI 从 mirror 根解离——随后 RuntimeEntityDespawn 会销毁 mirror，但不能连带杀 cursor 图标（用户允许的原版+引导路径）。
-        var picked=controller.pickedUpItem;
-        if(picked!=null&&!InvItemClass.isNull(picked)&&picked.UIInvItem!=null&&picked.UIInvItem.transform!=null)
+        var controller = Singleton<Controller>.Instance;
+        if (controller == null || InvItemClass.isNull(controller.pickedUpItem)) return false;
+        var id = new EntityId(req.TargetValue, req.TargetPersistent);
+        if (!replication.TryGetInventory(id, out var container) || container.slots == null) return false;
+        HeldToContainerPayload p; try { p = ReplicationProtocolCodec.DecodeHeldToContainer(req.Payload); } catch (Exception) { return false; }
+        if (p.SlotIndex < 0 || p.SlotIndex >= container.slots.Count) return false;
+        var slot = container.slots[p.SlotIndex];
+        HeldItemStatePayload heldAfter;
+        try { heldAfter = ReplicationProtocolCodec.DecodeHeldItemState(result.Payload); } catch (Exception) { heldAfter = default; }
+        bool swap = !heldAfter.IsEmpty; // Host 返回 heldAfter=非空 ⇒ swap（原槽物成了新 Held）
+        bool replayOk = false;
+        try
         {
-            try { var uiRoot=Singleton<UI>.Instance; picked.UIInvItem.transform.SetParent(uiRoot!=null?uiRoot.transform:picked.UIInvItem.transform.root,true); } catch(Exception){}
+            using (BeginAuthorityReplay())
+            {
+                if (swap) { if (slot.invItem != null && !InvItemClass.isNull(slot.invItem)) slot.swapItems(); }
+                else slot.placeItem();
+            }
+            replayOk = true;
         }
-        DarkwoodAdapterRuntime.LogMessage($"[REPLAY] action=Pickup source={id} method=InvSlot.grabItem result=success（cursor-only）");
-        DumpCursor(controller.pickedUpItem);
-        return true;
+        catch (Exception error) { log?.LogWarning($"[RECONCILE] held-to-container replay 失败（{(swap ? "swapItems" : "placeItem")}）：{error.Message}"); }
+        DarkwoodAdapterRuntime.LogMessage($"[REPLAY] action=HeldToContainer container={id}:{p.SlotIndex} method={(swap ? "InvSlot.swapItems" : "InvSlot.placeItem")} result={(replayOk ? "success" : "failed")}");
+        // reconcile：swap → 原版已把新 held 挂到 cursor（pickedUpItem=原槽物）；非 swap → Host held 已清，本地 cursor 必须清。
+        if (swap)
+        {
+            if (controller == null || InvItemClass.isNull(controller.pickedUpItem))
+            {
+                // 视觉兜底：原版 swap 未挂上（例如拾取自世界的物品 slot 残缺时）——按 Host heldAfter 重建 cursor。
+                var item = new InvItemClass(heldAfter.Type, heldAfter.Durability, heldAfter.Amount, (InvItem.ModifierQuality)heldAfter.Quality, heldAfter.Recipe);
+                if (heldAfter.Ammo > 0) item.ammo = heldAfter.Ammo;
+                try { var pl = Player.Instance; if (pl != null && pl.Inventory != null && pl.Inventory.slots.Count > 0) item.initialize(pl.Inventory.slots[0]); } catch (Exception) { }
+                controller.pickedUpItem = item;
+                CreateCursorVisualFallback(item);
+            }
+        }
+        else
+        {
+            if (controller != null && !InvItemClass.isNull(controller.pickedUpItem))
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[RECONCILE] action=HeldToContainer replay={(replayOk ? "success" : "failed")} hostHeld=Empty localHeldAfter=Empty");
+                ClearHeldItem();
+                try { var pl = Player.Instance; if (pl != null) pl.refreshRecipes(); } catch (Exception) { }
+            }
+        }
+        return replayOk;
     }
+
+    // P0-H：原版 InvSlot.createInvItemIcon（Core.AddPrefab "UI/InvItem" + setUISprite + refresh + stackable/ammo 标签）——HeldItem 视觉兜底
+    //（如 swap 后原版未挂上 cursor 时重建；sprite 来自真实 baseClass.iconType，不受 slot.inventory.open 约束）。
+    internal static bool CreateCursorVisualFallback(InvItemClass item)
+    {
+        if(item==null||InvItemClass.isNull(item)||item.baseClass==null)return false;
+        try
+        {
+            var uiRoot=Singleton<UI>.Instance;
+            var root=uiRoot!=null?uiRoot.transform:null;
+            if(root==null)return false;
+            var go=global::Core.AddPrefab("UI/InvItem", root.position, Quaternion.Euler(90f,0f,0f), root.gameObject, worldSpace:true);
+            if(go==null)return false;
+            var ui=go.GetComponent<UIInvItem>();
+            if(ui==null){UnityEngine.Object.Destroy(go);return false;}
+            item.UIInvItem=ui;
+            try{ui.initialize();}catch(Exception){}
+            // 原版 setUISprite/refresh 要求 slot.inventory.open 才设图标；此处直接执行 open 路径的核心动作（iconType 来自原生物品定义）。
+            try
+            {
+                if (ui.sprite != null && item.baseClass != null && item.baseClass.iconType != null)
+                {
+                    ui.sprite.SetSprite(item.baseClass.iconType);
+                    ui.sprite.Build();
+                }
+            }
+            catch (Exception) { }
+            try{item.setUISprite();}catch(Exception){}
+            if(item.baseClass.hasAmmo)
+            {
+                var a=global::Core.AddPrefab("UI/UIItemAmmo", go.transform.position+new Vector3(0f,-30f,0f), Quaternion.Euler(90f,0f,0f), go, worldSpace:true);
+                if(a!=null)ui.ammo=a.GetComponent<tk2dTextMesh>();
+            }
+            if(item.baseClass.stackable)
+            {
+                var a=global::Core.AddPrefab("UI/UIItemAmount", go.transform.position, Quaternion.Euler(90f,0f,0f), go, worldSpace:true);
+                if(a!=null){a.transform.localScale=Vector3.one;a.transform.localPosition=new Vector3(-25f,8f,-1f);ui.amount=a.GetComponent<tk2dTextMesh>();}
+            }
+            try{ui.refresh(item);}catch(Exception){}
+            return true;
+        }
+        catch(Exception error){DarkwoodAdapterRuntime.LogMessage($"[REPLAY] createInvItemIcon 兜底失败：{error.Message}");return false;}
+    }
+
     private bool ReplayPlaceToDestination(ActionRequestMessage req, ActionResultMessage result)
     {
         var controller=Singleton<Controller>.Instance;
@@ -190,11 +268,21 @@ public sealed partial class DarkwoodAdapterRuntime
         var inv=p.FromHotbar?Player.Instance.Hotbar:Player.Instance.Inventory;
         if(inv==null||p.TargetSlot<0||p.TargetSlot>=inv.slots.Count)return false;
         var slot=inv.slots[p.TargetSlot];
-        try{using(BeginAuthorityReplay()){slot.placeItem();}}catch(Exception error){log?.LogWarning($"[REPLAY] placeItem 失败：{error.Message}");return false;}
-        DarkwoodAdapterRuntime.LogMessage($"[REPLAY] action=HeldToInventory dest={(p.FromHotbar?"hotbar":"playerInv")}:{p.TargetSlot} method=InvSlot.placeItem result=success");
-        // Reconcile：权威背包才是最终真相。
+        string localHeldBefore = controller.pickedUpItem.type+" x"+controller.pickedUpItem.amount;
+        bool replayOk=false;
+        try{using(BeginAuthorityReplay()){slot.placeItem();}replayOk=true;}
+        catch(Exception error){log?.LogWarning($"[RECONCILE] placeItem replay 失败：{error.Message}");replayOk=false;}
+        DarkwoodAdapterRuntime.LogMessage($"[REPLAY] action=HeldToInventory dest={(p.FromHotbar?"hotbar":"playerInv")}:{p.TargetSlot} method=InvSlot.placeItem result={(replayOk?"success":"failed")}");
+        // P0-G：Host 已 commit（held 已清、背包已含物品）——无论视觉 Replay 成败都必须强制 reconcile 到权威，
+        // 绝不允许出现 Host Empty / Client Holding 的永久软锁。
         if(result.Payload.Length>0) try { ApplyPlayerInventory(ReplicationProtocolCodec.DecodePlayerInventoryState(result.Payload)); } catch (Exception) { }
-        return true;
+        if(controller!=null&&!InvItemClass.isNull(controller.pickedUpItem))
+        {
+            DarkwoodAdapterRuntime.LogMessage($"[RECONCILE] action=HeldToInventory replay={(replayOk?"success":"failed")} hostHeld=Empty localHeldBefore={localHeldBefore} localHeldAfter=Empty inventoryApplied=True");
+            ClearHeldItem();
+            try{var pl=Player.Instance;if(pl!=null)pl.refreshRecipes();}catch(Exception){}
+        }
+        return replayOk;
     }
     private void ReplayDropCursorCleanup()
     {
@@ -216,6 +304,7 @@ public sealed partial class DarkwoodAdapterRuntime
         catch(Exception error){DarkwoodAdapterRuntime.LogMessage($"[REPLAY] Drop cursor cleanup 异常：{error.Message}");}
     }
 
+    // P0-D：World Cursor 强 invariant（[CURSOR-WORLD]）——pickedSlotInventoryAlive 必须 True，sprite 必须匹配真实物品。
     // P0-D：完整 Cursor UI 诊断（UIInvItem!=null 但 active 失效仍算 FAIL）。
     internal static void DumpCursor(InvItemClass item)
     {
@@ -243,12 +332,22 @@ public sealed partial class DarkwoodAdapterRuntime
         }
     }
 
+    private static readonly System.Collections.Generic.Dictionary<int,int> AppliedInventoryRevisions = new System.Collections.Generic.Dictionary<int,int>();
     internal static void ApplyPlayerInventory(PlayerInventoryStatePayload state)
     {
         var player=Player.Instance;if(player?.Inventory==null||player.Hotbar==null)throw new InvalidOperationException("客户端玩家库存不可用。");
+        // P0-Authority-Drift：本人背包权威包（PlayerId=客户端自身 peer id）按 revision 门控——
+        // 乱序/迟到的旧 revision 包不得覆盖已应用的更新状态（否则出现"place-accepted 后物品消失"）。
+        int selfPeerId = DarkwoodAdapterRuntime.Instance?.clientSession?.PeerId ?? 0;
+        if (state.PlayerId != 0 && AppliedInventoryRevisions.TryGetValue(state.PlayerId, out var lastApplied) && state.Revision < lastApplied)
+        {
+            DarkwoodAdapterRuntime.LogMessage($"[INV-REV] 丢弃迟到旧包 player={state.PlayerId} staleRev={state.Revision} lastApplied={lastApplied}");
+            return;
+        }
         DarkwoodInventoryAdapter.Apply(player.Inventory,ToDarkwoodSlots(state.Backpack));
         DarkwoodInventoryAdapter.Apply(player.Hotbar,ToDarkwoodSlots(state.Hotbar));
         player.refreshRecipes();
+        if (state.PlayerId != 0) AppliedInventoryRevisions[state.PlayerId] = state.Revision;
     }
 
     private void ApplyGuestProfile(GuestProfileMessage profile)

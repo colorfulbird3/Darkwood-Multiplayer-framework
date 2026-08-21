@@ -1,0 +1,131 @@
+{
+  "runtimeTarget": {
+    "name": ".NETStandard,Version=v2.1/",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETStandard,Version=v2.1": {},
+    ".NETStandard,Version=v2.1/": {
+      "DarkwoodMultiplayerFramework.Rebuilt/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Actions": "1.0.0",
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Entities": "1.0.0",
+          "DarkwoodMultiplayerFramework.Inventory": "1.0.0",
+          "DarkwoodMultiplayerFramework.Network": "1.0.0",
+          "DarkwoodMultiplayerFramework.Rendering": "1.0.0",
+          "DarkwoodMultiplayerFramework.Snapshots": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Rebuilt.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Actions.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Core/1.0.0": {
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Core.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Entities/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Protocol": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Entities.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Inventory/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Actions": "1.0.0",
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Inventory.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Network/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Protocol": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Network.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Protocol.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Rendering/1.0.0": {
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Rendering.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Snapshots/1.0.0": {
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "runtime": {
+          "DarkwoodMultiplayerFramework.Snapshots.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DarkwoodMultiplayerFramework.Rebuilt/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Entities/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Inventory/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Network/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Rendering/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DarkwoodMultiplayerFramework.Snapshots/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

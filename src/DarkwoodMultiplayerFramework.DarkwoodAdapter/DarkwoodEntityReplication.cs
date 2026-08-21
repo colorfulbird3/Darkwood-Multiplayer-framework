@@ -11,6 +11,9 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 public sealed class DarkwoodEntityReplication
 {
     private readonly Dictionary<EntityId,Component> entities=new Dictionary<EntityId,Component>(); private readonly Dictionary<EntityId,WorldEntityBinding> bindings=new Dictionary<EntityId,WorldEntityBinding>(); private readonly Dictionary<EntityId,EntityStateWire> last=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,EntityStateWire> targets=new Dictionary<EntityId,EntityStateWire>(); private readonly Dictionary<EntityId,InventoryStateMessage> lastInventories=new Dictionary<EntityId,InventoryStateMessage>(); private readonly HashSet<Character> frozen=new HashSet<Character>(); private readonly HashSet<Character> deadCharacters=new HashSet<Character>(); private ulong revision; public bool ApplyingRemote {get;private set;}
+    // 阶段二 Tick 分层：世界状态对象低频捕获（1Hz），事件即时广播（BroadcastStateNow）不受限。
+    private static readonly HashSet<ushort> StateThrottledSchemas = new HashSet<ushort> { WorldStateSchemas.Generator, WorldStateSchemas.Light, WorldStateSchemas.BearTrap };
+    private readonly Dictionary<EntityId,float> lastStateSync=new Dictionary<EntityId,float>(); private const float StateSyncIntervalSeconds=1f;
     // P0-I（决策：AuthorityReplayScope 进入时也置 ApplyingRemote，防止 Replay 内原版交互再发 Intent）。
     public void BeginRemoteApply()=>ApplyingRemote=true;
     public void EndRemoteApply()=>ApplyingRemote=false;
@@ -65,7 +68,11 @@ public sealed class DarkwoodEntityReplication
     /// <summary>用主机权威注册表同一份扫描结果构建复制状态（避免 registry 与 replication 各扫一次）。</summary>
     public void Rebuild(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<EntityId, Component>> pairs){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var pair in pairs)if(!entities.ContainsKey(pair.Key))entities[pair.Key]=pair.Value;}
     public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureAll",error);continue;}a.Add(state);last[pair.Key]=state;}return a.ToArray();}
-    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);var adapter=Adapters.Resolve(component);if(adapter!=null){var extra=adapter.Capture(component);if(extra!=null&&extra.Length>0)state=state.WithSchema(adapter.SchemaId,extra);}}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
+    public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}
+        // 阶段二 Tick 分层：世界状态对象（Generator/Light/BearTrap）1Hz 低频捕获；玩家/常规实体保持 15Hz diff。事件即时广播单独走 CaptureNow（不受限）。
+        var adapterNow=Adapters.Resolve(component);
+        if(adapterNow!=null&&StateThrottledSchemas.Contains(adapterNow.SchemaId)){if(lastStateSync.TryGetValue(pair.Key,out var ls)&&Time.unscaledTime-ls<StateSyncIntervalSeconds)continue;lastStateSync[pair.Key]=Time.unscaledTime;}
+        EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(adapterNow!=null){var extra=adapterNow.Capture(component);if(extra!=null&&extra.Length>0)state=state.WithSchema(adapterNow.SchemaId,extra);}}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
     public void Apply(IEnumerable<EntityStateWire> states,bool immediate){Apply(states,immediate,out _);}
     public ApplyStats Apply(IEnumerable<EntityStateWire> states,bool immediate,out ApplyStats stats)
     {
@@ -109,6 +116,17 @@ public sealed class DarkwoodEntityReplication
     public void Interpolate(float factor){foreach(var pair in targets){if(!entities.TryGetValue(pair.Key,out var c)||!(c is Character))continue;var s=pair.Value;c.transform.position=Vector3.Lerp(c.transform.position,new Vector3(s.X,s.Y,s.Z),Mathf.Clamp01(factor));c.transform.rotation=Quaternion.Slerp(c.transform.rotation,new Quaternion(s.Qx,s.Qy,s.Qz,s.Qw),Mathf.Clamp01(factor));}}
     public void RestoreSimulation(){foreach(var c in frozen)if(c!=null){c.enabled=true;if(c.AIpath!=null)c.AIpath.enabled=true;}frozen.Clear();foreach(var c in deadCharacters)if(c!=null)c.enabled=true;deadCharacters.Clear();}
     public EntityStateWire[] Snapshot()=>CaptureAll();
+
+    /// <summary>阶段二：事件即时广播用——对单个已绑定实体 Capture（更新 last 表）并返回 wire；未绑定/失效返回 null。</summary>
+    public EntityStateWire? CaptureNow(EntityId id)
+    {
+        if (!entities.TryGetValue(id, out var component) || IsStale(component)) return null;
+        EntityStateWire state;
+        try { state = DarkwoodEntityStateAdapter.Capture(id, component, ++revision); }
+        catch (Exception error) { LogStale(id, component, "CaptureNow", error); return null; }
+        last[id] = state;
+        return state;
+    }
     public InventoryStateMessage[] CaptureInventorySnapshot(){var list=new List<InventoryStateMessage>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}if(!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;InventoryStateMessage message;try{message=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,++revision);}catch(Exception error){LogStale(pair.Key,inventory,"CaptureInventorySnapshot",error);continue;}list.Add(message);lastInventories[pair.Key]=message;}return list.ToArray();}
     public InventoryStateMessage[] CaptureInventoryDeltas(){var list=new List<InventoryStateMessage>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}if(!(component is Inventory inventory)||!DarkwoodEntityStateAdapter.IsShared(inventory))continue;InventoryStateMessage previous=default!;bool hadPrevious=false;InventoryStateMessage next;try{hadPrevious=lastInventories.TryGetValue(pair.Key,out previous);next=DarkwoodEntityStateAdapter.CaptureInventory(pair.Key,inventory,hadPrevious?previous.Revision+1:++revision);}catch(Exception error){LogStale(pair.Key,inventory,"CaptureInventoryDeltas",error);continue;}if(!hadPrevious||!DarkwoodEntityStateAdapter.SlotsEqual(previous.Slots,next.Slots)){list.Add(next);lastInventories[pair.Key]=next;}}return list.ToArray();}
     public InventoryStateMessage[] CaptureInventories()=>CaptureInventorySnapshot();

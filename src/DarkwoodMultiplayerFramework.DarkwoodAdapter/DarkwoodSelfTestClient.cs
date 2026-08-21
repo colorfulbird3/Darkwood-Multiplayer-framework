@@ -195,6 +195,8 @@ public sealed class DarkwoodSelfTestClient : MonoBehaviour
                 var profile = ReplicationProtocolCodec.DecodeGuestProfile(envelope.Payload);
                 guestProfileReceived = true;
                 SelfTestLog($"✓ 收到访客档案：出生点 ({profile.X:F1},{profile.Y:F1},{profile.Z:F1})，第 {profile.Day} 天，加入 {profile.JoinCount} 次。");
+                // P0-2：模拟真实客户端——应用 Host 权威档案后 ack，Host 开放 inventory bootstrap 门（B 回归在此触发）。
+                try { session?.Send(ProtocolMessageType.GuestProfileApplied, Array.Empty<byte>()); SelfTestLog("✓ GuestProfile 已应用并 ack（bootstrap gate open）。"); } catch (Exception) { }
             }
             else if (envelope.MessageType == ProtocolMessageType.WorldSnapshotManifest)
             {

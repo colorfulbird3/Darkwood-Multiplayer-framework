@@ -86,16 +86,31 @@ internal static class DarkwoodItemActivatePatch
 
     // FIX-011：记录是否为本地玩家的交互；activate() 原方法正常执行（本地立即生效），
     // Postfix 把执行后的 isOn 状态报告给主机（主机应用状态并广播，不弹容器 UI）。
-    private static void Prefix(Item __instance, ref bool __state)
+    private static bool Prefix(Item __instance, ref bool __state)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         __state = runtime != null && runtime.IsClient && runtime.State == ConnectionState.Ready
                   && Player.Instance != null && Player.Instance.selectedObject == __instance.transform;
+        if (!__state) return true;
+        // 阶段二：发电机——客户端绝不先执行原版 activate（会本地 isOn=true + 本地电源/drain 模拟）。
+        // 改为 StateObjectInteract intent → Host 执行原版 turnOn/turnOff → 即时广播权威状态 → 客户端 adapter Apply。
+        if (runtime != null && __instance != null && __instance.GetComponent<Generator>() != null)
+        {
+            if (runtime.replication.TryGetId(__instance, out var genId))
+                runtime.TryRequestStateObjectInteract(genId, "toggle");
+            __state = false; // 不执行原版、不上报
+            return false;
+        }
+        return true;
     }
 
     private static void Postfix(Item __instance, bool __state)
     {
         if (!__state) return;
-        DarkwoodAdapterRuntime.Instance?.TryRequestItemActivate(__instance);
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null) return;
+        // P1-A：掉落物不产生 ItemActivate——点击掉落物只走 Pickup intent（避免重复 interaction 路由 / Pickup·ItemActivate race）。
+        if (__instance != null && __instance.isDroppedItem) return;
+        runtime.TryRequestItemActivate(__instance);
     }
 }

@@ -1,0 +1,236 @@
+{
+  "version": 3,
+  "targets": {
+    ".NETStandard,Version=v2.1": {
+      "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Actions.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Actions.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Core/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Core.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Core.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Entities/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.0",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Protocol": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Entities.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Entities.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Inventory/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Actions": "1.0.0",
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Inventory.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Inventory.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Network/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0",
+          "DarkwoodMultiplayerFramework.Protocol": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Network.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Network.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Protocol.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Protocol.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Rendering/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Rendering.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Rendering.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Snapshots/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.0",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Snapshots.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Snapshots.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Actions/DarkwoodMultiplayerFramework.Actions.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Actions/DarkwoodMultiplayerFramework.Actions.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Core/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Core/DarkwoodMultiplayerFramework.Core.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Core/DarkwoodMultiplayerFramework.Core.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Entities/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Entities/DarkwoodMultiplayerFramework.Entities.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Entities/DarkwoodMultiplayerFramework.Entities.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Inventory/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Inventory/DarkwoodMultiplayerFramework.Inventory.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Inventory/DarkwoodMultiplayerFramework.Inventory.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Network/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Network/DarkwoodMultiplayerFramework.Network.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Network/DarkwoodMultiplayerFramework.Network.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Protocol/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Protocol/DarkwoodMultiplayerFramework.Protocol.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Protocol/DarkwoodMultiplayerFramework.Protocol.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Rendering/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Rendering/DarkwoodMultiplayerFramework.Rendering.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Rendering/DarkwoodMultiplayerFramework.Rendering.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Snapshots/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Snapshots/DarkwoodMultiplayerFramework.Snapshots.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Snapshots/DarkwoodMultiplayerFramework.Snapshots.csproj"
+    }
+  },
+  "projectFileDependencyGroups": {
+    ".NETStandard,Version=v2.1": [
+      "DarkwoodMultiplayerFramework.Actions >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Core >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Entities >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Inventory >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Network >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Rendering >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Snapshots >= 1.0.0"
+    ]
+  },
+  "packageFolders": {
+    "C:\\Users\\bird\\.nuget\\packages\\": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Bootstrap\\DarkwoodMultiplayerFramework.Bootstrap.csproj",
+      "projectName": "DarkwoodMultiplayerFramework.Rebuilt",
+      "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Bootstrap\\DarkwoodMultiplayerFramework.Bootstrap.csproj",
+      "packagesPath": "C:\\Users\\bird\\.nuget\\packages\\",
+      "outputPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Bootstrap\\obj\\",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "C:\\Users\\bird\\AppData\\Roaming\\NuGet\\NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "netstandard2.1"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "projectReferences": {
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Actions\\DarkwoodMultiplayerFramework.Actions.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Actions\\DarkwoodMultiplayerFramework.Actions.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Core\\DarkwoodMultiplayerFramework.Core.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Core\\DarkwoodMultiplayerFramework.Core.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Entities\\DarkwoodMultiplayerFramework.Entities.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Entities\\DarkwoodMultiplayerFramework.Entities.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Inventory\\DarkwoodMultiplayerFramework.Inventory.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Inventory\\DarkwoodMultiplayerFramework.Inventory.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Network\\DarkwoodMultiplayerFramework.Network.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Network\\DarkwoodMultiplayerFramework.Network.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Rendering\\DarkwoodMultiplayerFramework.Rendering.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Rendering\\DarkwoodMultiplayerFramework.Rendering.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Snapshots\\DarkwoodMultiplayerFramework.Snapshots.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Snapshots\\DarkwoodMultiplayerFramework.Snapshots.csproj"
+            }
+          }
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      }
+    },
+    "frameworks": {
+      "netstandard2.1": {
+        "targetAlias": "netstandard2.1",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "NETStandard.Library": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\7.0.317\\RuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "version": 3,
+  "targets": {
+    ".NETStandard,Version=v2.1": {
+      "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "dependencies": {
+          "DarkwoodMultiplayerFramework.Core": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Actions.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Actions.dll": {}
+        }
+      },
+      "DarkwoodMultiplayerFramework.Core/1.0.0": {
+        "type": "project",
+        "framework": ".NETStandard,Version=v2.1",
+        "compile": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Core.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/DarkwoodMultiplayerFramework.Core.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DarkwoodMultiplayerFramework.Actions/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Actions/DarkwoodMultiplayerFramework.Actions.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Actions/DarkwoodMultiplayerFramework.Actions.csproj"
+    },
+    "DarkwoodMultiplayerFramework.Core/1.0.0": {
+      "type": "project",
+      "path": "../DarkwoodMultiplayerFramework.Core/DarkwoodMultiplayerFramework.Core.csproj",
+      "msbuildProject": "../DarkwoodMultiplayerFramework.Core/DarkwoodMultiplayerFramework.Core.csproj"
+    }
+  },
+  "projectFileDependencyGroups": {
+    ".NETStandard,Version=v2.1": [
+      "DarkwoodMultiplayerFramework.Actions >= 1.0.0",
+      "DarkwoodMultiplayerFramework.Core >= 1.0.0"
+    ]
+  },
+  "packageFolders": {
+    "C:\\Users\\bird\\.nuget\\packages\\": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Inventory\\DarkwoodMultiplayerFramework.Inventory.csproj",
+      "projectName": "DarkwoodMultiplayerFramework.Inventory",
+      "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Inventory\\DarkwoodMultiplayerFramework.Inventory.csproj",
+      "packagesPath": "C:\\Users\\bird\\.nuget\\packages\\",
+      "outputPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Inventory\\obj\\",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "C:\\Users\\bird\\AppData\\Roaming\\NuGet\\NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "netstandard2.1"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "projectReferences": {
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Actions\\DarkwoodMultiplayerFramework.Actions.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Actions\\DarkwoodMultiplayerFramework.Actions.csproj"
+            },
+            "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Core\\DarkwoodMultiplayerFramework.Core.csproj": {
+              "projectPath": "F:\\SteamLibrary\\steamapps\\common\\Darkwood\\Darkwood Multiplayer framework-GitHub\\src\\DarkwoodMultiplayerFramework.Core\\DarkwoodMultiplayerFramework.Core.csproj"
+            }
+          }
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      }
+    },
+    "frameworks": {
+      "netstandard2.1": {
+        "targetAlias": "netstandard2.1",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "NETStandard.Library": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\7.0.317\\RuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}

@@ -231,7 +231,12 @@ internal static class DarkwoodContainerDragDestinationPatch
                 }
                 if (DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
                 {
-                    DarkwoodAdapterRuntime.LogMessage("[RUNTIME] held→共享容器暂不支持：请先放回背包或丢到地面。");
+                    // 阶段二：held → 共享容器（Host 权威 put：空→放/同类→stack/异类→swap；ack 后 Replay 原版 placeItem/swapItems）。
+                    if (!runtime.replication.TryGetId(__instance.inventory, out var containerId)
+                        || !runtime.TryRequestHeldToContainer(containerId, __instance.inventory.slots.IndexOf(__instance)))
+                    {
+                        DarkwoodAdapterRuntime.LogMessage("[RUNTIME] held→共享容器：无法解析容器实体 ID，已阻止本地放置。");
+                    }
                     return false;
                 }
             }

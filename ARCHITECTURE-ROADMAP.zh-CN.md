@@ -1,16 +1,25 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.8.9-beta.8（2026-08-20）
+> 最后更新：0.9.0（2026-08-21）
+
+## v0.9.0 Multiplayer Architecture（正式命名）
+
+模式：**Trusted Client + Host World Authority**：
+
+- **Trusted Client**——客户端运行玩家自己的逻辑：移动/挥砍/背包 UI/原版交互 Replay 全部在本地执行；网络只同步**状态**（Intent → Ack → StateDelta），客户端不自行决定世界结果。
+- **Host World Authority**——主机维护世界真相：EntityId/绑定清单、world-stable 注册表门、物品事务（shadow/Held/容器）、状态对象 typed Adapter（Generator/Light/BearTrap）、存档/访客档案、Runtime 实体 Spawn/Despawn 生命周期。
+
+三层同步管线：`Entity Sync（对象存在性/Binding）` + `Inventory Sync（物品转移/Cursor Replay）` + `State Sync（状态对象 Adapter，1Hz + 事件即时）`。
 
 ## 当前状态
 
 | 项 | 值 |
 |---|---|
 | 当前发布版本 | **0.8.9-beta.7**（Host 权威实体 ID + 绑定清单 + 真实世界稳定门；存档传输/剥离修复；HeldItem 物品事务；Runtime 实体生命周期；World State Adapter 开端） |
-| 进行中 | **0.8.9-beta.8 — 客户端交互 Replay 架构**（Container→Cursor / Backpack→Cursor / pick→Cursor / place / stack / swap / drop 全部改为 Intent→Host Authority→Client Replay 原版 Darkwood→Reconcile） |
-| 集成验证 | beta.7：构建 0 错 / Unit 50 / Self 85 / 回环通过；beta.8 见 RELEASE-NOTES 当次实测 |
+| 进行中 | **0.9.0 — Trusted Client + Host World Authority**（beta.8/9 内部迭代已完成：客户端交互 Replay 原版；HeldToContainer 双向容器；StatefulObjectSync（Generator/Light/BearTrap）；背包 revision 防漂移；拾取直进背包；正式发布封装 0.9.0） |
+| 集成验证 | beta.9：构建 0 错 / Unit 50/50 / SelfTests 85/85 / 回环通过（含 INV-BOOTSTRAP B 回归 PASS） |
 | 权威模型 | **Hybrid Authority / Trust Mode**：Client 不持有 Authority，但可在 Host Accepted 后于 `AuthorityReplayScope` 内**直接执行 Darkwood 原版 interaction 方法**（grabItem/placeItem/...）——"不拥有 Authority" ≠ "不执行原版 interaction code"。 |
-| 下一开发版本 | 发电机/灯光/事件类权威 transition（同一 Replay 思想）、捕兽夹 typed 状态、World Adapter 覆盖审计高频对象 |
+| 下一开发版本 | v0.9.0 Phase 2：玩家动作 Client Authority（翻窗/开门/交互动画：原版执行 → PlayerActionEvent → Host Relay）；Phase 1 真机验收 → Phase 3 WorldStateSync 场景补全 → Phase 4 NPC/AI/事件/战斗 |
 
 版本路线：
 
@@ -23,11 +32,13 @@
         ↓
 0.8.9-beta.6            ← 实体 ID/Binding 重构 + 世界稳定门 + 存档传输修复
         ↓
-0.8.9-beta.7            ← 当前发布：HeldItem 物品事务 + Runtime 生命周期 + World Adapter 开端 + 容错诊断
+0.8.9-beta.7            ← 发布：HeldItem 物品事务 + Runtime 生命周期 + World Adapter 开端 + 容错诊断
         ↓
-0.8.9 实机矩阵          ← 双机验证物品链 / 发电机大世界状态 / 长时稳定性
+0.8.9-beta.8            ← 客户端交互 Replay 架构（Intent→Host→原版 Replay→Reconcile）
         ↓
-0.9.0                    ← 恢复横向扩展玩法
+0.8.9-beta.9            ← 内部迭代：双向容器 / StatefulObjectSync / 背包 revision / 拾取直进背包
+        ↓
+v0.9.0 ← Trusted Client + Host World Authority（Phase 1 真机验收 → Phase 2 玩家动作 Client Authority → Phase 3 WorldStateSync 场景补全 → Phase 4 NPC/AI/事件/战斗）
 ```
 
 ---

@@ -17,9 +17,12 @@ public enum ActionKindWire : byte
     ItemInteract = 9,
     ContainerMove = 10,
     DeployItem = 11,
-    ContainerGrab = 12,       // 从共享容器 grab 到鼠标（HeldItem）——P0-D/E
-    HeldToInventory = 13,     // 鼠标 HeldItem 放回玩家背包——P0-D/E
-    PlayerGrab = 14           // 从自己背包/快捷栏 grab 到鼠标（Host HeldItems 权威）——P0-E/F
+    ContainerGrab = 12,       // 从共享容器 grab 到鼠标（HeldItem）
+    HeldToInventory = 13,     // 鼠标 HeldItem 放回玩家背包
+    PlayerGrab = 14,          // 从自己背包/快捷栏 grab 到鼠标（Host HeldItems 权威）
+    HeldToContainer = 15,     // 鼠标 HeldItem 放入共享容器（Host 权威：空→放/同类→stack/异类→swap）
+    StateObjectInteract = 16, // 世界状态对象交互意图（如发电机 toggle）——Host 执行原版逻辑后即时广播权威状态
+    PlayerAction = 17        // 玩家动作事件（本地已执行原版）→ Host Relay 给其他客户端（播放/响应）
 }
 
 /// <summary>Drop 来源：决定 Host 从哪个权威状态扣减物品。</summary>
@@ -62,6 +65,27 @@ public readonly struct PlayerGrabPayload
     public bool FromHotbar { get; } public int SlotIndex { get; }
 }
 
+/// <summary>阶段二：HeldItem 放入共享容器（目标槽）。容器实体 ID 走请求 TargetValue/TargetPersistent——与 HeldToInventory 的权威域不同（世界对象 vs 玩家背包）。</summary>
+public readonly struct HeldToContainerPayload
+{
+    public HeldToContainerPayload(int slotIndex){SlotIndex=slotIndex;}
+    public int SlotIndex { get; }
+}
+
+/// <summary>阶段二：世界状态对象交互意图（如发电机 toggle）。Host 执行原版逻辑后即时广播权威状态。</summary>
+public readonly struct StateObjectIntentPayload
+{
+    public StateObjectIntentPayload(string interaction){Interaction=interaction??string.Empty;}
+    public string Interaction { get; }
+}
+
+/// <summary>阶段二/三：玩家动作事件（本地已执行原版 —— 翻窗/交互/动画等）→ Host Relay 到其他客户端播放。</summary>
+public readonly struct PlayerActionPayload
+{
+    public PlayerActionPayload(string action){Action=action??string.Empty;}
+    public string Action { get; }
+}
+
 /// <summary>Drop 意图：客户端只发槽位与落点，物品属性由 Host 从权威背包读取。</summary>
 public readonly struct DropItemPayload
 {
@@ -100,6 +124,14 @@ public readonly struct ActionRejectedMessage
     public Guid RequestId{get;} public ActionKindWire Kind{get;} public ulong TargetValue{get;} public bool TargetPersistent{get;} public ulong CurrentRevision{get;} public string ErrorCode{get;}
 }
 
+/// <summary>阶段三：WorldDroppedItem Pickup 直接进背包（原版语义）。entityId 走请求 TargetValue；payload 携带类型/数量供 Host 校验。</summary>
+public readonly struct PickupPayload
+{
+    public PickupPayload(string itemType,int amount){ItemType=itemType??string.Empty;Amount=amount;}
+    public string ItemType {get;} public int Amount {get;}
+}
+
+/// <summary>WorldDroppedItem → HeldItem（旧版 cursor-only 拾取结果；阶段三起不再使用，保留 codec 兼容）。</summary>
 public readonly struct PickupResultPayload
 {
     public PickupResultPayload(string itemType,int amount,float durability,int quality,bool recipe)
@@ -133,9 +165,15 @@ public readonly struct ContainerPutPayload
 public readonly struct PlayerInventoryStatePayload
 {
     public PlayerInventoryStatePayload(InventorySlotWire[] backpack, InventorySlotWire[] hotbar)
-    { Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); }
+        : this(backpack, hotbar, 0, 0) { }
+    public PlayerInventoryStatePayload(InventorySlotWire[] backpack, InventorySlotWire[] hotbar, int revision, int playerId)
+    { Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); Revision=revision; PlayerId=playerId; }
     public InventorySlotWire[] Backpack {get;}
     public InventorySlotWire[] Hotbar {get;}
+    /// <summary>P0-Authority-Drift：权威背包版本号——Host 每次修改某玩家影子背包后递增；客户端拒绝旧 revision 包覆盖新状态。</summary>
+    public int Revision {get;}
+    /// <summary>目标玩家（Host 侧 peer id；客户端视角通常为 0=host），用于按玩家维护已应用版本。</summary>
+    public int PlayerId {get;}
 }
 
 /// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>
