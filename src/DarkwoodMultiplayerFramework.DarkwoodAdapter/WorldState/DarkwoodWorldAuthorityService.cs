@@ -215,6 +215,33 @@ public sealed class DarkwoodWorldAuthorityService
         }
     }
 
+    // v0.9.2 P0-7：DropCommit 真实构造 Host 端 DroppedItem GameObject（不传 null 给 RegisterAndBroadcastDroppedItem）。
+    internal Inventory CreateDroppedItemFromState(string itemType, int amount, float durability, int quality, bool recipe, Vector3 position, Quaternion rotation)
+    {
+        if (string.IsNullOrEmpty(itemType) || amount <= 0) return null;
+        try
+        {
+            var yaw = rotation.eulerAngles.y;
+            var groundPos = global::Core.getYPos(position, PosType.items1);
+            var go = global::Core.AddPrefab("Items/DroppedItem", groundPos, Quaternion.Euler(90f, yaw, 0f), global::Core.ItemContainer);
+            if (go == null) return null;
+            var dropped = go.GetComponent<Inventory>();
+            if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); return null; }
+            var slot = dropped.slots[0];
+            slot.inventory = dropped;
+            slot.createItem(itemType, amount, durability, (InvItem.ModifierQuality)quality, recipe);
+            global::Core.addToSaveable(go, true);
+            if (Singleton<WorldGrid>.Instance != null) Singleton<WorldGrid>.Instance.registerToNode(go);
+            try { var rb = go.GetComponent<Rigidbody>(); if (rb != null) rb.velocity = Quaternion.Euler(0f, UnityEngine.Random.Range(-40f, 40f), 0f) * Vector3.up * UnityEngine.Random.Range(50f, 100f); } catch (Exception) { }
+            return dropped;
+        }
+        catch (Exception error)
+        {
+            runtime.LogWarning($"创建掉落物失败（DropCommit {itemType}）：{error.Message}");
+            return null;
+        }
+    }
+
     /// <summary>捕获本机玩家真实背包（Host 广播权威背包 / 客户端漂移上报共用）。</summary>
     internal static PlayerInventoryStatePayload CaptureLocalPlayerInventory()
     {

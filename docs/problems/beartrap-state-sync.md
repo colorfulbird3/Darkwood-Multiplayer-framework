@@ -2,7 +2,7 @@
 
 ## 状态
 
-Fixed in code — awaiting real-machine verification（real Component type 反编译已完成；占位实现 → 真实字段）
+PLANNED / NOT IMPLEMENTED IN 0.8.9.2 — PLANNED — Phase 1 物品链闭环之后再单独 commit（real Component type 反编译已完成；占位实现 → 真实字段）
 
 ## 字段
 

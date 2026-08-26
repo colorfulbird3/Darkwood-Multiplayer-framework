@@ -183,28 +183,36 @@ public readonly struct InventoryCommitMessage
     public int PlayerId {get;} public int Revision {get;} public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;}
 }
 
-/// <summary>v0.9.2：共享容器 Commit（baseContainerRevision + state + 玩家 revision 同一事务上链）。</summary>
+/// <summary>v0.9.2：共享容器 Commit（原子事务：baseContainerRevision + 容器状态 + 玩家背包同一上链）。</summary>
 public readonly struct ContainerCommitMessage
 {
-    public ContainerCommitMessage(ulong containerValue, bool containerPersistent, int baseContainerRevision, InventorySlotWire[] containerSlots, int playerId, int playerInventoryRevision)
-    { ContainerValue=containerValue; ContainerPersistent=containerPersistent; BaseContainerRevision=baseContainerRevision; ContainerSlots=containerSlots??Array.Empty<InventorySlotWire>(); PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
-    public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public int BaseContainerRevision {get;} public InventorySlotWire[] ContainerSlots {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
+    public ContainerCommitMessage(Guid transactionId, ulong containerValue, bool containerPersistent, int baseContainerRevision, InventorySlotWire[] containerSlots, int playerId, int playerInventoryRevision, InventorySlotWire[] backpackAfter, InventorySlotWire[] hotbarAfter)
+    { TransactionId=transactionId; ContainerValue=containerValue; ContainerPersistent=containerPersistent; BaseContainerRevision=baseContainerRevision; ContainerSlots=containerSlots??Array.Empty<InventorySlotWire>(); PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; BackpackAfter=backpackAfter??Array.Empty<InventorySlotWire>(); HotbarAfter=hotbarAfter??Array.Empty<InventorySlotWire>(); }
+    public Guid TransactionId {get;} public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public int BaseContainerRevision {get;} public InventorySlotWire[] ContainerSlots {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;} public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;} public InventorySlotWire[] BackpackAfter {get;} public InventorySlotWire[] HotbarAfter {get;}
 }
 
-/// <summary>v0.9.2：地面拾取 Commit。客户端已原版 Pickup 完成后上报（不经 Cursor、不经 Host Held）。</summary>
-public readonly struct PickupCommitMessage
-{
-    public PickupCommitMessage(ulong runtimeEntityId, bool persistent, string itemType, int amount, int playerId, int playerInventoryRevision)
-    { RuntimeEntityId=runtimeEntityId; Persistent=persistent; ItemType=itemType??string.Empty; Amount=amount; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
-    public ulong RuntimeEntityId {get;} public bool Persistent {get;} public string ItemType {get;} public int Amount {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
-}
-
-/// <summary>v0.9.2：丢弃 Commit。客户端已原版 spawnDroppedInvItem 完成后上报（Host 不查 cursor/不判 SLOT_EMPTY）。</summary>
+/// <summary>v0.9.2 P0-8：DropCommit 原子事务——drop 结果 + 玩家背包同一上链。</summary>
 public readonly struct DropCommitMessage
 {
-    public DropCommitMessage(ulong localDropToken, string itemType, int amount, float durability, int quality, bool recipe, float x, float y, float z, float qx, float qy, float qz, float qw, int playerId, int playerInventoryRevision)
-    { LocalDropToken=localDropToken; ItemType=itemType??string.Empty; Amount=amount; Durability=durability; Quality=quality; Recipe=recipe; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
-    public ulong LocalDropToken {get;} public string ItemType {get;} public int Amount {get;} public float Durability {get;} public int Quality {get;} public bool Recipe {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
+    public DropCommitMessage(Guid transactionId, ulong localDropToken, string itemType, int amount, float durability, int quality, bool recipe, float x, float y, float z, float qx, float qy, float qz, float qw, int playerId, int playerInventoryRevision, InventorySlotWire[] backpackAfter, InventorySlotWire[] hotbarAfter)
+    { TransactionId=transactionId; LocalDropToken=localDropToken; ItemType=itemType??string.Empty; Amount=amount; Durability=durability; Quality=quality; Recipe=recipe; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; BackpackAfter=backpackAfter??Array.Empty<InventorySlotWire>(); HotbarAfter=hotbarAfter??Array.Empty<InventorySlotWire>(); }
+    public Guid TransactionId {get;} public ulong LocalDropToken {get;} public string ItemType {get;} public int Amount {get;} public float Durability {get;} public int Quality {get;} public bool Recipe {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;} public InventorySlotWire[] BackpackAfter {get;} public InventorySlotWire[] HotbarAfter {get;}
+}
+
+/// <summary>v0.9.2 P0-8：PickupCommit 原子事务——拾取结果 + 玩家背包同一上链。</summary>
+public readonly struct PickupCommitMessage
+{
+    public PickupCommitMessage(Guid transactionId, ulong runtimeEntityId, bool persistent, string itemType, int amount, int playerId, int playerInventoryRevision, InventorySlotWire[] backpackAfter, InventorySlotWire[] hotbarAfter)
+    { TransactionId=transactionId; RuntimeEntityId=runtimeEntityId; Persistent=persistent; ItemType=itemType??string.Empty; Amount=amount; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; BackpackAfter=backpackAfter??Array.Empty<InventorySlotWire>(); HotbarAfter=hotbarAfter??Array.Empty<InventorySlotWire>(); }
+    public Guid TransactionId {get;} public ulong RuntimeEntityId {get;} public bool Persistent {get;} public string ItemType {get;} public int Amount {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;} public InventorySlotWire[] BackpackAfter {get;} public InventorySlotWire[] HotbarAfter {get;}
+}
+
+/// <summary>v0.9.2 P0-9：Host → 发起 Client 的 DropCommit Ack，告诉 Client 哪个 RuntimeEntityId 复用了它的本地对象（防双份 mirror）。</summary>
+public readonly struct DropCommitAckMessage
+{
+    public DropCommitAckMessage(ulong localDropToken, ulong runtimeEntityId, bool persistent)
+    { LocalDropToken=localDropToken; RuntimeEntityId=runtimeEntityId; Persistent=persistent; }
+    public ulong LocalDropToken {get;} public ulong RuntimeEntityId {get;} public bool Persistent {get;}
 }
 
 /// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>

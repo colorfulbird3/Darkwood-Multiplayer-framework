@@ -2,7 +2,7 @@
 
 ## 状态
 
-Fixed in code — awaiting real-machine verification
+PLANNED / NOT IMPLEMENTED IN 0.8.9.2 — PLANNED — Phase 1 物品链闭环之后再单独 commit
 
 ## 问题
 

@@ -73,6 +73,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandlePickupRequest(int peer,ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.Pickup);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action Pickup——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetItem(id,out var item))
@@ -177,6 +178,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleContainerGrabRequest(int peer,ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.ContainerGrab);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action ContainerGrab——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         ContainerGrabPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeContainerGrab(request.Payload);}
@@ -212,6 +214,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleHeldToInventoryRequest(int peer,ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.HeldToInventory);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action HeldToInventory——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         HeldToInventoryPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeHeldToInventory(request.Payload);}
@@ -334,7 +337,7 @@ public sealed partial class DarkwoodAdapterRuntime
         ClearPendingLocalDrop();
         return inv;
     }
-    // v0.9.2：客户端本地原版 Drop 完成后 → 生成 localDropToken + 捕获本地 DroppedItem + 上报 DropCommit（revision 单调）。
+    // v0.9.2 P0-8：客户端本地原版 Drop 完成后 → 生成 localDropToken + transactionId + 捕获本地 DroppedItem + 上报 DropCommit（含 BackpackAfter/HotbarAfter 原子事务）。
     public ulong NextLocalDropToken = 1;
     public void SubmitDropCommit(Inventory captured, InvItemClass item, Player player)
     {
@@ -346,13 +349,31 @@ public sealed partial class DarkwoodAdapterRuntime
         var pos = captured.transform.position;
         var rot = captured.transform.rotation;
         var selfPeer = clientSession?.PeerId ?? 0;
-        var commit = new DropCommitMessage(
-            token, slot0.type ?? string.Empty, slot0.amount, slot0.durability,
-            (int)slot0.modifierQuality, slot0.isRecipe,
-            pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w,
-            selfPeer,
-            NextLocalInventoryRevision(selfPeer));
-        clientSession.Send(ProtocolMessageType.DropCommit, ReplicationProtocolCodec.Encode(commit));
+        var rev = NextLocalInventoryRevision(selfPeer);
+        try
+        {
+            var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+            var commit = new DropCommitMessage(
+                System.Guid.NewGuid(),
+                token, slot0.type ?? string.Empty, slot0.amount, slot0.durability,
+                (int)slot0.modifierQuality, slot0.isRecipe,
+                pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w,
+                selfPeer,
+                rev,
+                st.Backpack, st.Hotbar);
+            clientSession.Send(ProtocolMessageType.DropCommit, ReplicationProtocolCodec.Encode(commit));
+        }
+        catch (Exception)
+        {
+            // 兜底：极端情况下 Capture 失败也要发 commit（不带 BackpackAfter/HotbarAfter；Host 走 DropCommitAck 但无法 Rebuild 玩家 shadow）
+            var commit = new DropCommitMessage(
+                System.Guid.NewGuid(), token, slot0.type ?? string.Empty, slot0.amount, slot0.durability,
+                (int)slot0.modifierQuality, slot0.isRecipe,
+                pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w,
+                selfPeer, rev,
+                Array.Empty<InventorySlotWire>(), Array.Empty<InventorySlotWire>());
+            clientSession.Send(ProtocolMessageType.DropCommit, ReplicationProtocolCodec.Encode(commit));
+        }
         // 暂存本地对象 → 等 Host spawn 广播到达时按 token 复用为 mirror（防双份 ghost）
         SetPendingLocalDropEx(captured, slot0.type, slot0.amount, pos, token);
         log?.LogInfo($"[DROP] dropCommit sent token=0x{token:X8} type={slot0.type} x{slot0.amount} → 等 Host spawn 广播到达复用为 mirror。");
@@ -392,7 +413,24 @@ public sealed partial class DarkwoodAdapterRuntime
     }
 
     // v0.9.2：客户端玩家背包 revision 单调递增（Client 自有 Owner，Host 仅门控 incoming > last）
-    public int NextLocalInventoryRevision(int peer) { int cur; return lastLocalInventoryRevision.TryGetValue(peer, out cur) ? cur + 1 : (lastLocalInventoryRevision[peer] = 1); }
+    public int NextLocalInventoryRevision(int peer)
+    {
+        // v0.9.2 P0-1：原实现命中已有值后未写回 Dictionary，会一直返回 cur+1 同值；已修复——无论命中都写回。
+        var next = lastLocalInventoryRevision.TryGetValue(peer, out var cur) ? cur + 1 : 1;
+        lastLocalInventoryRevision[peer] = next;
+        return next;
+    }
+    /// <summary>从 Host 权威 seed（GuestProfile / Reconcile 等场景）初始化客户端 revision 基线——下一次 NextLocalInventoryRevision 返回 seed+1。</summary>
+    public void SeedLocalInventoryRevision(int peer, int revision)
+    {
+        if (peer <= 0) return;
+        if (revision < 0) revision = 0;
+        lastLocalInventoryRevision[peer] = revision;
+    }
+    public int GetLocalInventoryRevision(int peer)
+    {
+        return lastLocalInventoryRevision.TryGetValue(peer, out var cur) ? cur : 0;
+    }
     private readonly Dictionary<int, int> lastLocalInventoryRevision = new Dictionary<int, int>();
 
     // ── v0.9.2 Trusted Client 迁移：客户端禁发旧 Player/Held Authority Action（保留 codec 兼容）──
@@ -423,32 +461,66 @@ public sealed partial class DarkwoodAdapterRuntime
         bool haveDirty;
         lock (containerDirty) haveDirty = inventoryDirty || containerDirty.Count > 0;
         if (!haveDirty) return;
-        InventoryStateMessage[] containers = null!;
+        // v0.9.2 P0-2/P0-3：客户端普通本地背包/容器变化 → 走 InventoryCommit / ContainerCommit（原子事务）。
+        // PlayerInventoryState 客户端不再发送（仅 Bootstrap/Reconcile/RemotePlayerState 由 Host 主动广播）。
+        // ContainerStateReport 客户端不再发送（仅保留 codec 兼容）。
+        var selfPeer = clientSession.PeerId;
+        var rev = NextLocalInventoryRevision(selfPeer);
+        InventorySlotWire[] bp = null, hb = null;
+        bool invDirty = inventoryDirty; inventoryDirty = false;
+        if (invDirty)
+        {
+            try { var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory(); bp = st.Backpack; hb = st.Hotbar; } catch (Exception) { }
+        }
+        // 容器 dirty：同事务内随玩家背包一起提交（共用一次 revision，按 baseContainerRevision + 容器状态）
+        KeyValuePair<EntityId, InventorySlotWire[]>[] containerPairs = null!;
         lock (containerDirty)
         {
             if (containerDirty.Count > 0)
             {
-                var list = new List<InventoryStateMessage>(containerDirty.Count);
+                var list = new List<KeyValuePair<EntityId, InventorySlotWire[]>>(containerDirty.Count);
                 foreach (var cid in containerDirty.ToArray())
                     if (replication.TryGetInventory(cid, out var ci))
-                        try { list.Add(DarkwoodWorldAuthorityService.CaptureInventorySnapshot(ci, cid)); } catch (Exception) { }
+                    {
+                        try
+                        {
+                            var snap = DarkwoodWorldAuthorityService.CaptureInventorySnapshot(ci, cid);
+                            list.Add(new KeyValuePair<EntityId, InventorySlotWire[]>(cid, snap.Slots));
+                        }
+                        catch (Exception) { }
+                    }
                 containerDirty.Clear();
-                containers = list.ToArray();
+                containerPairs = list.ToArray();
             }
         }
-        bool invDirty = inventoryDirty; inventoryDirty = false;
         try
         {
-            if (invDirty)
+            // 单一 transaction：背包 + 各容器全部原子提交（一次 SendInventoryCommit + N 次 ContainerCommit 复用同一 revision）
+            // 实际网络拓扑：每条消息仍独立发送，但共享 rev 与 transactionId，确保 Host 原子应用。
+            if (invDirty && bp != null && hb != null)
             {
-                var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
-                clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(st));
+                var tid = Guid.NewGuid();
+                clientSession.Send(ProtocolMessageType.InventoryCommit, ReplicationProtocolCodec.Encode(new InventoryCommitMessage(selfPeer, rev, bp, hb)));
+                if (containerPairs != null)
+                    foreach (var kv in containerPairs)
+                    {
+                        var cid = kv.Key;
+                        int baseRev = 0; // 客户端不持有容器实例；Host 端会按当前真实 base revision 比对
+                        clientSession.Send(ProtocolMessageType.ContainerCommit, ReplicationProtocolCodec.Encode(new ContainerCommitMessage(tid, cid.Value, cid.IsPersistent, baseRev, kv.Value ?? Array.Empty<InventorySlotWire>(), selfPeer, rev, bp, hb)));
+                    }
+                log?.LogInfo($"[INV-COMMIT] peer={selfPeer} rev={rev} backpack={bp.Length} hotbar={hb.Length}{(containerPairs != null ? $" + {containerPairs.Length} container" : "")} → 客户端原子提交（Trusted Client）。");
             }
-            if (containers != null && containers.Length > 0)
-                foreach (var m in containers)
-                    clientSession.Send(ProtocolMessageType.ContainerStateReport, ReplicationProtocolCodec.Encode(m));
-            if (containers != null && containers.Length > 0)
-                log?.LogInfo($"[SYNC] 容器快照上报 {containers.Length} 个{(invDirty ? " + 背包" : "")}（0.4s 节流）");
+            else if (containerPairs != null)
+            {
+                // 只有容器变化（极少：玩家背包没变只动了容器）。仍需一次 ContainerCommit 占位——单独走。
+                foreach (var kv in containerPairs)
+                {
+                    var cid = kv.Key;
+                    int baseRev = 0; // 客户端不持有容器实例；Host 端会按当前真实 base revision 比对
+                    clientSession.Send(ProtocolMessageType.ContainerCommit, ReplicationProtocolCodec.Encode(new ContainerCommitMessage(Guid.NewGuid(), cid.Value, cid.IsPersistent, baseRev, kv.Value ?? Array.Empty<InventorySlotWire>(), selfPeer, rev, Array.Empty<InventorySlotWire>(), Array.Empty<InventorySlotWire>())));
+                }
+                log?.LogInfo($"[CONTAINER-COMMIT] peer={selfPeer} rev={rev} containers={containerPairs.Length}（无玩家背包变化）→ 客户端原子提交。");
+            }
         }
         catch (Exception error) { log?.LogWarning($"[SYNC] dirty 上报失败：{error.Message}"); }
         nextDirtyReportAt = Time.unscaledTime + 0.4f;
@@ -462,6 +534,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleHeldToContainerRequest(int peer, ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.HeldToContainer);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action HeldToContainer——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         HeldToContainerPayload payload;
         try { payload = ReplicationProtocolCodec.DecodeHeldToContainer(request.Payload); }
@@ -528,6 +601,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandlePlayerGrabRequest(int peer, ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.PlayerGrab);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action PlayerGrab——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         PlayerGrabPayload payload;
         try { payload = ReplicationProtocolCodec.DecodePlayerGrab(request.Payload); }
@@ -587,6 +661,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void HandleDropRequest(int peer,ActionRequestMessage request)
     {
         WarnLegacyAuthorityAction(peer, ActionKindWire.DropItem);
+        if (peer > 0) { log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action DropItem——架构迁移期禁止；客户端应改用本地原版 + 状态 Commit 上报（详见 P0-11）。"); RejectAction(peer, request, "LEGACY_ACTION_DISABLED", 0); return; }
 
         DropItemPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeDropItem(request.Payload);}

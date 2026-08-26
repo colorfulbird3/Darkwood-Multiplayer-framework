@@ -41,7 +41,9 @@ public enum ProtocolMessageType : ushort
     ContainerCommit = 67,    // v0.9.2：共享容器 Commit（baseContainerRevision + 玩家 revision 双锚定）
     PickupCommit = 68,       // v0.9.2：地面拾取 Commit（RuntimeEntityId + InventorySnapshot）
     DropCommit = 69,         // v0.9.2：丢弃 Commit（localDropToken + DroppedItemState + InventorySnapshot）
-    LegacyAuthAction = 70,   // v0.9.2：客户端仍发旧 authority Action 的兼容通道（Host 记 [LEGACY-AUTH] 报警）
+    DropCommitAck = 70,      // v0.9.2 P0-9：Host → 发起 Client 的 Ack（RuntimeEntityId 复用本地对象）
+    PickupReconcile = 71,    // v0.9.2 P0-6：race 时 Host 推权威玩家背包快照让客户端拒绝旧 revision
+    LegacyAuthAction = 72,   // v0.9.2：客户端仍发旧 authority Action 的兼容通道（Host 记 [LEGACY-AUTH] 报警）
     Error = 255
 }
 

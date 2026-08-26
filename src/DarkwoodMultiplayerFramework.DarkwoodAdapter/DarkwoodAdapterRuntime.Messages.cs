@@ -21,6 +21,7 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 public sealed partial class DarkwoodAdapterRuntime
 {
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestContainerTake(InvSlot slot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
@@ -35,6 +36,7 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestContainerPut(InvSlot slot,Inventory targetContainer,int targetSlot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
@@ -50,6 +52,7 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestDrop(DropItemPayload payload)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;
@@ -62,6 +65,7 @@ public sealed partial class DarkwoodAdapterRuntime
     }
 
     // P0-D/E：共享容器 grab → 鼠标 HeldItem（Host 权威）。
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestContainerGrab(InvSlot slot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready||slot==null||InvItemClass.isNull(slot.invItem))return false;
@@ -83,6 +87,7 @@ public sealed partial class DarkwoodAdapterRuntime
 
     // P0-D/E：鼠标 HeldItem 放回玩家背包指定槽（原版 placeItem 语义，Host shadow 按槽 commit）。
     // P0-E/F：从自己背包/快捷栏 grab 整槽到鼠标（Host HeldItems 权威，原版 grab 整 stack）。
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestPlayerGrab(InvSlot slot)
     {
         if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || slot == null) return false;
@@ -100,6 +105,7 @@ public sealed partial class DarkwoodAdapterRuntime
     }
 
     // 阶段二：光标 HeldItem → 共享容器（Host 权威：空→放/同类→stack/异类→swap）。
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestHeldToContainer(EntityId containerId, int slotIndex)
     {
         if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive) return false;
@@ -113,6 +119,7 @@ public sealed partial class DarkwoodAdapterRuntime
     }
 
     // 阶段二：世界状态对象交互意图（发电机 toggle 等）——Host 原版执行后即时广播权威状态。
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestStateObjectInteract(EntityId id, string interaction)
     {
         if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive) return false;
@@ -124,6 +131,7 @@ public sealed partial class DarkwoodAdapterRuntime
         return true;
     }
 
+    [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestHeldToInventory(bool fromHotbar, int targetSlot)
     {
         if(clientSession?.Session.Lifecycle.State!=ConnectionState.Ready)return false;

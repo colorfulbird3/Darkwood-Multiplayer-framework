@@ -404,15 +404,28 @@ public sealed class DarkwoodRuntimeEntityService
 
     // v0.9.2：PickupCommit 探测——RuntimeEntity 仍存在吗？
     public bool TryGetRuntimeEntity(EntityId id, out Component component) => runtime.replication.TryGetComponent(id, out component!);
-    // v0.9.2：DropCommit → Host 原版实例化权威掉落物 + 注册 + 广播 Spawn
+    // v0.9.2 P0-7：DropCommit → Host 真实构造权威掉落物（调用 WorldAuthorityService.CreateDroppedItemFromState，
+    // 真正创建 GameObject + Inventory + Item），然后 RegisterAndBroadcastDroppedItem 注册 + 广播 Spawn。
+    // 同事务：Rebuild 玩家背包 shadow（含 BackpackAfter/HotbarAfter）+ 发送 DropCommitAck 给发起方（token→runtimeEntityId）。
     public EntityId CreateAndRegisterFromDropCommit(DropCommitMessage msg, int sourcePeer)
     {
         if (!runtime.Session.IsHost) return default;
         var pos = new Vector3(msg.X, msg.Y, msg.Z);
         var rot = new Quaternion(msg.Qx, msg.Qy, msg.Qz, msg.Qw);
-        var initialBytes = ReplicationProtocolCodec.Encode(new InventoryStateMessage(0, false, 0, msg.ItemType, pos.x, pos.y, pos.z, (int)Inventory.InvType.itemInv, msg.Amount > 0 ? new InventorySlotWire[] { new InventorySlotWire(msg.ItemType, msg.Amount, msg.Durability, msg.Quality, msg.Recipe) } : Array.Empty<InventorySlotWire>()));
-        var rid = RegisterAndBroadcastDroppedItem(null, pos, rot, initialBytes);
-        // 注：Client 已在本地原版生成对象；Host 这里只登记 + 广播（不重新实例化——发起方按 localDropToken 复用 mirror，其他 Client 用 spawn 落地）。
-        return rid == 0 ? default : new EntityId(rid, false);
+        var dropped = runtime.World?.CreateDroppedItemFromState(msg.ItemType, msg.Amount, msg.Durability, msg.Quality, msg.Recipe, pos, rot);
+        if (dropped == null)
+        {
+            runtime.log?.LogWarning($"[DROP-COMMIT] Host 构造掉落物失败：{msg.ItemType} x{msg.Amount}");
+            return default;
+        }
+        // initial state 仍走原版采集（用真实原版数据，不是 Commit 字段——Host 自己有了真实 GameObject）
+        var initialBytes = ReplicationProtocolCodec.Encode(DarkwoodEntityStateAdapter.CaptureInventory(default, dropped, runtime.replication.AllocateRevision()));
+        var rid = RegisterAndBroadcastDroppedItem(dropped, pos, rot, initialBytes);
+        if (rid == 0)
+        {
+            runtime.log?.LogWarning($"[DROP-COMMIT] Host 注册 RuntimeEntity 失败：{msg.ItemType}");
+            return default;
+        }
+        return new EntityId(rid, false);
     }
 }

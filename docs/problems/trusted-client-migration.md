@@ -2,7 +2,7 @@
 
 ## 状态
 
-Fixed in code + 回环 PASS —— awaiting real-machine verification（TEST A-I）
+Phase 1 物品链 implementation in progress（fixed in code + 回环 PASS）—— TEST A-E 待真机验收
 
 ## 问题
 
