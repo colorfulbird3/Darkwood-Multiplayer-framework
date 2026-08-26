@@ -72,6 +72,8 @@ public sealed partial class DarkwoodAdapterRuntime
 
     private void HandlePickupRequest(int peer,ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.Pickup);
+
         var id=new EntityId(request.TargetValue,request.TargetPersistent);
         if(!replication.TryGetItem(id,out var item))
         {
@@ -174,6 +176,8 @@ public sealed partial class DarkwoodAdapterRuntime
     // P0-D/E：共享容器 grab → 该玩家权威 HeldItem（鼠标手持）。客户端据此恢复原版 cursor UX。
     private void HandleContainerGrabRequest(int peer,ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.ContainerGrab);
+
         ContainerGrabPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeContainerGrab(request.Payload);}
         catch(Exception error){RejectAction(peer,request,"INVALID_GRAB_PAYLOAD",0);log?.LogWarning($"ContainerGrab payload rejected from peer {peer}: {error.Message}");return;}
@@ -207,6 +211,8 @@ public sealed partial class DarkwoodAdapterRuntime
     // P0-D/E + P0-3：鼠标 HeldItem 放回玩家背包指定槽（原版 placeItem 语义：empty→place / 同类→stack）。
     private void HandleHeldToInventoryRequest(int peer,ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.HeldToInventory);
+
         HeldToInventoryPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeHeldToInventory(request.Payload);}
         catch(Exception error){RejectAction(peer,request,"INVALID_HELD_PLACE_PAYLOAD",0);log?.LogWarning($"HeldToInventory payload rejected from peer {peer}: {error.Message}");return;}
@@ -328,17 +334,124 @@ public sealed partial class DarkwoodAdapterRuntime
         ClearPendingLocalDrop();
         return inv;
     }
+    // v0.9.2：客户端本地原版 Drop 完成后 → 生成 localDropToken + 捕获本地 DroppedItem + 上报 DropCommit（revision 单调）。
+    public ulong NextLocalDropToken = 1;
+    public void SubmitDropCommit(Inventory captured, InvItemClass item, Player player)
+    {
+        if (captured == null || item == null || player == null) return;
+        if (clientSession == null || clientSession.Session.Lifecycle.State != ConnectionState.Ready) return;
+        var slot0 = (captured.slots != null && captured.slots.Count > 0) ? captured.slots[0].invItem : null;
+        if (slot0 == null || InvItemClass.isNull(slot0)) return;
+        var token = NextLocalDropToken++;
+        var pos = captured.transform.position;
+        var rot = captured.transform.rotation;
+        var selfPeer = clientSession?.PeerId ?? 0;
+        var commit = new DropCommitMessage(
+            token, slot0.type ?? string.Empty, slot0.amount, slot0.durability,
+            (int)slot0.modifierQuality, slot0.isRecipe,
+            pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w,
+            selfPeer,
+            NextLocalInventoryRevision(selfPeer));
+        clientSession.Send(ProtocolMessageType.DropCommit, ReplicationProtocolCodec.Encode(commit));
+        // 暂存本地对象 → 等 Host spawn 广播到达时按 token 复用为 mirror（防双份 ghost）
+        SetPendingLocalDropEx(captured, slot0.type, slot0.amount, pos, token);
+        log?.LogInfo($"[DROP] dropCommit sent token=0x{token:X8} type={slot0.type} x{slot0.amount} → 等 Host spawn 广播到达复用为 mirror。");
+    }
+    private readonly Dictionary<ulong, Inventory> pendingLocalDropByToken = new Dictionary<ulong, Inventory>();
+    private readonly Dictionary<ulong, string> pendingLocalDropType = new Dictionary<ulong, string>();
+    private readonly Dictionary<ulong, int> pendingLocalDropAmount = new Dictionary<ulong, int>();
+    private readonly Dictionary<ulong, Vector3> pendingLocalDropPos = new Dictionary<ulong, Vector3>();
+    private void SetPendingLocalDropEx(Inventory inv, string type, int amount, Vector3 pos, ulong token)
+    {
+        if (inv == null) { pendingLocalDropByToken.Remove(token); pendingLocalDropType.Remove(token); pendingLocalDropAmount.Remove(token); pendingLocalDropPos.Remove(token); return; }
+        pendingLocalDropByToken[token] = inv; pendingLocalDropType[token] = type ?? ""; pendingLocalDropAmount[token] = amount; pendingLocalDropPos[token] = pos;
+    }
+    public Inventory? TakePendingLocalDropByToken(ulong token, string expectedType)
+    {
+        if (!pendingLocalDropByToken.TryGetValue(token, out var inv) || inv == null || inv.gameObject == null) { DropPendingByToken(token); return null; }
+        var s0 = (inv.slots != null && inv.slots.Count > 0) ? inv.slots[0].invItem : null;
+        if (s0 == null || InvItemClass.isNull(s0) || s0.type != expectedType) { DropPendingByToken(token); return null; }
+        DropPendingByToken(token);
+        return inv;
+    }
+    private void DropPendingByToken(ulong token)
+    {
+        pendingLocalDropByToken.Remove(token); pendingLocalDropType.Remove(token); pendingLocalDropAmount.Remove(token); pendingLocalDropPos.Remove(token);
+    }
     public void TickPendingLocalDrop()
     {
-        var inv = PendingLocalDropInventory;
-        if (inv == null) return;
-        if (inv.gameObject == null) { ClearPendingLocalDrop(); return; }
-        if (Time.unscaledTime - PendingLocalDropAt > 2.5f)
+        // 兼容旧 pending（无 token）；按 token 清理超时对象
+        if (PendingLocalDropInventory != null && Time.unscaledTime - PendingLocalDropAt > 2.5f)
         {
             log?.LogInfo("[TRUST] drop 未匹配到 Host spawn——销毁本地原版掉落物（防 ghost）。");
-            try { UnityEngine.Object.Destroy(inv.gameObject); } catch (Exception) { }
+            try { UnityEngine.Object.Destroy(PendingLocalDropInventory.gameObject); } catch (Exception) { }
             ClearPendingLocalDrop();
         }
+        if (pendingLocalDropByToken.Count == 0) return;
+        // token 不主动超时；按 spawn 到达时复用；world-stable 注册后可清理
+    }
+
+    // v0.9.2：客户端玩家背包 revision 单调递增（Client 自有 Owner，Host 仅门控 incoming > last）
+    public int NextLocalInventoryRevision(int peer) { int cur; return lastLocalInventoryRevision.TryGetValue(peer, out cur) ? cur + 1 : (lastLocalInventoryRevision[peer] = 1); }
+    private readonly Dictionary<int, int> lastLocalInventoryRevision = new Dictionary<int, int>();
+
+    // ── v0.9.2 Trusted Client 迁移：客户端禁发旧 Player/Held Authority Action（保留 codec 兼容）──
+    private void WarnLegacyAuthorityAction(int peer, ActionKindWire kind)
+    {
+        if (peer <= 0) return;
+        log?.LogWarning($"[LEGACY-AUTH] peer={peer} 仍发送旧 authority Action {kind}（架构迁移期：客户端应改用本地原版 + 状态快照/Commit 上报）。");
+    }
+
+    // ── v0.9 架构：客户端本地原版交互（Trusted Client）→ dirty 节流上报（背包快照 / 容器快照）──
+    private bool inventoryDirty;
+    private readonly HashSet<EntityId> containerDirty = new HashSet<EntityId>();
+    private float nextDirtyReportAt;
+    public void MarkContainerOrInventoryChangedEx(Inventory? inv)
+    {
+        if (inv == null || !IsClient || clientSession == null) return;
+        var invType = inv.invType;
+        if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar) { inventoryDirty = true; return; }
+        if (invType == Inventory.InvType.itemInv || invType == Inventory.InvType.deathDrop || DarkwoodEntityStateAdapter.IsShared(inv))
+        {
+            if (replication.TryGetId(inv, out var id)) lock (containerDirty) containerDirty.Add(id);
+        }
+    }
+    public void TickDirtyReport()
+    {
+        if (!IsClient || clientSession == null || clientSession.Session.Lifecycle.State != ConnectionState.Ready) return;
+        if (Time.unscaledTime < nextDirtyReportAt) return;
+        bool haveDirty;
+        lock (containerDirty) haveDirty = inventoryDirty || containerDirty.Count > 0;
+        if (!haveDirty) return;
+        InventoryStateMessage[] containers = null!;
+        lock (containerDirty)
+        {
+            if (containerDirty.Count > 0)
+            {
+                var list = new List<InventoryStateMessage>(containerDirty.Count);
+                foreach (var cid in containerDirty.ToArray())
+                    if (replication.TryGetInventory(cid, out var ci))
+                        try { list.Add(DarkwoodWorldAuthorityService.CaptureInventorySnapshot(ci, cid)); } catch (Exception) { }
+                containerDirty.Clear();
+                containers = list.ToArray();
+            }
+        }
+        bool invDirty = inventoryDirty; inventoryDirty = false;
+        try
+        {
+            if (invDirty)
+            {
+                var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory();
+                clientSession.Send(ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(st));
+            }
+            if (containers != null && containers.Length > 0)
+                foreach (var m in containers)
+                    clientSession.Send(ProtocolMessageType.ContainerStateReport, ReplicationProtocolCodec.Encode(m));
+            if (containers != null && containers.Length > 0)
+                log?.LogInfo($"[SYNC] 容器快照上报 {containers.Length} 个{(invDirty ? " + 背包" : "")}（0.4s 节流）");
+        }
+        catch (Exception error) { log?.LogWarning($"[SYNC] dirty 上报失败：{error.Message}"); }
+        nextDirtyReportAt = Time.unscaledTime + 0.4f;
     }
 
     // P0-J：Held 状态机显式 transition 日志（Host 权威）。
@@ -348,6 +461,8 @@ public sealed partial class DarkwoodAdapterRuntime
     // ── 阶段二：HeldItem → 共享容器（Host 权威：空→放 / 同类→stack / 异类→swap）──
     private void HandleHeldToContainerRequest(int peer, ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.HeldToContainer);
+
         HeldToContainerPayload payload;
         try { payload = ReplicationProtocolCodec.DecodeHeldToContainer(request.Payload); }
         catch (Exception error) { RejectAction(peer, request, "INVALID_HELD_TO_CONTAINER", 0); log?.LogWarning($"HeldToContainer payload rejected from peer {peer}: {error.Message}"); return; }
@@ -412,6 +527,8 @@ public sealed partial class DarkwoodAdapterRuntime
     // P0-E/F：从玩家自己背包/快捷栏 grab 整槽到鼠标（Host HeldItems 权威）。原版 grab 拿走整个 slot。
     private void HandlePlayerGrabRequest(int peer, ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.PlayerGrab);
+
         PlayerGrabPayload payload;
         try { payload = ReplicationProtocolCodec.DecodePlayerGrab(request.Payload); }
         catch (Exception error) { RejectAction(peer, request, "INVALID_PLAYER_GRAB", 0); log?.LogWarning($"PlayerGrab payload rejected from peer {peer}: {error.Message}"); return; }
@@ -469,6 +586,8 @@ public sealed partial class DarkwoodAdapterRuntime
 
     private void HandleDropRequest(int peer,ActionRequestMessage request)
     {
+        WarnLegacyAuthorityAction(peer, ActionKindWire.DropItem);
+
         DropItemPayload payload;
         try{payload=ReplicationProtocolCodec.DecodeDropItem(request.Payload);}
         catch(Exception error){RejectAction(peer,request,"INVALID_DROP_PAYLOAD",0);log?.LogWarning($"Drop payload rejected from peer {peer}: {error.Message}");return;}

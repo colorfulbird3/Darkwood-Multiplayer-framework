@@ -7,10 +7,8 @@ using UnityEngine;
 namespace DarkwoodMultiplayerFramework.DarkwoodAdapter;
 
 /// <summary>
-/// 0.8.9 第 2 刀：Drop 全 Host Authority。
-/// 拦截原版所有扔物品的汇聚点 Player.spawnDroppedInvItem(InvItemClass)：
-/// - 客户端：拦截原版 mutation → DropRequest → Host 执行
-/// - 主机：拦截原版 mutation → WorldAuthority.DropItem(0, ...) 本地执行
+/// v0.9.2 Trusted Client Drop：客户端允许原版 spawnDroppedInvItem 完整本地执行（生成 DroppedItem + 扣减背包）。
+/// Host 端只接收 DropCommit（不再受理旧 DropItem Action）——不查 Cursor、不判 SLOT_EMPTY / NOT_HOLDING。
 /// </summary>
 [HarmonyPatch(typeof(Player), "spawnDroppedInvItem")]
 internal static class DarkwoodDropPatch
@@ -22,40 +20,15 @@ internal static class DarkwoodDropPatch
             return true;
         if (InvItemClass.isNull(_item))
             return true;
-
-        var payload = BuildPayload(_item);
-        // P0-A 优先级 4：来源无法解析时直接阻断原版（绝不静默放行 singleplayer spawn）。
-        if (payload.Origin == DropOriginWire.PlayerSlot && payload.SlotIndex < 0)
-        {
-            DarkwoodAdapterRuntime.LogMessage("[HELD] drop-resolve unresolved：阻断原版 Drop（cursorMatch=否 slot 缺失）");
-            return false;
-        }
-
-        // P0-5：绝不提前清 cursor / pickedUpItem——Drop 是乐观保底语义，失败时物品必须留在手上。
-        var player = Player.Instance;
-        if (player != null) { try { player.refreshRecipes(); } catch (Exception) { } }
-
-        if (runtime.IsHost)
-        {
-            runtime.World.DropItem(0, payload, default, (_, _, _, _) => { });
-            return false;
-        }
-
-        if (runtime.IsClient)
-        {
-            // v0.9.0 Trusted Client：允许原版 spawnDroppedInvItem 本地执行（生成掉落物）——
-            // Postfix 捕获本地对象 → 上报 Host（扣减权威 + 分配 EntityId + 广播 Spawn）→ 本地对象复用为 mirror。
-            return true;
-        }
-
+        // v0.9.2：Host 本地玩家走 Host 自有 drop（不需网络）；Client 一律本地原版执行，Postfix 上报 DropCommit。
         return true;
     }
 
-    // v0.9.0：捕获本地原版生成的掉落物并上报（Host 扣减 + EntityId + 广播；本地对象将复用为 mirror）。
+    // v0.9.2：客户端本地原版 Drop 完成后 → 生成 localDropToken + 捕获本地 DroppedItem + 上报 DropCommit（revision 单调）。
     private static void Postfix(InvItemClass _item)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
+        if (runtime == null || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
         var player = Player.Instance;
         Inventory? captured = null;
         if (player != null)
@@ -66,7 +39,7 @@ internal static class DarkwoodDropPatch
                 foreach (var itemObj in UnityEngine.Object.FindObjectsOfType<Item>(false))
                 {
                     if (itemObj == null || !itemObj.isDroppedItem) continue;
-                    if (runtime.replication.TryGetId(itemObj, out _)) continue; // 已注册（其他来源）
+                    if (runtime.replication.TryGetId(itemObj, out _)) continue;
                     var inv = DarkwoodDroppedItemAccessor.GetInventory(itemObj);
                     if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) continue;
                     if (inv.slots[0].invItem.type != _item.type) continue;
@@ -76,24 +49,26 @@ internal static class DarkwoodDropPatch
             }
             catch (Exception) { }
         }
-        runtime.SetPendingLocalDrop(captured, _item.type, _item.amount, player != null ? player._transform.position : Vector3.zero);
-        var payload = BuildPayload(_item);
-        if (payload.Origin == DropOriginWire.PlayerSlot && payload.SlotIndex < 0)
+        if (captured == null)
         {
-            DarkwoodAdapterRuntime.LogMessage("[HELD] drop-resolve unresolved（本地已生成）：对象将作为未注册 ghost 清理。");
+            DarkwoodAdapterRuntime.LogMessage("[DROP] 本地原版 spawnDroppedInvItem 后未捕获到对象（诡异）；跳过 DropCommit。");
             return;
         }
-        if (!runtime.TryRequestDrop(payload))
-            DarkwoodAdapterRuntime.LogMessage("[HELD] drop request could not be sent; local object pending cleanup");
+        if (runtime.IsHost)
+        {
+            var payload = BuildPayload(_item);
+            if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
+                runtime.World.DropItem(0, payload, default, (_, _, _, _) => { });
+            return;
+        }
+        // Client 玩家：发 DropCommit
+        runtime.SubmitDropCommit(captured, _item, player);
     }
 
     internal static DropItemPayload BuildPayload(InvItemClass item)
     {
         var player = Player.Instance;
         var runtime = DarkwoodAdapterRuntime.Instance;
-        // P0-A：判定优先级 1 —— Controller.pickedUpItem == item → HeldItem。
-        // 绝不要求 slot==null：AttachHeldItemFromSnapshot 用 copy constructor 保留旧 slot（指向已清空的容器槽），
-        // 若先判 slot 会被误判成 SharedContainer → SLOT_EMPTY → Drop 失败。
         var controller = Singleton<Controller>.Instance;
         var cursorMatch = controller != null && !InvItemClass.isNull(controller.pickedUpItem) && ReferenceEquals(controller.pickedUpItem, item);
         if (cursorMatch)
@@ -103,7 +78,6 @@ internal static class DarkwoodDropPatch
             DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=是 slotPresent={(item.slot != null ? "是" : "否")} slotInventoryType={(item.slot?.inventory != null ? item.slot.inventory.invType.ToString() : "无")} ownership=CursorOwned finalOrigin=HeldItem");
             return new DropItemPayload(false, -1, Math.Max(1, item.amount), pos0.x, pos0.y, pos0.z, rot0.x, rot0.y, rot0.z, rot0.w, DropOriginWire.HeldItem);
         }
-
         var slot = item.slot;
         var fromHotbar = false;
         var slotIndex = -1;
@@ -115,26 +89,20 @@ internal static class DarkwoodDropPatch
             var invType = slot.inventory.invType;
             if (invType == Inventory.InvType.hotbar || invType == Inventory.InvType.playerInv)
             {
-                // 优先级 2：玩家背包/快捷栏（ownership=InventoryOwned——Drop 只在此判定槽内来源）
                 fromHotbar = invType == Inventory.InvType.hotbar;
                 slotIndex = slot.inventory.slots.IndexOf(slot);
-                DarkwoodAdapterRuntime.LogMessage($"[HELD] drop-resolve: cursorMatch=否 ownership=InventoryOwned slotInventoryType={invType} slotIndex={slotIndex} finalOrigin=PlayerSlot");
+                origin = DropOriginWire.PlayerSlot;
             }
             else
             {
-                // 优先级 3：共享容器
-                origin = DropOriginWire.SharedContainer;
-                slotIndex = slot.inventory.slots.IndexOf(slot);
-                if (runtime != null && runtime.TryGetEntityId(slot.inventory, out var containerId))
-                {
-                    containerValue = containerId.Value;
-                    containerPersistent = containerId.IsPersistent;
-                }
+                containerValue = 0;
+                slotIndex = -1;
+                origin = DropOriginWire.PlayerSlot;
             }
         }
-        var amount = item.amount;
         var pos = player != null ? player._transform.position : Vector3.zero;
         var rot = player != null ? player._transform.rotation : Quaternion.identity;
-        return new DropItemPayload(fromHotbar, slotIndex, amount, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w, origin, containerValue, containerPersistent);
+        return new DropItemPayload(fromHotbar, slotIndex, Math.Max(1, item.amount), pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w, origin, containerValue, containerPersistent);
     }
 }
+

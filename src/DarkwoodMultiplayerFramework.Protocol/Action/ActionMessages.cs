@@ -172,8 +172,39 @@ public readonly struct PlayerInventoryStatePayload
     public InventorySlotWire[] Hotbar {get;}
     /// <summary>P0-Authority-Drift：权威背包版本号——Host 每次修改某玩家影子背包后递增；客户端拒绝旧 revision 包覆盖新状态。</summary>
     public int Revision {get;}
-    /// <summary>目标玩家（Host 侧 peer id；客户端视角通常为 0=host），用于按玩家维护已应用版本。</summary>
     public int PlayerId {get;}
+}
+
+/// <summary>v0.9.2：玩家背包 Commit。revision 由客户端 Client 单向递增（peer 自有 Owner），Host 拒绝旧 revision。</summary>
+public readonly struct InventoryCommitMessage
+{
+    public InventoryCommitMessage(int playerId, int revision, InventorySlotWire[] backpack, InventorySlotWire[] hotbar)
+    { PlayerId=playerId; Revision=revision; Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); }
+    public int PlayerId {get;} public int Revision {get;} public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;}
+}
+
+/// <summary>v0.9.2：共享容器 Commit（baseContainerRevision + state + 玩家 revision 同一事务上链）。</summary>
+public readonly struct ContainerCommitMessage
+{
+    public ContainerCommitMessage(ulong containerValue, bool containerPersistent, int baseContainerRevision, InventorySlotWire[] containerSlots, int playerId, int playerInventoryRevision)
+    { ContainerValue=containerValue; ContainerPersistent=containerPersistent; BaseContainerRevision=baseContainerRevision; ContainerSlots=containerSlots??Array.Empty<InventorySlotWire>(); PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
+    public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public int BaseContainerRevision {get;} public InventorySlotWire[] ContainerSlots {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
+}
+
+/// <summary>v0.9.2：地面拾取 Commit。客户端已原版 Pickup 完成后上报（不经 Cursor、不经 Host Held）。</summary>
+public readonly struct PickupCommitMessage
+{
+    public PickupCommitMessage(ulong runtimeEntityId, bool persistent, string itemType, int amount, int playerId, int playerInventoryRevision)
+    { RuntimeEntityId=runtimeEntityId; Persistent=persistent; ItemType=itemType??string.Empty; Amount=amount; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
+    public ulong RuntimeEntityId {get;} public bool Persistent {get;} public string ItemType {get;} public int Amount {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
+}
+
+/// <summary>v0.9.2：丢弃 Commit。客户端已原版 spawnDroppedInvItem 完成后上报（Host 不查 cursor/不判 SLOT_EMPTY）。</summary>
+public readonly struct DropCommitMessage
+{
+    public DropCommitMessage(ulong localDropToken, string itemType, int amount, float durability, int quality, bool recipe, float x, float y, float z, float qx, float qy, float qz, float qw, int playerId, int playerInventoryRevision)
+    { LocalDropToken=localDropToken; ItemType=itemType??string.Empty; Amount=amount; Durability=durability; Quality=quality; Recipe=recipe; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; }
+    public ulong LocalDropToken {get;} public string ItemType {get;} public int Amount {get;} public float Durability {get;} public int Quality {get;} public bool Recipe {get;} public float X {get;} public float Y {get;} public float Z {get;} public float Qx {get;} public float Qy {get;} public float Qz {get;} public float Qw {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;}
 }
 
 /// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>

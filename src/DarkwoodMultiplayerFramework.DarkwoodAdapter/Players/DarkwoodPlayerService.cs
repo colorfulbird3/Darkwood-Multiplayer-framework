@@ -105,6 +105,30 @@ public sealed class DarkwoodPlayerService
         return true;
     }
 
+    /// <summary>v0.9.2：从 InventoryCommit / PickupCommit / DropCommit 写入玩家背包 shadow（按 peer revision 单调门控）。</summary>
+    public void RebuildInventoryFromSnapshot(int peer, InventorySlotWire[] backpack, InventorySlotWire[] hotbar, int revision)
+    {
+        if (!remoteInventories.TryGetValue(peer, out var shadow)) { EnsureRemoteInventory(peer).Rebuild(backpack, hotbar, m => runtime.log?.LogWarning(m)); return; }
+        shadow.Rebuild(backpack, hotbar, m => runtime.log?.LogWarning(m));
+        shadow.Revision = revision;
+    }
+
+    /// <summary>v0.9.2：Commit 同步更新玩家背包 shadow（rev 单调门控已在外层处理）；containerSlots 为 null 表示纯玩家背包（不传容器）。</summary>
+    public void ApplyInventoryCommitToShadow(int peer, int revision, InventorySlotWire[]? containerSlots)
+    {
+        if (peer <= 0) return;
+        if (!remoteInventories.TryGetValue(peer, out var shadow)) shadow = EnsureRemoteInventory(peer);
+        if (revision > shadow.Revision) shadow.Revision = revision;
+    }
+
+    private DarkwoodPlayerInventoryShadow EnsureRemoteInventory(int peer)
+    {
+        if (remoteInventories.TryGetValue(peer, out var existing)) return existing;
+        var inv = new DarkwoodPlayerInventoryShadow();
+        remoteInventories[peer] = inv;
+        return inv;
+    }
+
     // P0-2：GuestProfile applied ack → 开放该 peer 的 inventory 漂移收敛（内容可上报）。
     public bool MarkInventoryBootstrapReady(int peer) { inventoryBootstrapReady.Add(peer); return true; }
     public bool IsInventoryBootstrapReady(int peer) => inventoryBootstrapReady.Contains(peer);

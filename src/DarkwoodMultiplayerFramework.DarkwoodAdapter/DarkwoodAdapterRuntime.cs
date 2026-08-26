@@ -26,6 +26,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 {
     // ── IMultiplayerRuntimeHost：Service 最小依赖面（0.8.9 收口）──
     IReadOnlyCollection<int> IMultiplayerRuntimeHost.ReadyPeers => readyPeers;
+    /// <summary>v0.9.2：Host/Commit handler 内部使用——返回 readyPeers 快照数组（避免 IMultiplayerRuntimeHost 接口暴露可变集合）。</summary>
+    public int[] ReadyPeersSnapshot { get { lock (readyPeers) return readyPeers.ToArray(); } }
     long IMultiplayerRuntimeHost.ServerTick => serverTick;
     DarkwoodEntityReplication IMultiplayerRuntimeHost.Replication => replication;
     DarkwoodPlayerService IMultiplayerRuntimeHost.Players => Players;
@@ -331,6 +333,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         PumpOutgoing();
         Players.RemotePlayers.Tick();
         TickPendingLocalDrop(); // v0.9.0 Trusted Client Drop：临时本地对象超时清理
+        TickDirtyReport();      // v0.9：客户端本地原版交互 → 背包/容器快照节流上报
         var scene = CurrentScene;
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 

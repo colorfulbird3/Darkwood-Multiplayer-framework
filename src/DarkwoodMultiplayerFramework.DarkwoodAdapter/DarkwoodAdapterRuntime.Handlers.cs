@@ -22,6 +22,7 @@ public sealed partial class DarkwoodAdapterRuntime
         router.Register(new HostPlayerHandlers(this));
         router.Register(new HostActionHandlers(this));
         router.Register(new HostInventoryHandlers(this));
+        router.Register(new HostCommitHandlers(this));
         router.Register(new HostRescueHandlers(this));
         router.Register(new ClientSaveHandlers(this));
         router.Register(new ClientSnapshotHandlers(this));
@@ -112,7 +113,7 @@ public sealed partial class DarkwoodAdapterRuntime
             runtime.Players.UpdateRemotePosition(peer.PeerId, new Vector3(pose.X, pose.Y, pose.Z));
             runtime.Players.RemotePlayers.Apply(pose, 0);
             var payload = ReplicationProtocolCodec.Encode(pose);
-            foreach (var readyPeer in runtime.readyPeers.ToArray()) if (readyPeer != peer.PeerId) runtime.Queue(readyPeer, ProtocolMessageType.PlayerPose, payload);
+            foreach (var readyPeer in runtime.ReadyPeersSnapshot) if (readyPeer != peer.PeerId) runtime.Queue(readyPeer, ProtocolMessageType.PlayerPose, payload);
         }
     }
 
@@ -132,10 +133,31 @@ public sealed partial class DarkwoodAdapterRuntime
         private readonly DarkwoodAdapterRuntime runtime;
         public HostInventoryHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
-        public bool Handles(ProtocolMessageType type) => runtime.IsHost && (type == ProtocolMessageType.InventoryState || type == ProtocolMessageType.PlayerInventoryState || type == ProtocolMessageType.GuestProfileApplied);
+        public bool Handles(ProtocolMessageType type) => runtime.IsHost && (type == ProtocolMessageType.InventoryState || type == ProtocolMessageType.PlayerInventoryState || type == ProtocolMessageType.GuestProfileApplied || type == ProtocolMessageType.ContainerStateReport);
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
+            if (envelope.MessageType == ProtocolMessageType.ContainerStateReport)
+            {
+                // v0.9 Trusted Client：客户端已本地原版执行容器操作 → Host 应用该容器权威状态并广播（冲突后到优先）。
+                InventoryStateMessage msg;
+                try { msg = ReplicationProtocolCodec.DecodeInventoryState(envelope.Payload); }
+                catch (Exception error) { runtime.log?.LogWarning($"[CONTAINER] 容器快照上报解码失败：{error.Message}"); return; }
+                var cid = new EntityId(msg.Value, msg.Persistent);
+                if (!runtime.replication.TryGetInventory(cid, out var container) || container == null)
+                { runtime.log?.LogWarning($"[CONTAINER] 容器快照上报：实体 {msg.Value:X8} 未绑定，忽略。"); return; }
+                try
+                {
+                    var slots = new DarkwoodInventorySlot[msg.Slots.Length];
+                    for (var i = 0; i < slots.Length; i++) { var s = msg.Slots[i]; slots[i] = new DarkwoodInventorySlot { Type = s.Type, Amount = s.Amount, Durability = s.Durability, Quality = s.Quality, Recipe = s.Recipe }; }
+                    DarkwoodInventoryAdapter.Apply(container, slots);
+                    try { container.refreshItems(); } catch (Exception) { }
+                    runtime.BroadcastInventory(runtime.CaptureAuthoritativeInventoryForHost(cid));
+                    runtime.log?.LogInfo($"[CONTAINER] recv peer={peer.PeerId} id={cid.Value:X8} slots={msg.Slots.Length} → 已应用并广播权威状态。");
+                }
+                catch (Exception error) { runtime.log?.LogWarning($"[CONTAINER] 容器快照应用失败（{cid.Value:X8}）：{error.Message}"); }
+                return;
+            }
             if (envelope.MessageType == ProtocolMessageType.GuestProfileApplied)
             {
                 // P0-2：客户端已应用 Host GuestProfile 权威背包 → 开放该 peer 的 inventory 漂移收敛（此后上报内容才允许更新 shadow）。
@@ -174,9 +196,98 @@ public sealed partial class DarkwoodAdapterRuntime
             }
             else
             {
-                foreach (var readyPeer in runtime.readyPeers.ToArray()) runtime.Queue(readyPeer, ProtocolMessageType.InventoryState, envelope.Payload);
+                foreach (var readyPeer in runtime.ReadyPeersSnapshot) runtime.Queue(readyPeer, ProtocolMessageType.InventoryState, envelope.Payload);
                 runtime.log?.LogInfo($"主机已应用客户端容器状态并转发：ID={inventory.Value:X16}，玩家 {peer.PeerId}，版本 {inventory.Revision}，槽位 {inventory.Slots.Length}。");
             }
+        }
+    }
+
+private sealed class HostCommitHandlers : INetworkMessageHandler
+    {
+        private readonly DarkwoodAdapterRuntime runtime;
+        public HostCommitHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
+
+        public bool Handles(ProtocolMessageType type) =>
+            runtime.IsHost && (type == ProtocolMessageType.InventoryCommit || type == ProtocolMessageType.ContainerCommit || type == ProtocolMessageType.PickupCommit || type == ProtocolMessageType.DropCommit);
+
+        public void Handle(PeerContext peer, ProtocolEnvelope envelope)
+        {
+            try
+            {
+                if (envelope.MessageType == ProtocolMessageType.InventoryCommit) HandleInventoryCommit(peer, ReplicationProtocolCodec.DecodeInventoryCommit(envelope.Payload));
+                else if (envelope.MessageType == ProtocolMessageType.ContainerCommit) HandleContainerCommit(peer, ReplicationProtocolCodec.DecodeContainerCommit(envelope.Payload));
+                else if (envelope.MessageType == ProtocolMessageType.PickupCommit) HandlePickupCommit(peer, ReplicationProtocolCodec.DecodePickupCommit(envelope.Payload));
+                else if (envelope.MessageType == ProtocolMessageType.DropCommit) HandleDropCommit(peer, ReplicationProtocolCodec.DecodeDropCommit(envelope.Payload));
+            }
+            catch (Exception error) { runtime.log?.LogWarning($"[COMMIT] handle failed peer={peer.PeerId} type={envelope.MessageType}: {error.Message}"); }
+        }
+
+        private readonly Dictionary<int, int> lastAcceptedPlayerInventoryRevision = new Dictionary<int, int>();
+        private void HandleInventoryCommit(PeerContext peer, InventoryCommitMessage msg)
+        {
+            int last; lastAcceptedPlayerInventoryRevision.TryGetValue(msg.PlayerId, out last);
+            if (msg.Revision <= last) { runtime.log?.LogInfo($"[INV-COMMIT] 丢弃迟到旧包 player={msg.PlayerId} staleRev={msg.Revision} lastAccepted={last}"); return; }
+            lastAcceptedPlayerInventoryRevision[msg.PlayerId] = msg.Revision;
+            runtime.Players.RebuildInventoryFromSnapshot(msg.PlayerId, msg.Backpack, msg.Hotbar, msg.Revision);
+            var payloadBytes = ReplicationProtocolCodec.Encode(new PlayerInventoryStatePayload(msg.Backpack, msg.Hotbar, msg.Revision, msg.PlayerId));
+            foreach (var rp in runtime.ReadyPeersSnapshot) if (rp != peer.PeerId) runtime.Queue(rp, ProtocolMessageType.PlayerInventoryState, payloadBytes);
+            runtime.log?.LogInfo($"[INV-COMMIT] peer={peer.PeerId} player={msg.PlayerId} rev={msg.Revision} accepted → 已保存并广播其他 Client。");
+        }
+
+        private void HandleContainerCommit(PeerContext peer, ContainerCommitMessage msg)
+        {
+            var cid = new EntityId(msg.ContainerValue, msg.ContainerPersistent);
+            if (!runtime.replication.TryGetInventory(cid, out var container) || container == null)
+            { runtime.log?.LogWarning($"[CONTAINER-COMMIT] 容器 {msg.ContainerValue:X8} 未绑定，忽略 commit。"); return; }
+            var invState = runtime.replication.CaptureAuthoritativeInventory(container);
+            var baseRev = (int)invState.Revision;
+            runtime.Players.ApplyInventoryCommitToShadow(msg.PlayerId, msg.PlayerInventoryRevision, msg.ContainerSlots);
+            if (msg.BaseContainerRevision != baseRev)
+            {
+                runtime.log?.LogWarning($"[CONTAINER-COMMIT] baseContainerRevision 冲突 player={peer.PeerId} peerRev={msg.BaseContainerRevision} hostRev={baseRev} → Host 快照胜。");
+                runtime.Queue(peer.PeerId, ProtocolMessageType.InventoryState, ReplicationProtocolCodec.Encode(invState));
+                return;
+            }
+            var slots = new DarkwoodInventorySlot[msg.ContainerSlots.Length];
+            for (var i = 0; i < slots.Length; i++) { var s = msg.ContainerSlots[i]; slots[i] = new DarkwoodInventorySlot { Type = s.Type, Amount = s.Amount, Durability = s.Durability, Quality = s.Quality, Recipe = s.Recipe }; }
+            DarkwoodInventoryAdapter.Apply(container, slots);
+            try { container.refreshItems(); } catch (Exception) { }
+            // rev++ 走 serverTick 路径即可
+            var newState = runtime.replication.CaptureAuthoritativeInventory(container);
+            var newBytes = ReplicationProtocolCodec.Encode(newState);
+            foreach (var rp in runtime.ReadyPeersSnapshot) runtime.Queue(rp, ProtocolMessageType.InventoryState, newBytes);
+            runtime.log?.LogInfo($"[CONTAINER-COMMIT] peer={peer.PeerId} id={cid.Value:X8} slots={msg.ContainerSlots.Length} → 写入权威并广播。");
+        }
+
+        private void HandlePickupCommit(PeerContext peer, PickupCommitMessage msg)
+        {
+            var rid = new EntityId(msg.RuntimeEntityId, msg.Persistent);
+            var ent = runtime.RuntimeEntities;
+            if (ent != null && ent.TryGetRuntimeEntity(rid, out _))
+            {
+                ent.BroadcastDespawn(msg.RuntimeEntityId, RuntimeEntityDespawnReason.Collected);
+                runtime.log?.LogInfo($"[PICKUP-COMMIT] peer={peer.PeerId} runtime={rid.Value:X8} amount={msg.Amount} → Unregister + Despawn 广播。");
+            }
+            else
+            {
+                // race：发权威玩家背包快照 + 当前世界状态回滚到客户端（v0.9.2 简化为：发空 InventoryReconcile ack）
+                runtime.log?.LogWarning($"[PICKUP-COMMIT] peer={peer.PeerId} runtime={rid.Value:X8} 已不存在 → 同步权威玩家背包（apply 端会拒绝旧 revision）。");
+                if (runtime.Players.TryGetInventory(peer.PeerId, out var shadow))
+                    runtime.Queue(peer.PeerId, ProtocolMessageType.PlayerInventoryState, ReplicationProtocolCodec.Encode(shadow.CaptureState(peer.PeerId)));
+                return;
+            }
+            runtime.Players.ApplyInventoryCommitToShadow(msg.PlayerId, msg.PlayerInventoryRevision, null);
+        }
+
+        private readonly Dictionary<ulong, int> localDropTokenSeen = new Dictionary<ulong, int>();
+        private void HandleDropCommit(PeerContext peer, DropCommitMessage msg)
+        {
+            int last; if (localDropTokenSeen.TryGetValue(msg.LocalDropToken, out last)) { runtime.log?.LogInfo($"[DROP-COMMIT] token=0x{msg.LocalDropToken:X8} 已处理过（last rev {last}），忽略重复。"); return; }
+            localDropTokenSeen[msg.LocalDropToken] = msg.PlayerInventoryRevision;
+            var ent = runtime.RuntimeEntities;
+            var rid = ent != null ? ent.CreateAndRegisterFromDropCommit(msg, peer.PeerId) : default(EntityId);
+            runtime.Players.ApplyInventoryCommitToShadow(msg.PlayerId, msg.PlayerInventoryRevision, null);
+            runtime.log?.LogInfo($"[DROP-COMMIT] peer={peer.PeerId} token=0x{msg.LocalDropToken:X8} type={msg.ItemType} x{msg.Amount} runtime={rid.Value:X8} → 已登记权威。");
         }
     }
 

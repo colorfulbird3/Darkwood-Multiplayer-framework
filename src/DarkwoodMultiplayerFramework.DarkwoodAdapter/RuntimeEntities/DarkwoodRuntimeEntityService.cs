@@ -401,4 +401,18 @@ public sealed class DarkwoodRuntimeEntityService
         }
         catch (Exception error) { runtime.log?.LogWarning($"实例化运行时敌人失败（{spawn.PrototypeId}）：{error.Message}"); }
     }
+
+    // v0.9.2：PickupCommit 探测——RuntimeEntity 仍存在吗？
+    public bool TryGetRuntimeEntity(EntityId id, out Component component) => runtime.replication.TryGetComponent(id, out component!);
+    // v0.9.2：DropCommit → Host 原版实例化权威掉落物 + 注册 + 广播 Spawn
+    public EntityId CreateAndRegisterFromDropCommit(DropCommitMessage msg, int sourcePeer)
+    {
+        if (!runtime.Session.IsHost) return default;
+        var pos = new Vector3(msg.X, msg.Y, msg.Z);
+        var rot = new Quaternion(msg.Qx, msg.Qy, msg.Qz, msg.Qw);
+        var initialBytes = ReplicationProtocolCodec.Encode(new InventoryStateMessage(0, false, 0, msg.ItemType, pos.x, pos.y, pos.z, (int)Inventory.InvType.itemInv, msg.Amount > 0 ? new InventorySlotWire[] { new InventorySlotWire(msg.ItemType, msg.Amount, msg.Durability, msg.Quality, msg.Recipe) } : Array.Empty<InventorySlotWire>()));
+        var rid = RegisterAndBroadcastDroppedItem(null, pos, rot, initialBytes);
+        // 注：Client 已在本地原版生成对象；Host 这里只登记 + 广播（不重新实例化——发起方按 localDropToken 复用 mirror，其他 Client 用 spawn 落地）。
+        return rid == 0 ? default : new EntityId(rid, false);
+    }
 }

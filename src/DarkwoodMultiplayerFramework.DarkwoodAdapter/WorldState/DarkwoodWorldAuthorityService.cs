@@ -225,6 +225,19 @@ public sealed class DarkwoodWorldAuthorityService
             ToWire(player.Hotbar.slots));
     }
 
+    /// <summary>v0.9：通用容器快照（客户端本地原版操作后上报；Host 应用并广播）。</summary>
+    internal static InventoryStateMessage CaptureInventorySnapshot(Inventory inventory, EntityId id)
+    {
+        var t = inventory != null ? inventory.transform : null;
+        var pos = t != null ? t.position : Vector3.zero;
+        return new InventoryStateMessage(
+            id.Value, id.IsPersistent, 0,
+            inventory != null ? inventory.name ?? string.Empty : string.Empty,
+            pos.x, pos.y, pos.z,
+            inventory != null ? (int)inventory.invType : 0,
+            inventory != null ? ToWire(inventory.slots) : Array.Empty<InventorySlotWire>());
+    }
+
 
     private static InventorySlotWire[] ToWire(System.Collections.Generic.List<InvSlot> slots)
     {

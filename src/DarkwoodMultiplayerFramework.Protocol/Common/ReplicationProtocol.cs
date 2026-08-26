@@ -42,7 +42,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9.1";
+    public const string Framework = "0.8.9.2";
 }
 
 public static class ReplicationProtocolCodec
@@ -121,6 +121,15 @@ public static class ReplicationProtocolCodec
     public static ContainerPutPayload DecodeContainerPut(byte[] p)=>Read(p,r=>new ContainerPutPayload(r.ReadBoolean(),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(PlayerInventoryStatePayload m)=>Write(w=>{WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.Revision);w.Write(m.PlayerId);});
     public static PlayerInventoryStatePayload DecodePlayerInventoryState(byte[] p)=>Read(p,r=>new PlayerInventoryStatePayload(ReadInventorySlots(r),ReadInventorySlots(r),r.ReadInt32(),r.ReadInt32()));
+    // v0.9.2：玩家背包 Commit（peer 自有 revision，Host 拒绝旧包）
+    public static byte[] Encode(InventoryCommitMessage m)=>Write(w=>{w.Write(m.PlayerId);w.Write(m.Revision);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);});
+    public static InventoryCommitMessage DecodeInventoryCommit(byte[] p)=>Read(p,r=>new InventoryCommitMessage(r.ReadInt32(),r.ReadInt32(),ReadInventorySlots(r),ReadInventorySlots(r)));
+    public static byte[] Encode(ContainerCommitMessage m)=>Write(w=>{w.Write(m.ContainerValue);w.Write(m.ContainerPersistent);w.Write(m.BaseContainerRevision);if(m.ContainerSlots.Length>256)throw new InvalidOperationException("Too many container slots.");w.Write(m.ContainerSlots.Length);foreach(var s in m.ContainerSlots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}w.Write(m.PlayerId);w.Write(m.PlayerInventoryRevision);});
+    public static ContainerCommitMessage DecodeContainerCommit(byte[] p)=>Read(p,r=>{var cv=r.ReadUInt64();var cp=r.ReadBoolean();var baseRev=r.ReadInt32();var n=ReadCount(r,256);var slots=new InventorySlotWire[n];for(var i=0;i<n;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());var pid=r.ReadInt32();var pir=r.ReadInt32();return new ContainerCommitMessage(cv,cp,baseRev,slots,pid,pir);});
+    public static byte[] Encode(PickupCommitMessage m)=>Write(w=>{w.Write(m.RuntimeEntityId);w.Write(m.Persistent);WriteString(w,m.ItemType);w.Write(m.Amount);w.Write(m.PlayerId);w.Write(m.PlayerInventoryRevision);});
+    public static PickupCommitMessage DecodePickupCommit(byte[] p)=>Read(p,r=>new PickupCommitMessage(r.ReadUInt64(),r.ReadBoolean(),ReadString(r),r.ReadInt32(),r.ReadInt32(),r.ReadInt32()));
+    public static byte[] Encode(DropCommitMessage m)=>Write(w=>{w.Write(m.LocalDropToken);WriteString(w,m.ItemType);w.Write(m.Amount);w.Write(m.Durability);w.Write(m.Quality);w.Write(m.Recipe);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Qx);w.Write(m.Qy);w.Write(m.Qz);w.Write(m.Qw);w.Write(m.PlayerId);w.Write(m.PlayerInventoryRevision);});
+    public static DropCommitMessage DecodeDropCommit(byte[] p)=>Read(p,r=>new DropCommitMessage(r.ReadUInt64(),ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32()));
     public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.Health);w.Write(m.MaxHealth);w.Write(m.Downed);});
     public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadBoolean());});
     public static byte[] Encode(GuestProfileRecord m)=>Write(w=>{w.Write((byte)GuestProfileFormatVersion);WriteString(w,m.GuestKey);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.LastSeenUtcTicks);});

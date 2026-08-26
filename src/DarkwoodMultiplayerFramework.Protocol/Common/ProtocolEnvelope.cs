@@ -36,6 +36,12 @@ public enum ProtocolMessageType : ushort
     SceneChange = 62,
     GuestProfileApplied = 63,
     PlayerAction = 64,
+    ContainerStateReport = 65,
+    InventoryCommit = 66,    // v0.9.2：玩家背包 Commit（revision 单向递增，Client 拥有）
+    ContainerCommit = 67,    // v0.9.2：共享容器 Commit（baseContainerRevision + 玩家 revision 双锚定）
+    PickupCommit = 68,       // v0.9.2：地面拾取 Commit（RuntimeEntityId + InventorySnapshot）
+    DropCommit = 69,         // v0.9.2：丢弃 Commit（localDropToken + DroppedItemState + InventorySnapshot）
+    LegacyAuthAction = 70,   // v0.9.2：客户端仍发旧 authority Action 的兼容通道（Host 记 [LEGACY-AUTH] 报警）
     Error = 255
 }
 

@@ -47,40 +47,23 @@ internal static class DarkwoodContainerTakePatch
             ? new PendingTake(containerId, item.type, Math.Max(1, __instance.itemAmount))
             : default;
 
-        // 第 3 刀：客户端不再本地执行共享容器操作——改发 ContainerTake/Put Intent，并阻止原版 mutation
+        // v0.9 架构：客户端本地原版执行一切取物/放入（Trusted Client），执行后上报背包与容器快照。
+        // 不再有网络 HeldItem/Cursor 权威；Host 只保存与广播。
         var runtime2 = DarkwoodAdapterRuntime.Instance;
         if (runtime2 == null || runtime2.State != ConnectionState.Ready || !runtime2.IsMultiplayerActive) return true;
-        var isShared = inventory != null && DarkwoodEntityStateAdapter.IsShared(inventory);
-        if (!isShared) return true;
-        if (runtime2.IsClient)
-        {
-            var targetContainer = Traverse.Create(__instance).Field("_transferTarget").GetValue<Inventory>();
-            if (targetContainer == null && __instance.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
-            {
-                // transferItemToPlayer：容器→玩家
-                runtime2.TryRequestContainerTake(__instance);
-            }
-            else if (targetContainer != null && DarkwoodEntityStateAdapter.IsShared(targetContainer))
-            {
-                // transferItemTo：玩家→容器
-                runtime2.TryRequestContainerPut(__instance, targetContainer, 0);
-            }
-            else if (__instance.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
-            {
-                runtime2.TryRequestContainerTake(__instance);
-            }
-            __state = default;
-            return false; // 阻止原版本地 mutation——否则客户端拿一份 + 主机再拿一份（复制）
-        }
-        return true; // Host：原版执行，Postfix 立即广播
+        return true; // 原版执行（Postfix 标记 dirty → 统一快照上报）
     }
 
     private static void Postfix(InvSlot __instance, PendingTake __state)
     {
-        // 第 3 刀：客户端被拦截（Prefix return false 未执行）；Host 本地原版执行后立即广播权威容器状态
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || runtime.State != ConnectionState.Ready) return;
-        if (runtime.IsHost && __instance?.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
+        if (runtime.IsClient)
+        {
+            // v0.9：本地已执行取物——容器与玩家背包都可能变化，标记 dirty（节流上报）。
+            runtime.MarkContainerOrInventoryChangedEx(__instance?.inventory);
+        }
+        else if (runtime.IsHost && __instance?.inventory != null && DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
         {
             if (runtime.TryGetEntityId(__instance.inventory, out var id))
             {
@@ -140,18 +123,14 @@ internal static class DarkwoodContainerPutPatch
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
-        if (!DarkwoodEntityStateAdapter.IsShared(_destInv)) return true;
-        if (runtime.IsClient)
-        {
-            runtime.TryRequestContainerPut(__instance, _destInv, 0);
-            return false;
-        }
-        return true;
+        return true; // v0.9：客户端本地原版执行（Trusted Client），Postfix 标记 dirty
     }
 
     private static void Postfix(Inventory _destInv)
     {
-        DarkwoodContainerTakePatch.ReportIfShared(_destInv);
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime != null && runtime.IsClient) runtime.MarkContainerOrInventoryChangedEx(_destInv);
+        else DarkwoodContainerTakePatch.ReportIfShared(_destInv);
     }
 }
 
@@ -166,34 +145,21 @@ internal static class DarkwoodContainerGrabPatch
     }
 
     private static bool Prefix(InvSlot __instance)
-    {
-        var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null) return true;
-        // P0-I：主机已批准、AuthorityReplayScope 内复演原版 grabItem → 直接放行，绝不二次发 Intent。
-        if (runtime.ReplayingAuthoritativeAction) return true;
-        if (runtime.State != ConnectionState.Ready || !runtime.IsMultiplayerActive) return true;
-        var invType = __instance?.inventory?.invType ?? Inventory.InvType.playerInv;
-        // P0-E/F：玩家自己背包/快捷栏 grab → 同样走 Host HeldItems 权威（原版 grab 整槽），杜绝"客户端本地抢飞、Host 不知情"。
-        // 拦截本地原版 mutation → 等 Host ack 后用全新 UIInvItem 吸附。
-        if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar)
         {
-            if (runtime.IsClient) { runtime.TryRequestPlayerGrab(__instance); return false; }
-            return true; // Host 本地玩家照常走原版
+            // v0.9：不再维护网络 HeldItem/Cursor——客户端本地原版 grabItem 直接执行（本地 cursor 是原版行为），
+            // 容器变化由 Postfix 标记 dirty 上报快照。
+            return true;
         }
-        if (!DarkwoodEntityStateAdapter.IsShared(__instance.inventory)) return true;
-        if (runtime.IsClient)
-        {
-            runtime.TryRequestContainerGrab(__instance);
-            return false;
-        }
-        return true;
-    }
 
-    private static void Postfix(InvSlot __instance)
-    {
-        DarkwoodContainerTakePatch.ReportIfShared(__instance?.inventory);
+        private static void Postfix(InvSlot __instance)
+        {
+            var runtime = DarkwoodAdapterRuntime.Instance;
+            if (runtime != null && runtime.IsClient)
+                runtime.MarkContainerOrInventoryChangedEx(__instance?.inventory);
+            else
+                DarkwoodContainerTakePatch.ReportIfShared(__instance?.inventory);
+        }
     }
-}
 
 /// <summary>
 /// FIX-011 信任模式：拖拽/放入路径也本地直接执行并上报。
@@ -216,42 +182,16 @@ internal static class DarkwoodContainerDragDestinationPatch
         // 记录拖拽来源（可能是共享容器），执行后来源容器状态可能已变化，需一并上报。
         var picked = Singleton<Controller>.Instance?.pickedUpItem;
         __state = picked?.slot?.inventory;
-        // P0-D/E：鼠标手持物品（HeldItem）放进玩家背包——改发 HeldToInventory（Host shadow.Add），阻止本地放置
-        //（原版 placeItem 依赖 pickedUpItem.slot，而生成本地无 slot → 会 NullRef/卡住）。
-        var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime != null && runtime.IsClient && runtime.State == DarkwoodMultiplayerFramework.Core.ConnectionState.Ready && !runtime.replication.ApplyingRemote)
-        {
-            if (!InvItemClass.isNull(picked) && __instance?.inventory != null)
-            {
-                var invType = __instance.inventory.invType;
-                if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar)
-                {
-                    runtime.TryRequestHeldToInventory(invType == Inventory.InvType.hotbar, __instance.inventory.slots.IndexOf(__instance));
-                    return false;
-                }
-                if (DarkwoodEntityStateAdapter.IsShared(__instance.inventory))
-                {
-                    // 阶段二：held → 共享容器（Host 权威 put：空→放/同类→stack/异类→swap；ack 后 Replay 原版 placeItem/swapItems）。
-                    if (!runtime.replication.TryGetId(__instance.inventory, out var containerId)
-                        || !runtime.TryRequestHeldToContainer(containerId, __instance.inventory.slots.IndexOf(__instance)))
-                    {
-                        DarkwoodAdapterRuntime.LogMessage("[RUNTIME] held→共享容器：无法解析容器实体 ID，已阻止本地放置。");
-                    }
-                    return false;
-                }
-            }
-        }
+        // v0.9：不再维护网络 HeldItem/Cursor——本地原版 placeItem/swapItems 直接执行，
+        // 执行后由 Postfix 标记 dirty（目标槽 + 来源容器）统一快照上报。
         return true;
     }
 
     private static void Postfix(InvSlot __instance, Inventory? __state)
     {
-        if (__instance?.inventory != null &&
-            (__instance.inventory.invType == Inventory.InvType.itemInv || __instance.inventory.invType == Inventory.InvType.deathDrop))
-            DarkwoodContainerTakePatch.ReportIfShared(__instance.inventory);
-        if (__state != null &&
-            (__state.invType == Inventory.InvType.itemInv || __state.invType == Inventory.InvType.deathDrop) &&
-            !ReferenceEquals(__state, __instance?.inventory))
-            DarkwoodContainerTakePatch.ReportIfShared(__state);
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null || !runtime.IsClient || runtime.State != DarkwoodMultiplayerFramework.Core.ConnectionState.Ready) return;
+        if (__instance?.inventory != null) runtime.MarkContainerOrInventoryChangedEx(__instance.inventory);
+        if (__state != null && !ReferenceEquals(__state, __instance?.inventory)) runtime.MarkContainerOrInventoryChangedEx(__state);
     }
 }
