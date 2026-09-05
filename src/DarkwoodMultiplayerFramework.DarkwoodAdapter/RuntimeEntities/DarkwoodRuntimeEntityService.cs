@@ -453,6 +453,8 @@ public sealed class DarkwoodRuntimeEntityService
             // 保留碰撞器：镜像可被点击拾取（Pickup Patch 拦截并转发 Host）
             var item = go.GetComponentInChildren<Item>();
             if (item != null) item.isDroppedItem = true;
+            // r17：夹子 mirror（玩家放置的夹子）加入本地触发 watch（踩中 → 上报 Host → 权威广播合拢）
+            try { if (item != null && DarkwoodMultiplayerFramework.DarkwoodAdapter.World.BearTrapStateAdapter.IsBearTrap(item)) runtime.WatchTrap(item); } catch (Exception) { }
             runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(spawn.RuntimeEntityId,false),Root=go,Primary=dropped,Inventory=dropped,Item=item,Kind=WorldEntityKind.DroppedItem});
             clientInventoryMirrors[spawn.RuntimeEntityId] = go.transform;
             runtime.log?.LogInfo($"客户端已实例化掉落物镜像：ID {spawn.RuntimeEntityId}，类型 {spawn.PrototypeId}，可交互。");

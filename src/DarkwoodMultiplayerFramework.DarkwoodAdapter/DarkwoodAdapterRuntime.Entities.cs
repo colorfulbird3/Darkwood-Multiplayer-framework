@@ -513,6 +513,98 @@ public sealed partial class DarkwoodAdapterRuntime
         }
     }
 
+    // ── v0.9.0（r17）夹子触发双向同步 ──
+    // 夹子合拢发生在「玩家所在端」的本地模拟（可信客户端本地物理/踩踏），Host 本体未经历该碰撞 → 上报方向。
+    // Host 收到 → 本体补合拢 → BroadcastStateNow 权威广播（triggered=true）→ 各端 Apply 复演合拢（已有）。
+    // watch 兜底：vanilla 触发若不走 Trigger.switchToTriggered()，轮询 Trigger.triggered 翻转补上（coop TrapSync 同法）。
+    private readonly Dictionary<Item, bool> trapWatch = new Dictionary<Item, bool>();
+    private float nextTrapWatchScan;
+    private float nextTrapDiscover;
+    public void WatchTrap(Item item)
+    {
+        if (!IsClient || item == null || item.gameObject == null) return;
+        try { trapWatch[item] = ResolveTrapTrigger(item)?.triggered ?? false; } catch (Exception) { }
+    }
+    private Trigger ResolveTrapTrigger(Item item)
+    {
+        try { return item.GetComponent<Trigger>() ?? item.GetComponentInChildren<Trigger>(true); }
+        catch (Exception) { return null; }
+    }
+    internal void TickTrapWatch()
+    {
+        if (!IsClient || clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
+        if (Time.unscaledTime < nextTrapWatchScan) return;
+        nextTrapWatchScan = Time.unscaledTime + 0.4f;
+        if (trapWatch.Count == 0)
+        {
+            // 惰性填充：夹子实体可能从未收到过 host typed 状态（无变化不发）——低频全扫补注册（夹子数量少）。
+            if (Time.unscaledTime < nextTrapDiscover) return;
+            nextTrapDiscover = Time.unscaledTime + 3f;
+            try
+            {
+                foreach (var it in UnityEngine.Object.FindObjectsOfType<Item>(true))
+                {
+                    if (it == null || it.gameObject == null || trapWatch.Count > 256) break;
+                    if (!DarkwoodMultiplayerFramework.DarkwoodAdapter.World.BearTrapStateAdapter.IsBearTrap(it)) continue;
+                    if (!replication.TryGetId(it, out _)) continue;
+                    WatchTrap(it);
+                }
+            }
+            catch (Exception) { }
+            return;
+        }
+        foreach (var kv in trapWatch.ToArray())
+        {
+            var item = kv.Key;
+            if (item == null || item.gameObject == null) { trapWatch.Remove(kv.Key); continue; }
+            var now = false;
+            try { var t = ResolveTrapTrigger(item); now = t != null && t.triggered; } catch (Exception) { }
+            if (now && !kv.Value)
+            {
+                trapWatch[kv.Key] = true;
+                if (replication.TryGetId(item, out var id)) ReportTrapTriggeredLocally(item, id);
+            }
+        }
+    }
+    /// <summary>客户端：本地夹子已合拢 → 上报 Host（Host 补合拢本体 + 权威广播）。调用方已确认绑定 id。</summary>
+    public void ReportTrapTriggeredLocally(Item item, Core.EntityId id)
+    {
+        if (!IsClient || clientSession?.Session.Lifecycle.State != ConnectionState.Ready || replication.ApplyingRemote) return;
+        try
+        {
+            clientSession.Send(ProtocolMessageType.TrapTriggered, ReplicationProtocolCodec.Encode(new TrapTriggeredMessage(id.Value, id.IsPersistent)));
+            DarkwoodAdapterRuntime.LogMessage($"[TRAP-REPORT] 客户端夹子本地触发上报 Host：item={item.name} id={id.Value:X8} persistent={id.IsPersistent}");
+        }
+        catch (Exception error) { log?.LogWarning($"[TRAP-REPORT] 上报失败：{error.Message}"); }
+    }
+    /// <summary>Host：收到客户端夹子触发上报 → 本体若未合拢则补合拢 → 即时权威广播（全端 Apply 复演合拢）。</summary>
+    internal void HandleTrapTriggeredRequest(int peer, Core.EntityId id)
+    {
+        if (!Session.IsHost || quitting) return;
+        if (!replication.TryGetBinding(id, out var binding) || binding.Item == null || binding.Item.gameObject == null)
+        {
+            log?.LogWarning($"[TRAP-REPORT] peer={peer} 上报的夹子实体不存在 id={id}（忽略）");
+            return;
+        }
+        var item = binding.Item;
+        if (!DarkwoodMultiplayerFramework.DarkwoodAdapter.World.BearTrapStateAdapter.IsBearTrap(item)) { log?.LogWarning($"[TRAP-REPORT] peer={peer} 上报目标非捕兽夹 name={item.name}（忽略）"); return; }
+        try
+        {
+            var t = ResolveTrapTrigger(item);
+            if (t != null && !t.triggered)
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[TRAP-REPORT] Host 收到触发上报，补合拢本体：item={item.name} id={id.Value:X8}");
+                t.switchToTriggered(); // 本体也合拢（防 host 世界重复触发 + 与客户端一致）
+            }
+            else
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[TRAP-REPORT] Host 收到触发上报：item={item.name} id={id.Value:X8}（本体已合拢或无 Trigger）");
+            }
+        }
+        catch (Exception error) { log?.LogWarning($"[TRAP-REPORT] 本体合拢失败：{error.Message}"); }
+        BroadcastStateNow(id); // 权威广播 triggered=true → 各端 Apply 复演合拢（幂等）
+    }
+
     // v0.9.0 A1/A4：Host 已 inline 执行原版后的 Action 广播（客户端 Replay 副作用）。
     private void BroadcastAction(Core.EntityId id, byte actionKey, byte param0, int actorId)
     {

@@ -87,6 +87,8 @@ public sealed class BearTrapStateAdapter : IWorldStateAdapter
             catch (Exception error) { DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] switchToTriggered 复演失败：{error.Message}"); }
         }
         DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] id={item.name} armed={armed} triggered={triggered} localTriggered={trigger?.triggered} broken={destroyed} visualRefreshed={refreshed} source=Host");
+        // r17：客户端把该夹子纳入本地触发 watch（踩中上报；本 Apply 只注册不上报）
+        try { DarkwoodAdapterRuntime.Instance?.WatchTrap(item); } catch (Exception) { }
     }
     public void EnterClientProxyMode(Component component) { }
     public void ExitClientProxyMode(Component component) { }

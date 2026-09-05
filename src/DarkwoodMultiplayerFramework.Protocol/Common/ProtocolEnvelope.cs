@@ -56,6 +56,7 @@ public enum ProtocolMessageType : ushort
     RainState = 81,          // 天气（雨）状态
     ActionExecuted = 82,     // v0.9.0 Action Sync：Host 已执行某原版副作用 → 各端 Replay 同一函数（EntityId+ActionKey+Param+Tick）
     RemoveWorldItem = 83,    // v0.9.0 A3：客户端本地移除的持久世界物（拆夹子等）→ 通知 Host 销毁并广播 despawn
+    TrapTriggered = 84,      // v0.9.0（r17）：客户端本地夹子触发（合拢）→ 上报 Host → Host 本体合拢 + 权威广播（双向夹子视觉同步）
     TestControl = 200,               // v0.9.2 TestHarness：仅 TestMode 启用，不影响正式协议兼容
     Error = 255
 }
