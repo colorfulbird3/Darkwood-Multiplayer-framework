@@ -55,6 +55,7 @@ internal static class DarkwoodDoorTogglePatch
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready)
             return true;
+        if (runtime.replication.ApplyingRemote) return true; // Action Replay 执行原版 openClose：放行且不再发意图（防 ping-pong）
         if (openerTransform == null || openerTransform.GetComponent<Player>() != Player.Instance)
             return true; // 非本机玩家触发的 openClose（如 AI/动画）保持原版
         // A 方案：本地不执行；发意图由 Host 唯一裁决并广播。
