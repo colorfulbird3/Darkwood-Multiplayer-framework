@@ -44,6 +44,11 @@ public enum ProtocolMessageType : ushort
     DropCommitAck = 70,      // v0.9.2 P0-9：Host → 发起 Client 的 Ack（RuntimeEntityId 复用本地对象）
     PickupReconcile = 71,    // v0.9.2 P0-6：race 时 Host 推权威玩家背包快照让客户端拒绝旧 revision
     LegacyAuthAction = 72,   // v0.9.2：客户端仍发旧 authority Action 的兼容通道（Host 记 [LEGACY-AUTH] 报警）
+    ContainerCommitAck = 73,        // v0.9.2 P0-4：Host → 客户端原子确认（newRevision + transactionId）
+    ContainerReconcile = 74,        // v0.9.2 P0-4：Host → 客户端冲突权威回滚（含 transactionId + 真实 EntityId + slots）
+    TransactionReconcile = 75,      // v0.9.2 P0-6：Host → 客户端整事务回滚（含 PlayerInventory + 所有 ContainerMutations 权威快照）
+    InventoryTransactionCommit = 76,// v0.9.2 P0-6：原子提交 玩家背包 + N 个容器 mutation（全有/全无）
+    TestControl = 200,               // v0.9.2 TestHarness：仅 TestMode 启用，不影响正式协议兼容
     Error = 255
 }
 

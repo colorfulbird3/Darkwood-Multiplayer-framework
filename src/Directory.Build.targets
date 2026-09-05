@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    DMF Build Identity: runs the generator before Core compiles so that
+    BuildIdentity.cs always reflects the local git HEAD + a fresh source fingerprint.
+    The generated file lives inside Core so it's compiled into both Host and Client DLLs.
+    MSBuild Exec needs a Windows-style path to python (MSYS path conversion is disabled here).
+  -->
+  <Target Name="DmfGenerateBuildIdentity" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'DarkwoodMultiplayerFramework.Core'">
+    <Exec Command="python &quot;$(MSBuildThisFileDirectory)tools\dmf-build-identity.py&quot;"
+          ContinueOnError="false"
+          IgnoreExitCode="false" />
+  </Target>
+</Project>

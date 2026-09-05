@@ -6,6 +6,23 @@ using DarkwoodMultiplayerFramework.Protocol;
 
 namespace DarkwoodMultiplayerFramework.Network;
 
+// v0.9.2 P0-BUILD-IDENTITY：把 build mismatch / dirty 详情打清楚（不依赖 logger 字段）。
+internal static class HandshakeBuildIdentityLog
+{
+    public static void Log(string direction, string errorCode, ProtocolIdentity remote, ProtocolIdentity local)
+    {
+        try
+        {
+            System.Console.WriteLine($"[BUILD-MISMATCH] {direction} reject code={errorCode}");
+            System.Console.WriteLine($"[BUILD] remote: commit={(remote.GitCommit?.Length >= 12 ? remote.GitCommit.Substring(0, 12) : remote.GitCommit)} dirty={remote.Dirty} source={remote.SourceFingerprint}");
+            System.Console.WriteLine($"[BUILD] local : commit={(local.GitCommit?.Length >= 12 ? local.GitCommit.Substring(0, 12) : local.GitCommit)} dirty={local.Dirty} source={local.SourceFingerprint}");
+            if (remote.Dirty || local.Dirty)
+                System.Console.WriteLine("[BUILD] local working tree contains uncommitted changes");
+        }
+        catch { }
+    }
+}
+
 public sealed class ClientHandshakeSession : IDisposable
 {
     private readonly ITransport transport;
@@ -80,7 +97,12 @@ public sealed class ClientHandshakeSession : IDisposable
             var hello = HandshakeProtocolCodec.DecodeServerHello(envelope.Payload);
             RequireMatchingEnvelope(envelope, hello.Identity);
             var validation = HandshakeValidator.Validate(hello.Identity, Session.Identity);
-            if (!validation.Accepted) { Fail(string.IsNullOrEmpty(validation.ErrorDetail) ? validation.ErrorCode : $"{validation.ErrorCode} ({validation.ErrorDetail})"); return; }
+            if (!validation.Accepted)
+            {
+                HandshakeBuildIdentityLog.Log("client→server", validation.ErrorCode, hello.Identity, Session.Identity);
+                Fail(string.IsNullOrEmpty(validation.ErrorDetail) ? validation.ErrorCode : $"{validation.ErrorCode} ({validation.ErrorDetail})");
+                return;
+            }
             HostSessionId = envelope.SessionId; PeerId = hello.PeerId; HandshakeComplete = true;
             Session.Lifecycle.MoveTo(ConnectionState.SaveTransfer); HandshakeSucceeded?.Invoke();
         }
@@ -172,7 +194,12 @@ public sealed class HostHandshakeSession : IDisposable
             var hello = HandshakeProtocolCodec.DecodeClientHello(envelope.Payload);
             if (envelope.ProtocolVersion != ProtocolVersions.EnvelopeProtocol) throw new InvalidDataException("Envelope protocol version differs from the framework constant.");
             var result = HandshakeValidator.Validate(Identity, hello.Identity);
-            if (!result.Accepted) { Reject(connectionId, string.IsNullOrEmpty(result.ErrorDetail) ? result.ErrorCode : $"{result.ErrorCode} ({result.ErrorDetail})"); return; }
+            if (!result.Accepted)
+            {
+                HandshakeBuildIdentityLog.Log("server→client", result.ErrorCode, Identity, hello.Identity);
+                Reject(connectionId, string.IsNullOrEmpty(result.ErrorDetail) ? result.ErrorCode : $"{result.ErrorCode} ({result.ErrorDetail})");
+                return;
+            }
             if (!peer.Ready && MaxPeers >= 0 && ReadyPeerCount >= MaxPeers) { Reject(connectionId, "SESSION_FULL"); return; }
             peer.Identity = hello.Identity; peer.GuestKey = hello.GuestKey ?? string.Empty; peer.Ready = true;
             Send(connectionId, ProtocolMessageType.ServerHello, HandshakeProtocolCodec.Encode(new ServerHello(Identity, connectionId)));

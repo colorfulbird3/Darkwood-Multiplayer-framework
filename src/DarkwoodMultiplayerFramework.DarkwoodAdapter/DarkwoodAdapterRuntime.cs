@@ -12,6 +12,7 @@ using DarkwoodMultiplayerFramework.Entities;
 using DarkwoodMultiplayerFramework.Network;
 using DarkwoodMultiplayerFramework.Protocol;
 using DarkwoodMultiplayerFramework.DarkwoodAdapter.World;
+using DarkwoodMultiplayerFramework.DarkwoodAdapter.Testing;
 using HarmonyLib;
 using Steamworks;
 using UnityEngine;
@@ -93,6 +94,12 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     internal DarkwoodCombatService Combat { get; private set; } = null!;
     /// <summary>玩家服务（远端坐标/背包影子/Guest 档案的唯一入口）。</summary>
     public DarkwoodPlayerService Players { get; private set; } = null!;
+    /// <summary>v0.9.2 P0-SYNC-HEALTH：双方同步计数器（每 5s 输出日志）。</summary>
+    public SyncHealthStats SyncHealth { get; private set; } = null!;
+    /// <summary>v0.9.2 TestHarness：TestAgent（每个进程内）；TestMode 才创建。</summary>
+    public DualInstanceTestAgent? TestAgent { get; set; }
+    /// <summary>v0.9.2 TestHarness：协调器（Host 驱动 / Client 响应）。</summary>
+    public DualInstanceTestCoordinator? TestCoordinator { get; set; }
     // P0-D/E：每玩家的权威鼠标手持物品（远端玩家由 Host 维护；Host 本机走原版 pickedUpItem，不需这里）。
     public readonly Dictionary<int, HeldItemStatePayload> HeldItems = new Dictionary<int, HeldItemStatePayload>();
     // P0-2：ContainerGrab 请求发送前保存原始 InvItemClass 快照（copy constructor 保留 UIInvItem/slot），
@@ -209,7 +216,13 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         public bool IsBulk => ChunkIndex >= 0 && ChunkCount > 0;
     }
 
-    private ProtocolIdentity Identity => new ProtocolIdentity(ProtocolVersions.Framework, Application.version);
+    // v0.9.2 P0-BUILD-IDENTITY：握手携带 BuildIdentity（gitCommit/sourceFingerprint/dirty）
+    private ProtocolIdentity Identity => new ProtocolIdentity(
+        ProtocolVersions.Framework,
+        Application.version,
+        DarkwoodMultiplayerFramework.Core.BuildIdentity.GitCommit,
+        DarkwoodMultiplayerFramework.Core.BuildIdentity.SourceFingerprint,
+        DarkwoodMultiplayerFramework.Core.BuildIdentity.GitDirty);
 
 
 
@@ -307,6 +320,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Combat = new DarkwoodCombatService(this); // 所有权拆分
         Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 所有权拆分
         SaveState = new DarkwoodSaveTransferService(this);
+        SyncHealth = new SyncHealthStats(this); // v0.9.2 P0-SYNC-HEALTH
         World = new DarkwoodWorldAuthorityService(this, RuntimeEntities);
         Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;
@@ -334,6 +348,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Players.RemotePlayers.Tick();
         TickPendingLocalDrop(); // v0.9.0 Trusted Client Drop：临时本地对象超时清理
         TickDirtyReport();      // v0.9：客户端本地原版交互 → 背包/容器快照节流上报
+        SyncHealth.Tick();      // v0.9.2 P0-SYNC-HEALTH：每 5s 输出双方同步计数器
+        TestAgent?.TickBootstrap(); // v0.9.2 BOOT-TEST-2: 状态机每帧推进
         var scene = CurrentScene;
         if (!string.Equals(scene, lastScene, StringComparison.Ordinal)) MarkSceneChanged(scene);
 
@@ -464,6 +480,18 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
             nextRegistryAudit = Time.unscaledTime + 30f;
             log?.LogInfo($"主机注册表巡检：{registry?.Count ?? 0} 实体 / 共享容器 {replication.SharedInventoryCount} / 运行时实体 {RuntimeEntities.PendingCount}。");
         }
+        // v0.9.2 TestHarness：Host 进入 World READY（≥1 readyPeer 且注册表稳定）→ TestAgent.MarkReady
+        if (TestAgent != null && !TestAgent.IsReady && hostSession != null && readyPeers.Count > 0 && replication != null && replication.SharedInventoryCount > 0)
+        {
+            TestAgent.MarkReady();
+        }
+        // v0.9.2 TestHarness：Host 自身无 Client 时，World READY 后（≥1 共享容器）也算 TestMode 下就绪。
+        // 否则 TestHarness 永远等不到 Client 连接（Host 端需要 GUI 按 F1 才会 Listen）。
+        if (TestAgent != null && !TestAgent.IsReady && TestAgent.IsHost && hostSession == null && replication != null && replication.SharedInventoryCount > 0)
+        {
+            TestAgent.MarkReady();
+            log?.LogInfo("[TESTHARNESS] Host self-READY（TestMode 下 hostSession 未启动也算 ready；让 Client 连接即可）");
+        }
         if (Time.unscaledTime >= nextWorldAudit)
         {
             nextWorldAudit = Time.unscaledTime + 60f;
@@ -526,6 +554,11 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     {
         if(clientSession?.Session.Lifecycle.State==ConnectionState.Ready)
             try{replication.Interpolate(Time.unscaledDeltaTime*12f);}catch(Exception error){log?.LogError($"TickClient.Interpolate 异常（已隔离）：{error}");}
+        // v0.9.2 TestHarness：Client 进入 READY 后通知 TestAgent（一次性）
+        if (TestAgent != null && !TestAgent.IsReady && clientSession?.Session.Lifecycle.State == ConnectionState.Ready && replication != null && replication.SharedInventoryCount > 0)
+        {
+            TestAgent.MarkReady();
+        }
         if (Time.unscaledTime >= nextSyncDiag)
         {
             nextSyncDiag = Time.unscaledTime + 10f;

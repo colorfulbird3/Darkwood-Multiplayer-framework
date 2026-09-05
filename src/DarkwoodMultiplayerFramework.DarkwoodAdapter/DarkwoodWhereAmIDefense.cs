@@ -1,3 +1,4 @@
+using System;
 using DarkwoodMultiplayerFramework.Core;
 using HarmonyLib;
 using Pathfinding;
@@ -16,10 +17,16 @@ internal static class DarkwoodWhereAmIDefensePatch
     [HarmonyPatch(typeof(WhereAmI), "checkWhereAmI")]
     private static class WhereAmIPrefixPatch
     {
-        private static bool Prefix()
+        private static bool Prefix(WhereAmI __instance)
         {
             var player = Player.Instance;
             if (player == null || player._transform == null) return false;
+            // v0.9.2 P0-15：客户端 strip A* 后本地 Player 仍持有 WhereAmI 组件 → 直接 disable，避免后续内部字段访问 NRE
+            var runtime = DarkwoodAdapterRuntime.Instance;
+            if (runtime != null && runtime.IsClient && runtime.State == ConnectionState.Ready && __instance != null)
+            {
+                try { __instance.enabled = false; } catch (Exception) { }
+            }
             return true;
         }
     }

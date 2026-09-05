@@ -1,6 +1,6 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 最后更新：0.9.0（2026-08-21）
+> 状态记录至：0.8.9.3-pre.1（2026-08-29；Trusted Client 迁移后尚未真机验收）
 
 ## v0.9.0 Multiplayer Architecture（正式命名）
 
@@ -15,7 +15,7 @@
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.9-beta.7**（Host 权威实体 ID + 绑定清单 + 真实世界稳定门；存档传输/剥离修复；HeldItem 物品事务；Runtime 实体生命周期；World State Adapter 开端） |
+| 当前发布版本 | **0.8.9.3-pre.1**（0.8.9.2 起 Trusted Client 迁移落地：Inventory/Cursor 本地原版执行 + 四类 Commit（InventoryCommit/ContainerCommit/PickupCommit/DropCommit）+ 玩家背包 revision 自有；Build Identity 构建自动化；游戏内双实例 TestHarness 装置；回环自测通过，**真机双端未验收**） |
 | 进行中 | **0.9.0 — Trusted Client + Host World Authority**（beta.8/9 内部迭代已完成：客户端交互 Replay 原版；HeldToContainer 双向容器；StatefulObjectSync（Generator/Light/BearTrap）；背包 revision 防漂移；拾取直进背包；正式发布封装 0.9.0） |
 | 集成验证 | beta.9：构建 0 错 / Unit 50/50 / SelfTests 85/85 / 回环通过（含 INV-BOOTSTRAP B 回归 PASS） |
 | 权威模型 | **Hybrid Authority / Trust Mode**：Client 不持有 Authority，但可在 Host Accepted 后于 `AuthorityReplayScope` 内**直接执行 Darkwood 原版 interaction 方法**（grabItem/placeItem/...）——"不拥有 Authority" ≠ "不执行原版 interaction code"。 |
@@ -39,6 +39,8 @@
 0.8.9-beta.9            ← 内部迭代：双向容器 / StatefulObjectSync / 背包 revision / 拾取直进背包
         ↓
 v0.9.0 ← Trusted Client + Host World Authority（Phase 1 真机验收 → Phase 2 玩家动作 Client Authority → Phase 3 WorldStateSync 场景补全 → Phase 4 NPC/AI/事件/战斗）
+        ↓
+0.8.9.2 / 0.8.9.3-pre.1 ← Trusted Client 迁移落地（四类 Commit、玩家背包 revision、StatefulObjectSync 收尾、Build Identity、双实例 TestHarness）——尚未真机验收
 ```
 
 ---

@@ -21,9 +21,15 @@ internal static class DarkwoodPickupPatch
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready || __instance == null) return;
+        runtime.log?.LogInfo($"[PICKUP-LOCAL] Item.getDroppedItem ENTER");
         if (runtime.replication.TryGetId(__instance, out var rid))
         {
             lock (pendingPickupRuntimeIds) pendingPickupRuntimeIds.Add(rid.Value);
+            runtime.log?.LogInfo($"[PICKUP-LOCAL] 已记录 pre runtime=0x{rid.Value:X8} persistent={rid.IsPersistent}");
+        }
+        else
+        {
+            runtime.log?.LogInfo($"[PICKUP-LOCAL] __instance 未注册到 replication（可能是本地对象或非 Host Entity），后续 Postfix 可能跳过 PickupCommit");
         }
     }
 
@@ -86,6 +92,7 @@ internal static class DarkwoodPickupPatch
             selfPeer, rev,
             st.Backpack, st.Hotbar);
         runtime.clientSession.Send(ProtocolMessageType.PickupCommit, ReplicationProtocolCodec.Encode(commit));
-        runtime.log?.LogInfo($"[PICKUP] pickupCommit sent peer={selfPeer} runtime=0x{rid:X8} type={itemType} x{amount} rev={rev} → 等待 Host Despawn。");
+        runtime.SyncHealth.IncPickupCommitSent();
+        runtime.log?.LogInfo($"[PICKUP-COMMIT-SEND] peer={selfPeer} runtime=0x{rid:X8} type={itemType} x{amount} rev={rev} → 等待 Host Despawn。");
     }
 }

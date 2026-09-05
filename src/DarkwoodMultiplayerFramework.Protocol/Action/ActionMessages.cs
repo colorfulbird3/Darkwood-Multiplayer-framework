@@ -215,6 +215,59 @@ public readonly struct DropCommitAckMessage
     public ulong LocalDropToken {get;} public ulong RuntimeEntityId {get;} public bool Persistent {get;}
 }
 
+/// <summary>v0.9.2 P0-4：Host → 客户端原子确认（ContainerCommitAck）。</summary>
+public readonly struct ContainerCommitAckMessage
+{
+    public ContainerCommitAckMessage(Guid transactionId, ulong containerValue, bool containerPersistent, uint newRevision)
+    { TransactionId=transactionId; ContainerValue=containerValue; ContainerPersistent=containerPersistent; NewRevision=newRevision; }
+    public Guid TransactionId {get;} public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public uint NewRevision {get;}
+}
+
+/// <summary>v0.9.2 P0-4：Host → 客户端冲突权威回滚（ContainerReconcile）。显式带 EntityId，不再依赖 Capture 时猜。</summary>
+public readonly struct ContainerReconcileMessage
+{
+    public ContainerReconcileMessage(Guid transactionId, ulong containerValue, bool containerPersistent, uint canonicalRevision, InventorySlotWire[] canonicalSlots)
+    { TransactionId=transactionId; ContainerValue=containerValue; ContainerPersistent=containerPersistent; CanonicalRevision=canonicalRevision; CanonicalSlots=canonicalSlots??Array.Empty<InventorySlotWire>(); }
+    public Guid TransactionId {get;} public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public uint CanonicalRevision {get;} public InventorySlotWire[] CanonicalSlots {get;}
+}
+
+/// <summary>v0.9.2 P0-6：原子事务中单个容器 mutation（与 InventoryTransactionCommit 共用 revision 校验）。</summary>
+public readonly struct ContainerMutation
+{
+    public ContainerMutation(ulong containerValue, bool containerPersistent, uint baseRevision, InventorySlotWire[] slots)
+    { ContainerValue=containerValue; ContainerPersistent=containerPersistent; BaseRevision=baseRevision; Slots=slots??Array.Empty<InventorySlotWire>(); }
+    public ulong ContainerValue {get;} public bool ContainerPersistent {get;} public uint BaseRevision {get;} public InventorySlotWire[] Slots {get;}
+}
+
+/// <summary>v0.9.2 P0-6：原子提交 玩家背包 + N 个容器 mutation（全有/全无）。</summary>
+public readonly struct InventoryTransactionCommitMessage
+{
+    public InventoryTransactionCommitMessage(Guid transactionId, int playerId, int playerInventoryRevision, InventorySlotWire[] backpack, InventorySlotWire[] hotbar, ContainerMutation[] containerMutations)
+    { TransactionId=transactionId; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); ContainerMutations=containerMutations??Array.Empty<ContainerMutation>(); }
+    public Guid TransactionId {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;} public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;} public ContainerMutation[] ContainerMutations {get;}
+}
+
+/// <summary>v0.9.2 P0-6：Host → 客户端整事务回滚（包含 PlayerInventory 权威快照 + 所有相关 Container 权威快照）。</summary>
+public readonly struct TransactionReconcileMessage
+{
+    public TransactionReconcileMessage(Guid transactionId, int playerId, int playerInventoryRevision, InventorySlotWire[] backpack, InventorySlotWire[] hotbar, ContainerReconcileMessage[] containers)
+    { TransactionId=transactionId; PlayerId=playerId; PlayerInventoryRevision=playerInventoryRevision; Backpack=backpack??Array.Empty<InventorySlotWire>(); Hotbar=hotbar??Array.Empty<InventorySlotWire>(); Containers=containers??Array.Empty<ContainerReconcileMessage>(); }
+    public Guid TransactionId {get;} public int PlayerId {get;} public int PlayerInventoryRevision {get;} public InventorySlotWire[] Backpack {get;} public InventorySlotWire[] Hotbar {get;} public ContainerReconcileMessage[] Containers {get;}
+}
+
+/// <summary>v0.9.2 TestHarness：Host/Client 之间协调测试阶段的轻量协议（TestMode only）。
+/// 不携带游戏状态；只协调"开始哪个 phase / 校验哪个断言 / 提前结束"。
+/// 不影响正式协议兼容（普通客户端不会注册该消息类型 handler）。</summary>
+public readonly struct TestControlMessage
+{
+    public TestControlMessage(string kind, string scenario, int phase, string payloadJson)
+    { Kind=kind??string.Empty; Scenario=scenario??string.Empty; Phase=phase; PayloadJson=payloadJson??string.Empty; }
+    public string Kind {get;}        // "Ready" | "Start" | "PhaseComplete" | "Check" | "Complete" | "Abort"
+    public string Scenario {get;}    // scenario 名
+    public int Phase {get;}          // phase 序号
+    public string PayloadJson {get;} // 自由格式断言/上下文（JSON 字符串）
+}
+
 /// <summary>Host-authoritative guest bootstrap: the spawn position and inventory a joining client applies right before Ready.</summary>
 
 public readonly struct AttackPayload

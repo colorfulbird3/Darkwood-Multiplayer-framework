@@ -9,13 +9,18 @@ namespace DarkwoodMultiplayerFramework.Protocol;
 /// a single FrameworkVersion gate implies every internal wire schema (SaveBundle,
 /// WorldSnapshotWire, Action payloads). Only FrameworkVersion and GameVersion are
 /// compared; any mismatch rejects the join.
+/// v0.9.2 P0-BUILD-IDENTITY: GitCommit + SourceFingerprint are also exchanged and logged.
+/// If commits differ, or either side reports dirty=true, the join is rejected.
 /// </summary>
 public readonly struct ProtocolIdentity
 {
-    public ProtocolIdentity(string frameworkVersion, string gameVersion)
-    { FrameworkVersion=frameworkVersion ?? string.Empty; GameVersion=gameVersion ?? string.Empty; }
+    public ProtocolIdentity(string frameworkVersion, string gameVersion, string gitCommit = "", string sourceFingerprint = "", bool dirty = false)
+    { FrameworkVersion=frameworkVersion ?? string.Empty; GameVersion=gameVersion ?? string.Empty; GitCommit=gitCommit ?? string.Empty; SourceFingerprint=sourceFingerprint ?? string.Empty; Dirty=dirty; }
     public string FrameworkVersion { get; }
     public string GameVersion { get; }
+    public string GitCommit { get; }
+    public string SourceFingerprint { get; }
+    public bool Dirty { get; }
 }
 
 public readonly struct ClientHello
@@ -55,6 +60,13 @@ public static class HandshakeValidator
     {
         if (!string.Equals(host.FrameworkVersion, client.FrameworkVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_FRAMEWORK_VERSION", $"host={host.FrameworkVersion}; client={client.FrameworkVersion}");
         if (!string.Equals(host.GameVersion, client.GameVersion, StringComparison.Ordinal)) return Reject("INCOMPATIBLE_GAME_BUILD", $"host={host.GameVersion}; client={client.GameVersion}");
+        // v0.9.2 P0-BUILD-IDENTITY：commit 不一致 → reject；任一侧 dirty → reject
+        if (!string.Equals(host.GitCommit ?? string.Empty, client.GitCommit ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            return Reject("BUILD_MISMATCH", $"host={host.GitCommit}; client={client.GitCommit}");
+        if (host.Dirty || client.Dirty)
+            return Reject("BUILD_DIRTY", $"host.dirty={host.Dirty}; client.dirty={client.Dirty} — local working tree contains uncommitted changes");
+        if (!string.Equals(host.SourceFingerprint ?? string.Empty, client.SourceFingerprint ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            return Reject("BUILD_SOURCE_FINGERPRINT_MISMATCH", $"host={host.SourceFingerprint}; client={client.SourceFingerprint}");
         return new HandshakeResult(true, string.Empty);
     }
     private static HandshakeResult Reject(string code, string detail = "") => new HandshakeResult(false, code, detail);
@@ -73,8 +85,8 @@ public static class HandshakeProtocolCodec
     private static byte[] EncodeIdentity(ProtocolIdentity identity) => Write(writer => WriteIdentity(writer, identity));
     private static byte[] Write(Action<BinaryWriter> write) { using var stream=new MemoryStream(); using var writer=new BinaryWriter(stream,Encoding.UTF8); write(writer); return stream.ToArray(); }
     private static T Read<T>(byte[] payload, Func<BinaryReader,T> read) { using var stream=new MemoryStream(payload ?? Array.Empty<byte>(),false); using var reader=new BinaryReader(stream,Encoding.UTF8); var value=read(reader); if(stream.Position!=stream.Length) throw new InvalidDataException("Handshake payload contains trailing data."); return value; }
-    private static void WriteIdentity(BinaryWriter writer, ProtocolIdentity identity) { WriteString(writer,identity.FrameworkVersion); WriteString(writer,identity.GameVersion); }
-    private static ProtocolIdentity ReadIdentity(BinaryReader reader) => new ProtocolIdentity(ReadString(reader),ReadString(reader));
+    private static void WriteIdentity(BinaryWriter writer, ProtocolIdentity identity) { WriteString(writer,identity.FrameworkVersion); WriteString(writer,identity.GameVersion); WriteString(writer,identity.GitCommit ?? string.Empty); WriteString(writer,identity.SourceFingerprint ?? string.Empty); writer.Write(identity.Dirty); }
+    private static ProtocolIdentity ReadIdentity(BinaryReader reader) { var fv=ReadString(reader); var gv=ReadString(reader); var gc=ReadString(reader); var sf=ReadString(reader); var dirty=reader.ReadBoolean(); return new ProtocolIdentity(fv,gv,gc,sf,dirty); }
     private static void WriteString(BinaryWriter writer,string value) => WriteLimitedString(writer,value,MaxStringBytes);
     private static string ReadString(BinaryReader reader) => ReadLimitedString(reader,MaxStringBytes);
     private static void WriteLimitedString(BinaryWriter writer,string value,int maxBytes) { var bytes=Encoding.UTF8.GetBytes(value ?? string.Empty); if(bytes.Length>maxBytes) throw new InvalidOperationException("Handshake string exceeds the configured limit."); writer.Write((ushort)bytes.Length); writer.Write(bytes); }

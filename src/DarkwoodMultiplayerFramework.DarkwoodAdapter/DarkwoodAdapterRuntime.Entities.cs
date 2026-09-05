@@ -260,10 +260,15 @@ public sealed partial class DarkwoodAdapterRuntime
         // 类型化原版执行（禁字符串分发；Host 是唯一 authority）：
         if (comp is Generator g)
         {
+            // v0.9.2 P0-11：hostBefore/hostAfter/broadcastRevision 区分 old state vs requested outcome
+            var hostBefore = g.isOn;
             if (payload.Interaction == "toggle") { if (g.isOn) g.turnOff(); else g.turnOn(); }
             else if (payload.Interaction == "on") { if (!g.isOn) g.turnOn(); }
             else if (payload.Interaction == "off") { if (g.isOn) g.turnOff(); }
             else { RejectAction(peer, request, "UNKNOWN_INTERACTION", 0); return; }
+            var hostAfter = g.isOn;
+            var broadcastRev = replication.AllocateRevision();
+            log?.LogInfo($"[WORLD-INTERACT] id=0x{id.Value:X8} peer={peer} interaction={payload.Interaction} localBefore={hostBefore} requested={payload.Interaction} hostBefore={hostBefore} hostAfter={hostAfter} broadcastRevision={broadcastRev}");
             log?.LogInfo($"[GENERATOR] id={id.Value:X8} peer={peer} interaction={payload.Interaction} → running={g.isOn} fuel={g.fuel:F0}（Host 原版 turnOn/turnOff 已执行）");
             BroadcastStateNow(id);
         }
@@ -433,6 +438,11 @@ public sealed partial class DarkwoodAdapterRuntime
     }
     private readonly Dictionary<int, int> lastLocalInventoryRevision = new Dictionary<int, int>();
 
+    // v0.9.2 P0-1：客户端缓存每个共享容器最后已知 revision（来自 WorldSnapshot Apply / InventoryState Apply / ContainerCommitAck / ContainerReconcile）
+    private readonly Dictionary<EntityId, uint> clientContainerRevisions = new Dictionary<EntityId, uint>();
+    public uint GetClientContainerRevision(EntityId id) { uint v; return clientContainerRevisions.TryGetValue(id, out v) ? v : 0; }
+    public void SeedClientContainerRevision(EntityId id, uint rev) { if (rev == 0) rev = 1; clientContainerRevisions[id] = rev; }
+
     // ── v0.9.2 Trusted Client 迁移：客户端禁发旧 Player/Held Authority Action（保留 codec 兼容）──
     private void WarnLegacyAuthorityAction(int peer, ActionKindWire kind)
     {
@@ -446,7 +456,8 @@ public sealed partial class DarkwoodAdapterRuntime
     private float nextDirtyReportAt;
     public void MarkContainerOrInventoryChangedEx(Inventory? inv)
     {
-        if (inv == null || !IsClient || clientSession == null) return;
+        // v0.9.2 P0-8：ApplyingRemote 时所有 MarkDirty 都被阻断——阻止 echo commit 反馈环
+        if (inv == null || !IsClient || clientSession == null || replication.ApplyingRemote) return;
         var invType = inv.invType;
         if (invType == Inventory.InvType.playerInv || invType == Inventory.InvType.hotbar) { inventoryDirty = true; return; }
         if (invType == Inventory.InvType.itemInv || invType == Inventory.InvType.deathDrop || DarkwoodEntityStateAdapter.IsShared(inv))
@@ -461,18 +472,19 @@ public sealed partial class DarkwoodAdapterRuntime
         bool haveDirty;
         lock (containerDirty) haveDirty = inventoryDirty || containerDirty.Count > 0;
         if (!haveDirty) return;
-        // v0.9.2 P0-2/P0-3：客户端普通本地背包/容器变化 → 走 InventoryCommit / ContainerCommit（原子事务）。
-        // PlayerInventoryState 客户端不再发送（仅 Bootstrap/Reconcile/RemotePlayerState 由 Host 主动广播）。
-        // ContainerStateReport 客户端不再发送（仅保留 codec 兼容）。
+        // v0.9.2 P0-1/P0-5/P0-6/P0-7：客户端走单一原子事务路径：
+        //   纯 PlayerInventory  → InventoryCommit
+        //   涉及 shared container → InventoryTransactionCommit（一条消息原子提交 player + N containers）
+        // PlayerInventoryState / ContainerStateReport / ContainerCommit 客户端不再发送。
         var selfPeer = clientSession.PeerId;
-        var rev = NextLocalInventoryRevision(selfPeer);
+        var invRev = NextLocalInventoryRevision(selfPeer);
         InventorySlotWire[] bp = null, hb = null;
         bool invDirty = inventoryDirty; inventoryDirty = false;
         if (invDirty)
         {
-            try { var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory(); bp = st.Backpack; hb = st.Hotbar; } catch (Exception) { }
+            try { var st = DarkwoodWorldAuthorityService.CaptureLocalPlayerInventory(); bp = st.Backpack; hb = st.Hotbar; } catch (Exception) { bp = Array.Empty<InventorySlotWire>(); hb = Array.Empty<InventorySlotWire>(); }
         }
-        // 容器 dirty：同事务内随玩家背包一起提交（共用一次 revision，按 baseContainerRevision + 容器状态）
+        // 容器 dirty：同事务内随玩家背包一起提交——每条容器记录自己 cache 的 baseRevision
         KeyValuePair<EntityId, InventorySlotWire[]>[] containerPairs = null!;
         lock (containerDirty)
         {
@@ -495,31 +507,29 @@ public sealed partial class DarkwoodAdapterRuntime
         }
         try
         {
-            // 单一 transaction：背包 + 各容器全部原子提交（一次 SendInventoryCommit + N 次 ContainerCommit 复用同一 revision）
-            // 实际网络拓扑：每条消息仍独立发送，但共享 rev 与 transactionId，确保 Host 原子应用。
-            if (invDirty && bp != null && hb != null)
+            if (containerPairs != null && containerPairs.Length > 0)
             {
+                // v0.9.2 P0-1/P0-6：客户端 baseRevision 来自 clientContainerRevisions（不再写死 0）
                 var tid = Guid.NewGuid();
-                clientSession.Send(ProtocolMessageType.InventoryCommit, ReplicationProtocolCodec.Encode(new InventoryCommitMessage(selfPeer, rev, bp, hb)));
-                if (containerPairs != null)
-                    foreach (var kv in containerPairs)
-                    {
-                        var cid = kv.Key;
-                        int baseRev = 0; // 客户端不持有容器实例；Host 端会按当前真实 base revision 比对
-                        clientSession.Send(ProtocolMessageType.ContainerCommit, ReplicationProtocolCodec.Encode(new ContainerCommitMessage(tid, cid.Value, cid.IsPersistent, baseRev, kv.Value ?? Array.Empty<InventorySlotWire>(), selfPeer, rev, bp, hb)));
-                    }
-                log?.LogInfo($"[INV-COMMIT] peer={selfPeer} rev={rev} backpack={bp.Length} hotbar={hb.Length}{(containerPairs != null ? $" + {containerPairs.Length} container" : "")} → 客户端原子提交（Trusted Client）。");
-            }
-            else if (containerPairs != null)
-            {
-                // 只有容器变化（极少：玩家背包没变只动了容器）。仍需一次 ContainerCommit 占位——单独走。
-                foreach (var kv in containerPairs)
+                var cms = new ContainerMutation[containerPairs.Length];
+                for (var i = 0; i < containerPairs.Length; i++)
                 {
-                    var cid = kv.Key;
-                    int baseRev = 0; // 客户端不持有容器实例；Host 端会按当前真实 base revision 比对
-                    clientSession.Send(ProtocolMessageType.ContainerCommit, ReplicationProtocolCodec.Encode(new ContainerCommitMessage(Guid.NewGuid(), cid.Value, cid.IsPersistent, baseRev, kv.Value ?? Array.Empty<InventorySlotWire>(), selfPeer, rev, Array.Empty<InventorySlotWire>(), Array.Empty<InventorySlotWire>())));
+                    var cid = containerPairs[i].Key;
+                    uint baseRev = GetClientContainerRevision(cid);
+                    if (baseRev == 0) baseRev = replication.GetContainerRevision(cid); // 兜底：客户端 cache 空时用 Host 真实 revision
+                    if (baseRev == 0) baseRev = 1; // 世界初始：双方都未缓存时取 1（Host 那边 EnsureContainerRevision 也从 1 起）
+                    cms[i] = new ContainerMutation(cid.Value, cid.IsPersistent, baseRev, containerPairs[i].Value ?? Array.Empty<InventorySlotWire>());
+                    log?.LogInfo($"[TX-BEGIN] peer={selfPeer} container=0x{cid.Value:X8} base={baseRev} type={(invDirty ? "player+container" : "container-only")}");
                 }
-                log?.LogInfo($"[CONTAINER-COMMIT] peer={selfPeer} rev={rev} containers={containerPairs.Length}（无玩家背包变化）→ 客户端原子提交。");
+                var tx = new InventoryTransactionCommitMessage(tid, selfPeer, invRev, bp ?? Array.Empty<InventorySlotWire>(), hb ?? Array.Empty<InventorySlotWire>(), cms);
+                clientSession.Send(ProtocolMessageType.InventoryTransactionCommit, ReplicationProtocolCodec.Encode(tx));
+                log?.LogInfo($"[TX-SEND] peer={selfPeer} tid={tid} playerRev={invRev} containers={cms.Length} → 客户端原子事务提交。");
+            }
+            else if (invDirty)
+            {
+                // v0.9.2 P0-7：纯 PlayerInventory → InventoryCommit（不涉及容器）
+                clientSession.Send(ProtocolMessageType.InventoryCommit, ReplicationProtocolCodec.Encode(new InventoryCommitMessage(selfPeer, invRev, bp ?? Array.Empty<InventorySlotWire>(), hb ?? Array.Empty<InventorySlotWire>())));
+                log?.LogInfo($"[INV-COMMIT] peer={selfPeer} rev={invRev} → 玩家背包 commit（无容器）。");
             }
         }
         catch (Exception error) { log?.LogWarning($"[SYNC] dirty 上报失败：{error.Message}"); }

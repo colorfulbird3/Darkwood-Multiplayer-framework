@@ -137,7 +137,7 @@ public sealed class DarkwoodSelfTestClient : MonoBehaviour
         saveAssembler = null; snapshotAssembler = null;
         try
         {
-            session = new ClientHandshakeSession(new TelepathyClientTransport(DarkwoodAdapterRuntime.Instance?.TelepathyPath ?? "BepInEx/plugins/Telepathy.dll"), new ProtocolIdentity(ProtocolVersions.Framework, Application.version));
+            session = new ClientHandshakeSession(new TelepathyClientTransport(DarkwoodAdapterRuntime.Instance?.TelepathyPath ?? "BepInEx/plugins/Telepathy.dll"), new ProtocolIdentity(ProtocolVersions.Framework, Application.version, DarkwoodMultiplayerFramework.Core.BuildIdentity.GitCommit, DarkwoodMultiplayerFramework.Core.BuildIdentity.SourceFingerprint, DarkwoodMultiplayerFramework.Core.BuildIdentity.GitDirty));
             session.HandshakeSucceeded += OnHandshakeSucceeded;
             session.HandshakeFailed += error => SelfTestLog($"✗ 握手失败：{error}");
             session.MessageReceived += OnMessage;

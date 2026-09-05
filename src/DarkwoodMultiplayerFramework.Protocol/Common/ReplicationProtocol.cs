@@ -42,7 +42,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9.2";
+    public const string Framework = "0.8.9.3-pre.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -133,6 +133,19 @@ public static class ReplicationProtocolCodec
     public static DropCommitMessage DecodeDropCommit(byte[] p)=>Read(p,r=>{var tid=ReadGuid(r);var tk=r.ReadUInt64();var t=ReadString(r);var amt=r.ReadInt32();var dur=r.ReadSingle();var q=r.ReadInt32();var rec=r.ReadBoolean();var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var qx=r.ReadSingle();var qy=r.ReadSingle();var qz=r.ReadSingle();var qw=r.ReadSingle();var pid=r.ReadInt32();var pir=r.ReadInt32();var bp=ReadInventorySlots(r);var hb=ReadInventorySlots(r);return new DropCommitMessage(tid,tk,t,amt,dur,q,rec,x,y,z,qx,qy,qz,qw,pid,pir,bp,hb);});
     public static byte[] Encode(DropCommitAckMessage m)=>Write(w=>{w.Write(m.LocalDropToken);w.Write(m.RuntimeEntityId);w.Write(m.Persistent);});
     public static DropCommitAckMessage DecodeDropCommitAck(byte[] p)=>Read(p,r=>new DropCommitAckMessage(r.ReadUInt64(),r.ReadUInt64(),r.ReadBoolean()));
+    // v0.9.2 P0-4/P0-6：ContainerCommitAck / ContainerReconcile / TransactionReconcile / InventoryTransactionCommit
+    public static byte[] Encode(ContainerCommitAckMessage m)=>Write(w=>{WriteGuid(w,m.TransactionId);w.Write(m.ContainerValue);w.Write(m.ContainerPersistent);w.Write(m.NewRevision);});
+    public static ContainerCommitAckMessage DecodeContainerCommitAck(byte[] p)=>Read(p,r=>{var tid=ReadGuid(r);var cv=r.ReadUInt64();var cp=r.ReadBoolean();var nr=r.ReadUInt32();return new ContainerCommitAckMessage(tid,cv,cp,nr);});
+    public static byte[] Encode(ContainerReconcileMessage m)=>Write(w=>{WriteGuid(w,m.TransactionId);w.Write(m.ContainerValue);w.Write(m.ContainerPersistent);w.Write(m.CanonicalRevision);WriteInventorySlots(w,m.CanonicalSlots);});
+    public static ContainerReconcileMessage DecodeContainerReconcile(byte[] p)=>Read(p,r=>{var tid=ReadGuid(r);var cv=r.ReadUInt64();var cp=r.ReadBoolean();var rev=r.ReadUInt32();var slots=ReadInventorySlots(r);return new ContainerReconcileMessage(tid,cv,cp,rev,slots);});
+    public static byte[] Encode(ContainerMutation m)=>Write(w=>{w.Write(m.ContainerValue);w.Write(m.ContainerPersistent);w.Write(m.BaseRevision);WriteInventorySlots(w,m.Slots);});
+    public static ContainerMutation DecodeContainerMutation(byte[] p)=>Read(p,r=>{var cv=r.ReadUInt64();var cp=r.ReadBoolean();var rev=r.ReadUInt32();var slots=ReadInventorySlots(r);return new ContainerMutation(cv,cp,rev,slots);});
+    public static byte[] Encode(InventoryTransactionCommitMessage m)=>Write(w=>{WriteGuid(w,m.TransactionId);w.Write(m.PlayerId);w.Write(m.PlayerInventoryRevision);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.ContainerMutations.Length);foreach(var cm in m.ContainerMutations){w.Write(Encode(cm).Length);w.Write(Encode(cm));}});
+    public static InventoryTransactionCommitMessage DecodeInventoryTransactionCommit(byte[] p)=>Read(p,r=>{var tid=ReadGuid(r);var pid=r.ReadInt32();var pir=r.ReadInt32();var bp=ReadInventorySlots(r);var hb=ReadInventorySlots(r);var n=r.ReadInt32();var cms=new ContainerMutation[n];for(var i=0;i<n;i++){var len=r.ReadInt32();var buf=r.ReadBytes(len);cms[i]=DecodeContainerMutation(buf);}return new InventoryTransactionCommitMessage(tid,pid,pir,bp,hb,cms);});
+    public static byte[] Encode(TestControlMessage m)=>Write(w=>{WriteString(w,m.Kind);WriteString(w,m.Scenario);w.Write(m.Phase);WriteString(w,m.PayloadJson);});
+    public static TestControlMessage DecodeTestControl(byte[] p)=>Read(p,r=>new TestControlMessage(ReadString(r),ReadString(r),r.ReadInt32(),ReadString(r)));
+    public static byte[] Encode(TransactionReconcileMessage m)=>Write(w=>{WriteGuid(w,m.TransactionId);w.Write(m.PlayerId);w.Write(m.PlayerInventoryRevision);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.Containers.Length);foreach(var c in m.Containers){w.Write(Encode(c).Length);w.Write(Encode(c));}});
+    public static TransactionReconcileMessage DecodeTransactionReconcile(byte[] p)=>Read(p,r=>{var tid=ReadGuid(r);var pid=r.ReadInt32();var pir=r.ReadInt32();var bp=ReadInventorySlots(r);var hb=ReadInventorySlots(r);var n=r.ReadInt32();var cs=new ContainerReconcileMessage[n];for(var i=0;i<n;i++){var len=r.ReadInt32();var buf=r.ReadBytes(len);cs[i]=DecodeContainerReconcile(buf);}return new TransactionReconcileMessage(tid,pid,pir,bp,hb,cs);});
     public static byte[] Encode(GuestProfileMessage m)=>Write(w=>{WriteBytes(w,Encode(m.Inventory),GuestProfileMax);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.Health);w.Write(m.MaxHealth);w.Write(m.Downed);});
     public static GuestProfileMessage DecodeGuestProfile(byte[] p)=>Read(p,r=>{var inventory=DecodePlayerInventoryState(ReadBytes(r,GuestProfileMax));return new GuestProfileMessage(inventory,r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadSingle(),r.ReadSingle(),r.ReadBoolean());});
     public static byte[] Encode(GuestProfileRecord m)=>Write(w=>{w.Write((byte)GuestProfileFormatVersion);WriteString(w,m.GuestKey);w.Write(m.Day);w.Write(m.JoinCount);w.Write(m.X);w.Write(m.Y);w.Write(m.Z);WriteInventorySlots(w,m.Backpack);WriteInventorySlots(w,m.Hotbar);w.Write(m.LastSeenUtcTicks);});
