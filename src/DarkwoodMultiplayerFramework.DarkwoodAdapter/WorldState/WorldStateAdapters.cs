@@ -29,34 +29,46 @@ public sealed class GenericItemStateAdapter : IWorldStateAdapter
         item.destroyed = destroyed; item.hasPower = hasPower; item.searched = searched;
         item.health = Mathf.RoundToInt(r.ReadSingle()); item.invItemAmount = r.ReadInt32(); item.enabled = r.ReadBoolean();
         // 幂等 isOn：绝不调用 switchMe()（toggle 语义）；直接赋值 + 让原版 Item.Update 读状态驱动视觉。
+        // 注意：不走 turnOn()/turnOff()——它们经 Core.sendTriggerInfo 发 onTurnOn/onTurnOff 世界事件，
+        // 在客户端本地重放会触发事件链（DarkwoodReplayTriggerGuard 只抑制 onTake/onPlace）。视觉型状态
+        // （灯/夹子）由各自 typed adapter 或 Action Replay 以无事件方式刷新（SetActive/switchToTriggered）。
         if (item.isOn != isOn) item.isOn = isOn;
     }
     public void EnterClientProxyMode(Component component) { }
     public void ExitClientProxyMode(Component component) { }
 }
 
-/// <summary>BearTrap 专用：在 GenericItem 基础上，先保证 isOn/destroyed 幂等 + 不触发 switchMe。
-/// 真实字段（armed/triggered/occupied 及视觉组件）待 [WORLD-AUDIT] 反编译确认后扩展。</summary>
+/// <summary>BearTrap 专用：在 GenericItem 基础上同步 isOn/destroyed/health + Trigger.triggered。
+/// 视觉真相（v0.9.6 修正）：夹子"夹住/合拢"由 vanilla Trigger.triggered 驱动（switchToTriggered 刷模型/动画），
+/// 不是 Item.isOn（isOn 在放置后通常恒定）。此前只同步 isOn → 客户端夹子动画永远不变。借 coop TrapSync 语义：
+/// 只复演 false→true（switchToTriggered），不做反向（原版无可逆 API，夹子生命周期内不解除）。</summary>
 public sealed class BearTrapStateAdapter : IWorldStateAdapter
 {
-    private const string MarkerName = "beartrap";
+    public const string MarkerName = "beartrap";
     public ushort SchemaId => WorldStateSchemas.BearTrap;
     public bool CanHandle(Component component) => component is Item item && item.name.ToLowerInvariant().Contains(MarkerName);
-    // 捕兽夹状态：isOn(armed) / destroyed / 目标是否被夹住（用 traps 上的 Scene 内 Character.inBearTrap 间接，但这里先打包 Item 侧）
+    public static bool IsBearTrap(Item item) => item != null && item.name.ToLowerInvariant().Contains(MarkerName);
+    // 捕兽夹状态：isOn(armed) / destroyed / health / triggered(Trigger 合拢视觉真相)。payload 布局变更 → Framework 版本递增。
     public byte[] Capture(Component component)
     {
         var item = (Item)component;
         using var s = new MemoryStream(); using var w = new BinaryWriter(s);
         w.Write(item.isOn); w.Write(item.destroyed); w.Write(item.health);
+        w.Write(ResolveTrigger(item)?.triggered ?? false);
         return s.ToArray();
     }
     public bool HasChanged(byte[] o, byte[] n) { if (o == null || n == null || o.Length != n.Length) return true; for (var i = 0; i < o.Length; i++) if (o[i] != n[i]) return true; return false; }
+    private static Trigger ResolveTrigger(Item item)
+    {
+        try { return item.GetComponent<Trigger>() ?? item.GetComponentInChildren<Trigger>(true); }
+        catch (Exception) { return null; }
+    }
     public void Apply(Component component, byte[] state)
     {
-        if (state == null || state.Length < 6 || component is not Item item) return;
+        if (state == null || state.Length < 7 || component is not Item item) return;
         using var r = new BinaryReader(new MemoryStream(state));
         var armed = r.ReadBoolean(); var destroyed = r.ReadBoolean();
-        var health = r.ReadSingle();
+        var health = r.ReadSingle(); var triggered = r.ReadBoolean();
         item.health = Mathf.RoundToInt(health);
         // 幂等赋值：绝不 toggle（switchMe 会翻转视觉造成两端反复）。
         if (item.isOn != armed) item.isOn = armed;
@@ -65,7 +77,16 @@ public sealed class BearTrapStateAdapter : IWorldStateAdapter
         // 阶段二：TriggerBlocker（踩踏碰撞/下陷视觉）跟随 armed&&!destroyed 幂等启停。
         var blocker = item.GetComponent<TriggerBlocker>();
         if (blocker != null && blocker.enabled != (armed && !destroyed)) blocker.enabled = armed && !destroyed;
-        DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] id={item.name} armed={armed} triggered={(destroyed ? "n/a" : item.isOn.ToString())} broken={destroyed} source=Host");
+        // v0.9.6：Trigger 合拢视觉同步——权威 triggered 翻转为 true 且未被摧毁时，复演原版 switchToTriggered()
+        // 刷新客户端模型/动画（幂等：本地已 triggered 则跳过；权威 false 不回退——夹子生命周期内不解除）。
+        var trigger = ResolveTrigger(item);
+        var refreshed = false;
+        if (trigger != null && triggered && !destroyed && !trigger.triggered)
+        {
+            try { trigger.switchToTriggered(); refreshed = true; }
+            catch (Exception error) { DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] switchToTriggered 复演失败：{error.Message}"); }
+        }
+        DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] id={item.name} armed={armed} triggered={triggered} localTriggered={trigger?.triggered} broken={destroyed} visualRefreshed={refreshed} source=Host");
     }
     public void EnterClientProxyMode(Component component) { }
     public void ExitClientProxyMode(Component component) { }
