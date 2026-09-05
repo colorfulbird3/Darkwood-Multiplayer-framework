@@ -50,7 +50,6 @@ internal static class DarkwoodDropPatch
         }
         runtime.SubmitDropCommit(inv, _item, player);
     }
-    }
 
     /// <summary>扫描刚由 spawnDroppedInvItem 生成的本地掉落物（未入网、同类型、距玩家 ≤4m）。</summary>
     internal static bool TryCaptureSpawnedDropped(InvItemClass _item, Player player, out Inventory captured)
