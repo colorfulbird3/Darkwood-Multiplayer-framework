@@ -412,22 +412,41 @@ public sealed class DarkwoodRuntimeEntityService
                         go = global::Core.AddPrefab(prefabName, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
                     if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
                     dropped = go.GetComponent<Inventory>();
-                    if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
+                    if (dropped == null) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无 Inventory 组件：{spawn.PrototypeId}。"); return; }
                     if (spawn.InitialState.Length > 0)
                     {
                         var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
                         if (state.Slots.Length > 0)
                         {
                             var s = state.Slots[0];
-                            var slot = dropped.slots[0];
-                            slot.inventory = dropped;
-                            // P0-1：镜像物品必须经原版按 type 创建链（createItem(string,...) → new InvItemClass(type,...) + initialize），
-                            // 绝不复制 DroppedItem prefab 默认 InvItem/UI/baseClass/sprite；InitialState 仅作为权威数据。
-                            if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
-                            slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
-                            try { dropped.refreshItems(); } catch (Exception) { }
-                            runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} amount={s.Amount} prefab={(protoPrefab != null ? "prototype:" + s.Type : "generic")}");
+                            // r16 修（玻璃瓶等无世界原型物品）：通用 Items/DroppedItem prefab 实例默认无预置槽
+                            // （vanilla 拖出时会 addSlot 填充），旧代码「slots 空即销毁」导致这类镜像永远不可见。
+                            // 仿 vanilla + DarkwoodInventoryAdapter.Apply：按权威槽数 addSlot 补齐后再 createItem。
+                            try { if (dropped.slots == null) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像 slots 为 null：{spawn.PrototypeId}。"); return; } } catch (Exception) { }
+                            try
+                            {
+                                while (dropped.slots.Count < state.Slots.Length) dropped.addSlot();
+                            }
+                            catch (Exception error) { runtime.log?.LogWarning($"掉落物镜像 addSlot 失败（{spawn.PrototypeId}）：{error.Message}"); }
+                            if (dropped.slots.Count > 0)
+                            {
+                                var slot = dropped.slots[0];
+                                slot.inventory = dropped;
+                                // P0-1：镜像物品必须经原版按 type 创建链（createItem(string,...) → new InvItemClass(type,...) + initialize），
+                                // 绝不复制 DroppedItem prefab 默认 InvItem/UI/baseClass/sprite；InitialState 仅作为权威数据。
+                                if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
+                                slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
+                                try { dropped.refreshItems(); } catch (Exception) { }
+                                runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} amount={s.Amount} prefab={(protoPrefab != null ? "prototype:" + s.Type : "generic")} slots={dropped.slots.Count}");
+                            }
                         }
+                    }
+                    else if (dropped.slots == null || dropped.slots.Count == 0)
+                    {
+                        // 无权威初始状态且实例无槽 → 无内容可显示，销毁（原行为）
+                        UnityEngine.Object.Destroy(go);
+                        runtime.log?.LogWarning($"掉落物镜像无内容且无初始状态：{spawn.PrototypeId}。");
+                        return;
                     }
                 }
             }
