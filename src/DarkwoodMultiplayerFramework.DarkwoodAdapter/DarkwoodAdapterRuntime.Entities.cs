@@ -441,19 +441,8 @@ public sealed partial class DarkwoodAdapterRuntime
             {
                 if (p.Player != null && p.Player.gameObject != null && now < p.Until && DarkwoodDropPatch.TryCaptureSpawnedDropped(p.Item, p.Player, out var captured))
                 {
-                    if (IsHost)
-                    {
-                        // Host 本地丢弃：走正式 World.DropItem 权威路径（不占 DropCommit 线）。
-                        var payload = DarkwoodDropPatch.BuildPayload(p.Item);
-                        if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
-                            World.DropItem(0, payload, default, (_, _, _, _) => { });
-                        log?.LogInfo($"[DROP] Host 重试捕获成功 → World.DropItem（{p.Item.type}）。");
-                    }
-                    else
-                    {
-                        SubmitDropCommit(captured, p.Item, p.Player);
-                        log?.LogInfo($"[DROP] 重试捕获成功 → DropCommit 已上报（{p.Item.type}）。");
-                    }
+                    SubmitDropCommit(captured, p.Item, p.Player);
+                    log?.LogInfo($"[DROP] 重试捕获成功 → DropCommit 已上报（{p.Item.type}）。");
                     ok = true;
                 }
             }

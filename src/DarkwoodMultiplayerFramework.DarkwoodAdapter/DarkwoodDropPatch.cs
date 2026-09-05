@@ -34,18 +34,20 @@ internal static class DarkwoodDropPatch
         {
             if (runtime.IsHost)
             {
-                var payload = BuildPayload(_item);
-                if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
-                    runtime.World.DropItem(0, payload, default, (_, _, _, _) => { });
+                // Host 本地丢弃：原版对象已由 Host 运行时扫描注册并广播（RUNTIME-CHECK 生命周期）。
+                // 这里绝不再 World.DropItem 二次创建（否则同一丢弃物双份/复制）。
                 return;
             }
             runtime.SubmitDropCommit(captured, _item, player);
             return;
         }
-        // 首帧未捕获到刚生成的掉落物：进重试队列（扔掷物可能飞出一段距离/延迟一帧可发现），≤1s 逐帧重试。
-        // Host 本地丢弃也入队（Host 权威路径经 World.DropItem 走正式 Spawn 广播，避免仅本地可见）。
-        runtime.QueuePendingDropCapture(_item, player);
-        DarkwoodAdapterRuntime.LogMessage($"[DROP] 首帧未捕获到原版掉落物，进入重试队列（role={(runtime.IsHost ? "Host" : "Client")}，≤1s）。");
+        // 客户端：首帧未捕获到刚生成的掉落物 → 进重试队列（扔掷物可能飞出/延迟一帧可发现），≤1s 逐帧重试。
+        // Host：交由运行时扫描负责（其 Postfix 不再做任何创建/上报）。
+        if (runtime.IsClient)
+        {
+            runtime.QueuePendingDropCapture(_item, player);
+            DarkwoodAdapterRuntime.LogMessage("[DROP] 首帧未捕获到原版掉落物，进入重试队列（Client，≤1s）。");
+        }
     }
 
     /// <summary>扫描刚由 spawnDroppedInvItem 生成的本地掉落物（未入网、同类型、距玩家 ≤4m）。</summary>

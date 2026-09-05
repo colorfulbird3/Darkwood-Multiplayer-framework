@@ -123,25 +123,20 @@ public sealed class DualInstanceTestAgent
         try
         {
             var payload = ReplicationProtocolCodec.Encode(m);
-            // 反射拿到 clientSession / hostSession（HandshakeSession.Send）发 TestControl
-            System.Func<bool> tryHost = () => {
-                var hs = Runtime.GetType().GetField("hostSession", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(Runtime);
-                if (hs == null) return false;
-                var m = hs.GetType().GetMethod("Send", new[]{ typeof(ProtocolMessageType), typeof(byte[]), typeof(TransportChannel) });
-                if (m == null) return false;
-                foreach (var pid in Runtime.ReadyPeersSnapshot) m.Invoke(hs, new object[]{ ProtocolMessageType.TestControl, payload, DarkwoodMultiplayerFramework.Network.TransportChannel.ReliableGameplay });
-                return true;
-            };
-            System.Func<bool> tryClient = () => {
-                var cs = Runtime.GetType().GetField("clientSession", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(Runtime);
-                if (cs == null) return false;
-                var m = cs.GetType().GetMethod("Send", new[]{ typeof(ProtocolMessageType), typeof(byte[]), typeof(TransportChannel) });
-                if (m == null) return false;
-                m.Invoke(cs, new object[]{ ProtocolMessageType.TestControl, payload, DarkwoodMultiplayerFramework.Network.TransportChannel.ReliableGameplay });
-                return true;
-            };
-            if (Runtime.IsHost && !tryHost()) Trace.Log("TEST-CONTROL-ERR", "host send failed");
-            else if (Runtime.IsClient && !tryClient()) Trace.Log("TEST-CONTROL-ERR", "client send failed");
+            if (Runtime.IsHost)
+            {
+                // Host → peers：走运行时内部广播原语（PumpOutgoing → hostSession.SendMessage），
+                // 不用反射 HostHandshakeSession.Send（其真实 API 是 SendMessage(connectionId,…)，不存在 Send(type,payload,channel)）。
+                var any = false;
+                foreach (var pid in Runtime.ReadyPeersSnapshot) { Runtime.Queue(pid, ProtocolMessageType.TestControl, payload); any = true; }
+                if (!any) Trace.Log("TEST-CONTROL-ERR", "host send: no ready peers");
+                return;
+            }
+            var cs = Runtime.GetType().GetField("clientSession", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(Runtime);
+            if (cs == null) { Trace.Log("TEST-CONTROL-ERR", "client send failed (no session)"); return; }
+            var send = cs.GetType().GetMethod("Send", new[] { typeof(ProtocolMessageType), typeof(byte[]), typeof(TransportChannel) });
+            if (send == null) { Trace.Log("TEST-CONTROL-ERR", "client send failed (no Send method)"); return; }
+            send.Invoke(cs, new object[] { ProtocolMessageType.TestControl, payload, DarkwoodMultiplayerFramework.Network.TransportChannel.ReliableGameplay });
         }
         catch (Exception error) { Trace.Log("TEST-CONTROL-ERR", $"send failed: {error.Message}"); }
     }
