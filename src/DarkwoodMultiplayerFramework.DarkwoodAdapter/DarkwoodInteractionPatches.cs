@@ -123,16 +123,32 @@ internal static class DarkwoodItemActivatePatch
         if (__state) return;
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null) return;
-        // v0.9.1：主机本地开/关灯（Item.activate 直开 isOn）→ 广播 LampToggle 让客户端即时镜像。
-        if (runtime.IsHost && runtime.State == ConnectionState.Ready && __instance != null && __instance.isLight)
+        // v0.9.6（r14）：主机本地玩家开关世界对象（原版 activate 已 inline 执行完，Postfix 拿到最终 isOn）→
+        // 即时广播客户端镜像。发电机=GeneratorToggle+受电灯即时状态；灯=LampToggle；其它 item typed 周期兜底。
+        // （此前主机分支只覆盖 isLight 灯，发电机与其余 item 会一路掉进下方 TryRequestItemActivate 客户端上报路径，
+        //   在 Host 上 clientSession 为空直接 no-op → 主机开关发电机从不广播 → 客户端只看到自己那盏灯。）
+        if (runtime.IsHost && runtime.State == ConnectionState.Ready && __instance != null)
         {
-            try
+            var gen = __instance.GetComponent<Generator>() ?? __instance.GetComponentInChildren<Generator>(true);
+            if (gen != null)
             {
-                if (runtime.replication.TryGetId(__instance, out var lid))
-                    runtime.Actions?.BroadcastExecuted(runtime, lid, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.LampToggle, new byte[] { (byte)(__instance.isOn ? 1 : 0) });
+                runtime.BroadcastHostGeneratorToggle(__instance, gen);
+                return;
             }
-            catch (Exception) { }
-            return;
+            if (__instance.isLight)
+            {
+                try
+                {
+                    if (runtime.replication.TryGetId(__instance, out var lid))
+                    {
+                        DarkwoodAdapterRuntime.LogMessage($"[LAMP-LOCAL] 主机本地开关灯：id={lid.Value:X8} name={__instance.name} → isOn={__instance.isOn}（LampToggle 即时广播）");
+                        runtime.Actions?.BroadcastExecuted(runtime, lid, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.LampToggle, new byte[] { (byte)(__instance.isOn ? 1 : 0) });
+                    }
+                }
+                catch (Exception) { }
+                return;
+            }
+            return; // 其它 item：typed 周期兜底，host 绝不走客户端上报路径
         }
         // P1-A：掉落物不产生 ItemActivate——点击掉落物只走 Pickup intent（避免重复 interaction 路由 / Pickup·ItemActivate race）。
         if (__instance != null && __instance.isDroppedItem) return;

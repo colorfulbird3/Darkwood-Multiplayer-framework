@@ -520,6 +520,39 @@ public sealed partial class DarkwoodAdapterRuntime
         catch (Exception error) { log?.LogWarning($"[ACTION] 广播失败 key={actionKey} id={id}: {error.Message}"); }
     }
 
+    // v0.9.6（r14）：主机本地玩家开关发电机（原版 Item.activate → switchMe 已 inline 执行完）的即时广播，
+    // 与 StateObjectInteract（客户端发起）路径对称：GeneratorToggle Action（客户端 Replay 本地电源 + SetActive 灯）
+    // + 每个受电灯即时 BroadcastStateNow（typed 权威状态，绕 1Hz 节流）。此前主机本地开关发电机无任何即时广播，
+    // 客户端只能等 typed 周期 → 表现为「主机只能控制自己的灯」。
+    public void BroadcastHostGeneratorToggle(Component primaryItem, Generator generator)
+    {
+        if (!Session.IsHost || quitting || primaryItem == null || generator == null) return;
+        if (!replication.TryGetId(primaryItem, out var id))
+        {
+            log?.LogInfo("[GEN-LOCAL] 主机发电机未注册 EntityId，跳过即时广播（typed 周期兜底）。");
+            return;
+        }
+        log?.LogInfo($"[GEN-LOCAL] 主机本地开关发电机：id={id.Value:X8} name={primaryItem.name} → running={generator.isOn}（原版 activate 已执行，即时广播客户端镜像）");
+        BroadcastAction(id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.GeneratorToggle, (byte)(generator.isOn ? 1 : 0), 0);
+        try
+        {
+            var powered = 0;
+            foreach (var pitem in generator.powerItems)
+            {
+                if (pitem == null) continue;
+                if (replication.TryGetId(pitem, out var lampId))
+                {
+                    var lampLight = false;
+                    try { var il = pitem.GetComponentInChildren<ItemLight>(true); lampLight = il != null && il.light != null && il.light.enabled; } catch (Exception) { }
+                    log?.LogInfo($"[GEN-LAMP] {pitem.name} hasPower={pitem.hasPower} isOn={pitem.isOn} lightEnabled={lampLight}");
+                    BroadcastStateNow(lampId); powered++;
+                }
+            }
+            if (powered > 0) log?.LogInfo($"[GENERATOR] 主机本地开关 → 电源网络即时广播 {powered} 个受电 Item（id={id.Value:X8}）。");
+        }
+        catch (Exception error) { log?.LogWarning($"[GENERATOR] powerItems 即时广播失败（不影响主状态）：{error.Message}"); }
+    }
+
     // v0.9.2：客户端玩家背包 revision 单调递增（Client 自有 Owner，Host 仅门控 incoming > last）
     public int NextLocalInventoryRevision(int peer)
     {

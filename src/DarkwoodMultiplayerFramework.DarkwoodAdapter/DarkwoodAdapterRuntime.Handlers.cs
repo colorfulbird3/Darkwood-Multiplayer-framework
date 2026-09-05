@@ -409,13 +409,28 @@ public sealed partial class DarkwoodAdapterRuntime
             runtime.log?.LogInfo($"[PICKUP-COMMIT-RECV] peer={peer.PeerId} runtime=0x{rid.Value:X8} type={msg.ItemType} x{msg.Amount} rev={msg.PlayerInventoryRevision}");
             if (entityExisted)
             {
+                // v0.9.6（r14）修：客户端已把该掉落物取走，权威世界必须同步移除本体——
+                // 旧实现只 BroadcastDespawn（registry.Remove + 广播），从不销毁主机场景里的本体 GameObject，
+                // 造成「客户端捡走后主机实体永久残留」。仅 runtime 实体（!Persistent）走销毁；
+                // persistent 世界物品仍走既有 legacy 移除链路。
+                UnityEngine.GameObject hostRoot = null;
+                if (!msg.Persistent)
+                {
+                    try { if (runtime.replication.TryGetBinding(rid, out var b) && b.Root != null) hostRoot = b.Root; } catch (Exception) { }
+                }
                 ent.BroadcastDespawn(msg.RuntimeEntityId, RuntimeEntityDespawnReason.Collected);
+                runtime.replication.UnregisterRuntimeEntity(rid);
+                if (hostRoot != null)
+                {
+                    try { UnityEngine.Object.Destroy(hostRoot); }
+                    catch (Exception error) { runtime.log?.LogWarning($"[PICKUP-DESPAWN] 主机本体销毁失败（已 despawn，不影响）：{error.Message}"); }
+                }
                 if (msg.PlayerInventoryRevision > GetLastAcceptedPlayerRev(pid))
                 {
                     lastAcceptedPlayerInventoryRevision[pid] = msg.PlayerInventoryRevision;
                     runtime.Players.RebuildInventoryFromSnapshot(pid, msg.BackpackAfter, msg.HotbarAfter, msg.PlayerInventoryRevision);
                 }
-                runtime.log?.LogInfo($"[PICKUP-DESPAWN] peer={peer.PeerId} runtime=0x{rid.Value:X8} → Despawn + Rebuild shadow。");
+                runtime.log?.LogInfo($"[PICKUP-DESPAWN] peer={peer.PeerId} runtime=0x{rid.Value:X8} → Despawn + 主机本体{(hostRoot != null ? "已销毁" : "（无本体/持久物品）")} + Rebuild shadow。");
             }
             else
             {
