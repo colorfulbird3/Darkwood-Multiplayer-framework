@@ -24,30 +24,32 @@ internal static class DarkwoodDropPatch
         return true;
     }
 
-    // v0.9.2：客户端本地原版 Drop 完成后 → 生成 localDropToken + 捕获本地 DroppedItem + 上报 DropCommit（revision 单调）。
-    private static void Postfix(InvItemClass _item)
+    // v0.9.5：客户端原版 Drop 后经 __result 直取刚生成的掉落物（反编译确认 spawnDroppedInvItem 返回其 Transform；
+    // 之前用 FindObjectsOfType 扫描捕获，扔掷物会因距离/标志错过 → DropCommit 0 条、对方看不见）。
+    private static void Postfix(InvItemClass _item, Transform __result)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
-        var player = Player.Instance;
-        if (TryCaptureSpawnedDropped(_item, player, out var captured))
+        if (runtime.IsHost)
         {
-            if (runtime.IsHost)
-            {
-                // Host 本地丢弃：原版对象已由 Host 运行时扫描注册并广播（RUNTIME-CHECK 生命周期）。
-                // 这里绝不再 World.DropItem 二次创建（否则同一丢弃物双份/复制）。
-                return;
-            }
-            runtime.SubmitDropCommit(captured, _item, player);
+            // Host 本地丢弃：原版对象由 Host 运行时扫描注册并广播（RUNTIME-CHECK 生命周期）。绝不二次创建。
             return;
         }
-        // 客户端：首帧未捕获到刚生成的掉落物 → 进重试队列（扔掷物可能飞出/延迟一帧可发现），≤1s 逐帧重试。
-        // Host：交由运行时扫描负责（其 Postfix 不再做任何创建/上报）。
-        if (runtime.IsClient)
+        var player = Player.Instance;
+        if (player == null || __result == null) return;
+        var inv = __result.GetComponent<Inventory>();
+        if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem))
         {
-            runtime.QueuePendingDropCapture(_item, player);
-            DarkwoodAdapterRuntime.LogMessage("[DROP] 首帧未捕获到原版掉落物，进入重试队列（Client，≤1s）。");
+            DarkwoodAdapterRuntime.LogMessage("[DROP] __result 掉落物 Inventory 无效，跳过 DropCommit。");
+            return;
         }
+        if (inv.slots[0].invItem.type != _item.type)
+        {
+            DarkwoodAdapterRuntime.LogMessage($"[DROP] __result 类型不符（{inv.slots[0].invItem.type} vs {_item.type}），跳过 DropCommit。");
+            return;
+        }
+        runtime.SubmitDropCommit(inv, _item, player);
+    }
     }
 
     /// <summary>扫描刚由 spawnDroppedInvItem 生成的本地掉落物（未入网、同类型、距玩家 ≤4m）。</summary>

@@ -37,23 +37,32 @@ internal static class DarkwoodMeleeAttackPatch
     }
 }
 
-/// <summary>Player-initiated door toggles run locally (trust model) and notify the host.</summary>
+/// <summary>
+/// Door 交互（v0.9.5 起 A 方案：Host 权威门）。
+/// 原：客户端本地先执行（信任模型）+ Postfix 通知 → 双端各自判定 blocked/播动画，被门内玩家挡时会分叉。
+/// 现：客户端不本地执行，只发 DoorInteract 意图；Host 唯一执行原版 openClose（真实碰撞统一判定 blocked）
+/// 并即时广播权威状态。Host 判定门被挡时原版自然不关闭 → 两端一致（等同于「门内有人就不操作」规则）。
+/// 未入网的门回退本地执行，避免卡交互。
+/// </summary>
 [HarmonyPatch]
 internal static class DarkwoodDoorTogglePatch
 {
     // Verified signature: public void Door.openClose(Transform openerTransform).
     private static MethodBase TargetMethod() => AccessTools.Method(typeof(Door), "openClose", new[] { typeof(Transform) });
 
-    // FIX-011：联机信任模型（用户要求，类 MC）——客户端操作本地直接执行，
-    // 不再等待主机批准；请求仅作为主机侧状态同步与广播的凭据。
-    private static void Postfix(Door __instance, Transform openerTransform)
+    private static bool Prefix(Door __instance, Transform openerTransform)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready)
-            return;
+            return true;
         if (openerTransform == null || openerTransform.GetComponent<Player>() != Player.Instance)
-            return;
-        runtime.TryRequestDoorToggle(__instance);
+            return true; // 非本机玩家触发的 openClose（如 AI/动画）保持原版
+        // A 方案：本地不执行；发意图由 Host 唯一裁决并广播。
+        if (runtime.TryRequestDoorToggle(__instance))
+            return false;
+        // 未入网（异常门）：回退本地执行避免卡交互。
+        DarkwoodAdapterRuntime.LogMessage("[DOOR] 门未注册 EntityId，回退本地执行。");
+        return true;
     }
 }
 
