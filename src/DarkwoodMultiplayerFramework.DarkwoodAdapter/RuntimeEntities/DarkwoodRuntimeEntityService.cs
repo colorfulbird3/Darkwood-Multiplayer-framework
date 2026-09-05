@@ -412,7 +412,23 @@ public sealed class DarkwoodRuntimeEntityService
                         go = global::Core.AddPrefab(prefabName, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
                     if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
                     dropped = go.GetComponent<Inventory>();
-                    if (dropped == null) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无 Inventory 组件：{spawn.PrototypeId}。"); return; }
+                    if (dropped == null)
+                    {
+                        // r18 诊断：generic Items/DroppedItem 实例为何无根 Inventory（vanilla 同 AddPrefab 后直接取得到）——
+                        // 打印 go 结构与子级 Inventory，决定正确创建路径。
+                        try
+                        {
+                            var sb = new System.Text.StringBuilder();
+                            foreach (var c in go.GetComponentsInChildren<Component>(true)) { if (sb.Length > 1200) break; sb.Append(c.GetType().Name).Append(','); }
+                            var invChild = go.GetComponentInChildren<Inventory>(true);
+                            runtime.log?.LogWarning($"掉落物镜像根无 Inventory：{spawn.PrototypeId} name={go.name} active={go.activeSelf} parent={(go.transform.parent != null ? go.transform.parent.name : "null")} childInv={(invChild != null ? "有:" + invChild.name : "无")} comps=[{sb}]");
+                        }
+                        catch (Exception) { }
+                        // 兜底：Inventory 挂在子对象时仍可复用（vanilla 拾取/填充都作用于根——若仅子级存在则属异常 prefab，仍销毁防 ghost）
+                        UnityEngine.Object.Destroy(go);
+                        runtime.log?.LogWarning($"掉落物镜像无 Inventory 组件：{spawn.PrototypeId}。");
+                        return;
+                    }
                     if (spawn.InitialState.Length > 0)
                     {
                         var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
