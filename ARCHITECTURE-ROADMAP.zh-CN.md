@@ -1,6 +1,6 @@
 # Darkwood Multiplayer Framework — 架构路线图
 
-> 状态记录至：0.8.9.3-pre.1（2026-08-29；Trusted Client 迁移后尚未真机验收）
+> 状态记录至：0.8.9.4-pre.1（2026-09-06；wire 升级：实体状态多 typed payload bundle（World Object State Bundle），Phase 1-2 代码完成、三层代码闸门绿，真机待验）
 
 ## v0.9.0 Multiplayer Architecture（正式命名）
 
@@ -15,7 +15,7 @@
 
 | 项 | 值 |
 |---|---|
-| 当前发布版本 | **0.8.9.3-pre.1**（0.8.9.2 起 Trusted Client 迁移落地：Inventory/Cursor 本地原版执行 + 四类 Commit（InventoryCommit/ContainerCommit/PickupCommit/DropCommit）+ 玩家背包 revision 自有；Build Identity 构建自动化；游戏内双实例 TestHarness 装置；回环自测通过，**真机双端未验收**） |
+| 当前发布版本 | **0.8.9.4-pre.1**（本地 wire 迭代：实体状态 = EntityStatePayload[] 多 typed bundle；owner-binding 捕获/应用（Generator fuel/Light 等复合对象全 typed 同步）Phase 1-2 完成；companion dd8684b/af6003f；**真机双端未验收**） |
 | 进行中 | **0.9.0 — Trusted Client + Host World Authority**（beta.8/9 内部迭代已完成：客户端交互 Replay 原版；HeldToContainer 双向容器；StatefulObjectSync（Generator/Light/BearTrap）；背包 revision 防漂移；拾取直进背包；正式发布封装 0.9.0） |
 | 集成验证 | beta.9：构建 0 错 / Unit 50/50 / SelfTests 85/85 / 回环通过（含 INV-BOOTSTRAP B 回归 PASS） |
 | 权威模型 | **Hybrid Authority / Trust Mode**：Client 不持有 Authority，但可在 Host Accepted 后于 `AuthorityReplayScope` 内**直接执行 Darkwood 原版 interaction 方法**（grabItem/placeItem/...）——"不拥有 Authority" ≠ "不执行原版 interaction code"。 |
