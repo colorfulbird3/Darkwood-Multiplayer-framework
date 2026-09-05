@@ -275,6 +275,19 @@ public sealed partial class DarkwoodAdapterRuntime
             log?.LogInfo($"[WORLD-INTERACT] id=0x{id.Value:X8} peer={peer} interaction={payload.Interaction} localBefore={hostBefore} requested={payload.Interaction} hostBefore={hostBefore} hostAfter={hostAfter} broadcastRevision={broadcastRev}");
             log?.LogInfo($"[GENERATOR] id={id.Value:X8} peer={peer} interaction={payload.Interaction} → running={g.isOn} fuel={g.fuel:F0}（Host 原版 turnOn/turnOff 已执行）");
             BroadcastStateNow(id);
+            // 电源网络即时性：发电机驱动的灯/受电 Item（powerItems）逐个即时广播，
+            // 否则它们要等 ≤1s 的周期 typed 捕获（客户端灯会明显滞后/像没反应）。
+            try
+            {
+                var powered = 0;
+                foreach (var pitem in g.powerItems)
+                {
+                    if (pitem == null) continue;
+                    if (replication.TryGetId(pitem, out var lampId)) { BroadcastStateNow(lampId); powered++; }
+                }
+                if (powered > 0) log?.LogInfo($"[GENERATOR] 电源网络即时广播 {powered} 个受电 Item（id={id.Value:X8}）。");
+            }
+            catch (Exception error) { log?.LogWarning($"[GENERATOR] powerItems 即时广播失败（不影响主状态）：{error.Message}"); }
         }
         else
         {

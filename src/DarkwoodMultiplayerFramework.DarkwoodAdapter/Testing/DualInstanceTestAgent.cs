@@ -143,6 +143,8 @@ public sealed class DualInstanceTestAgent
 
     public void Finish(string result, string reason)
     {
+        // 终态守卫：Complete 回声（peer 收到 Complete 又回发）会形成指数嵌套；已终结即忽略。
+        if (!string.IsNullOrEmpty(Result.Result)) return;
         Result.Result = result;
         Result.FailReason = reason;
         Result.DurationMs = (long)(DateTime.UtcNow - Result.StartedUtc).TotalMilliseconds;
