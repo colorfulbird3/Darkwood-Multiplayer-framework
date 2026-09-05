@@ -379,7 +379,7 @@ public sealed class DarkwoodRuntimeEntityService
                             if (existing.invType != Inventory.InvType.itemInv && existing.invType != Inventory.InvType.deathDrop) continue;
                             if (existing.slots == null || existing.slots.Count == 0 || InvItemClass.isNull(existing.slots[0].invItem)) continue;
                             if (existing.slots[0].invItem.type != authoritativeType) continue;
-                            if (Vector3.Distance(existing.transform.position, new Vector3(spawn.X, spawn.Y, spawn.Z)) > 2f) continue;
+                            if (Vector3.Distance(existing.transform.position, new Vector3(spawn.X, spawn.Y, spawn.Z)) > 6f) continue;
                             if (runtime.replication.TryGetId(existing, out _)) continue;
                             dropped = existing; go = existing.gameObject; adopted = true;
                             break;

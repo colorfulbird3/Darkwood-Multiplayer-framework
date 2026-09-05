@@ -47,9 +47,7 @@ public static class WorldActions
                 else if (!on && g.isOn) g.turnOff();
             }
             catch (Exception error) { runtime?.log?.LogWarning($"[ACTION] gen replay 执行失败：{error.Message}"); }
-            // 灯可见性镜像（v0.9.0 修）：原版灯亮/灭由 ItemLight.light.gameObject.SetActive + Item.turnOn/turnOff +
-            // Controller.updateLogicLights 决定（不是 light.enabled）。发电机 turnOn 只 restorePower（强度渐变），
-            // 这里按主机最终状态对每盏受电灯强制走原版可见路径，保证客户端灯真正亮/灭。
+            // 灯可见性镜像（v0.9.1 修正）：即时 SetActive，不碰 powerUp/powerDown 渐变；不改灯 isOn 语义。
             try
             {
                 var items = g.powerItems;
@@ -59,19 +57,34 @@ public static class WorldActions
                     {
                         var it = items[i];
                         if (it == null || !it.isLight) continue;
+                        var il = it.itemLight;
                         try
                         {
-                            if (on)
+                            if (on && it.isOn)
                             {
                                 it.restorePower();
-                                if (it.itemLight != null && it.itemLight.light != null && it.itemLight.light.gameObject != null)
+                                if (il != null)
                                 {
-                                    if (!it.itemLight.light.gameObject.activeSelf) it.itemLight.light.gameObject.SetActive(true);
-                                    // 亮度快照：跳过 powerUp 渐变动画（host 观感是即时亮）。
-                                    it.itemLight.destLightIntensity = it.itemLight.lightIntensity;
+                                    il.destLightIntensity = il.lightIntensity;
+                                    if (il.light != null)
+                                    {
+                                        il.light.enabled = true;
+                                        if (!il.light.gameObject.activeSelf) il.light.gameObject.SetActive(true);
+                                    }
                                 }
                             }
-                            else it.powerDown();
+                            else if (!on)
+                            {
+                                if (il != null)
+                                {
+                                    il.destLightIntensity = 0f;
+                                    if (il.light != null)
+                                    {
+                                        il.light.enabled = false;
+                                        if (il.light.gameObject.activeSelf) il.light.gameObject.SetActive(false);
+                                    }
+                                }
+                            }
                         }
                         catch (Exception) { }
                     }
