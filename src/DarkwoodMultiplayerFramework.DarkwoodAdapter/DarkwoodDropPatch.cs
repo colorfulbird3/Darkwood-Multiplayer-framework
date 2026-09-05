@@ -34,14 +34,14 @@ internal static class DarkwoodDropPatch
         {
             // v0.9.0 修：Host 本地丢弃→立即注册+广播（不等 5 秒扫描）；TryGetId 门防与扫描重复。
             if (__result == null) return;
-            var inv = __result.GetComponent<Inventory>();
-            if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) return;
+            var hostInv = __result.GetComponent<Inventory>();
+            if (hostInv == null || hostInv.slots == null || hostInv.slots.Count == 0 || InvItemClass.isNull(hostInv.slots[0].invItem)) return;
             try
             {
-                if (!runtime.replication.TryGetId(inv, out _))
+                if (!runtime.replication.TryGetId(hostInv, out _))
                 {
-                    var initialState = ReplicationProtocolCodec.Encode(runtime.replication.CaptureInventoryState(inv, 0));
-                    runtime.RuntimeEntities.RegisterAndBroadcastDroppedItem(inv, inv.transform.position, inv.transform.rotation, initialState);
+                    var initialState = ReplicationProtocolCodec.Encode(runtime.replication.CaptureInventoryState(hostInv, 0));
+                    runtime.RuntimeEntities.RegisterAndBroadcastDroppedItem(hostInv, hostInv.transform.position, hostInv.transform.rotation, initialState);
                 }
             }
             catch (Exception error) { runtime.log?.LogWarning($"[DROP] Host 即时注册失败：{error.Message}"); }
