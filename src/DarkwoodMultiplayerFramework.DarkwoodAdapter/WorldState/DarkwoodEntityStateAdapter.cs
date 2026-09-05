@@ -64,11 +64,19 @@ public static class DarkwoodEntityStateAdapter
         }
         else if (c is Item item)
         {
+            var oldPower = item.hasPower; var oldOn = item.isOn; var oldDestroyed = item.destroyed;
             item.destroyed = Flag(s.Flags, 0); item.health = Mathf.RoundToInt(s.Health); item.invItemAmount = s.StateA; item.hasPower = Flag(s.Flags, 2); item.searched = Flag(s.Flags, 3);
             // P0（World State Adapter）：幂等 isOn——禁止 switchMe()（toggle 语义会在重复包间反复翻转视觉）。
             // 直接赋值 + 原版 Item.Update 读状态驱动视觉；typed adapter（BearTrap 等）负责补充真实字段。
             item.isOn = Flag(s.Flags, 1);
             if (immediate) { item.transform.position = p; item.transform.rotation = q; } item.gameObject.SetActive(Flag(s.Flags, 4));
+            // 灯链路详查：受电灯 hasPower/isOn 变化与 ItemLight 实际点亮状态（客户端灯问题定位）。
+            if ((item.hasPower != oldPower || item.isOn != oldOn) && IsLikelyLamp(item.name))
+            {
+                bool lightEnabled = false;
+                try { var il = item.GetComponentInChildren<ItemLight>(true); lightEnabled = il != null && il.light != null && il.light.enabled; } catch (Exception) { }
+                DarkwoodAdapterRuntime.LogMessage($"[LAMP-APPLY] {item.name} hasPower {oldPower}→{item.hasPower} isOn {oldOn}→{item.isOn} destroyed {oldDestroyed}→{item.destroyed} itemLightEnabled={lightEnabled}");
+            }
         }
     }
 
@@ -130,6 +138,12 @@ public static class DarkwoodEntityStateAdapter
     }
 
     public static byte Kind(Component c) => c is Character ? (byte)1 : c is Door ? (byte)2 : c is Window ? (byte)3 : c is Item ? (byte)4 : c is Inventory ? (byte)5 : (byte)0;
+    private static bool IsLikelyLamp(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        name = name.ToLowerInvariant();
+        return name.Contains("lamp") || name.Contains("bulb") || name.Contains("light") || name.Contains("lantern");
+    }
     public static byte Flags(bool a, bool b, bool c, bool d, bool e = false, bool f = false) => (byte)((a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) | (d ? 8 : 0) | (e ? 16 : 0) | (f ? 32 : 0));
     public static bool Flag(byte f, int bit) => (f & (1 << bit)) != 0;
 }

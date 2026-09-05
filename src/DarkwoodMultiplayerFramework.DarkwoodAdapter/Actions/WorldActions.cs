@@ -39,14 +39,36 @@ public static class WorldActions
         public void Replay(DarkwoodAdapterRuntime runtime, Component target, byte[] param)
         {
             var g = FindGenerator(target);
-            if (g == null) return;
+            if (g == null) { runtime?.log?.LogWarning("[ACTION] gen replay: 目标无 Generator 组件"); return; }
             var on = param != null && param.Length > 0 && param[0] == 1;
             try
             {
                 if (on && !g.isOn) g.turnOn();
                 else if (!on && g.isOn) g.turnOff();
             }
-            catch (Exception) { }
+            catch (Exception error) { runtime?.log?.LogWarning($"[ACTION] gen replay 执行失败：{error.Message}"); }
+            // 详查：重放后本地电源网络状态（灯是否由本地 restorePower 点亮）。
+            try
+            {
+                var items = g.powerItems;
+                var lit = 0;
+                if (items != null)
+                {
+                    var names = new System.Text.StringBuilder();
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        var it = items[i];
+                        if (it == null) continue;
+                        var light = it.GetComponentInChildren<ItemLight>(true);
+                        if (names.Length > 0) names.Append(',');
+                        names.Append(it.name);
+                        if (light != null && light.light != null && light.light.enabled) lit++;
+                    }
+                    runtime?.log?.LogInfo($"[ACTION] gen replay 后 isOn={g.isOn} powerItems={items.Count} litItemLight={lit} names=[{names}]");
+                }
+                else runtime?.log?.LogInfo("[ACTION] gen replay 后 isOn=" + g.isOn + " powerItems=(null)");
+            }
+            catch (Exception error) { runtime?.log?.LogWarning($"[ACTION] gen replay 诊断失败：{error.Message}"); }
         }
     }
 

@@ -283,7 +283,13 @@ public sealed partial class DarkwoodAdapterRuntime
                 foreach (var pitem in g.powerItems)
                 {
                     if (pitem == null) continue;
-                    if (replication.TryGetId(pitem, out var lampId)) { BroadcastStateNow(lampId); powered++; }
+                    if (replication.TryGetId(pitem, out var lampId))
+                    {
+                        var lampLight = false;
+                        try { var il = pitem.GetComponentInChildren<ItemLight>(true); lampLight = il != null && il.light != null && il.light.enabled; } catch (Exception) { }
+                        log?.LogInfo($"[GEN-LAMP] {pitem.name} hasPower={pitem.hasPower} isOn={pitem.isOn} lightEnabled={lampLight}");
+                        BroadcastStateNow(lampId); powered++;
+                    }
                 }
                 if (powered > 0) log?.LogInfo($"[GENERATOR] 电源网络即时广播 {powered} 个受电 Item（id={id.Value:X8}）。");
             }
