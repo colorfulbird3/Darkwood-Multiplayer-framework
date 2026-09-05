@@ -783,7 +783,8 @@ public sealed partial class DarkwoodAdapterRuntime
         var interact=ReplicationProtocolCodec.DecodeInteract(request.Payload);
         item.isOn = interact.ValueA != 0;
         AcceptInteract(peer,request,id,item,0);
-        log?.LogInfo($"主机已应用物品开关 {request.RequestId}：玩家 {peer}，物品 {id}，isOn={item.isOn}。");
+        var gen = component.GetComponentInChildren<Generator>(true);
+        log?.LogInfo($"主机已应用物品开关 {request.RequestId}：玩家 {peer}，物品 {id} name={item.name} isOn={item.isOn} isGenerator={gen != null}。{(gen != null ? "[GEN-INFO] ItemActivate 报告的发电机开关，主机未执行原版 turnOn/turnOff（半迁移断层）。" : "")}");
     }
 
     private void AcceptInteract(int peer,ActionRequestMessage request,EntityId id,Component target,ulong revision)

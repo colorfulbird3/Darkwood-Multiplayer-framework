@@ -122,7 +122,11 @@ public sealed partial class DarkwoodAdapterRuntime
     [System.Obsolete("Legacy authority path; not used in Trusted Client mode (P0-12).")]
     public bool TryRequestStateObjectInteract(EntityId id, string interaction)
     {
-        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive) return false;
+        if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready || !IsMultiplayerActive)
+        {
+            log?.LogWarning($"[INTENT] state-object interact 被拦截：id={id} interaction={interaction} state={clientSession?.Session.Lifecycle.State} active={IsMultiplayerActive}");
+            return false;
+        }
         var payload = new StateObjectIntentPayload(interaction);
         var request = new ActionRequestMessage(Guid.NewGuid(), clientSession.PeerId, ActionKindWire.StateObjectInteract, id.Value, id.IsPersistent, 0, ReplicationProtocolCodec.Encode(payload));
         pendingActions[request.RequestId] = request;

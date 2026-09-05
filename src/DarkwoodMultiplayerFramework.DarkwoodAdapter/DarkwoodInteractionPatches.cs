@@ -94,10 +94,14 @@ internal static class DarkwoodItemActivatePatch
         if (!__state) return true;
         // 阶段二：发电机——客户端绝不先执行原版 activate（会本地 isOn=true + 本地电源/drain 模拟）。
         // 改为 StateObjectInteract intent → Host 执行原版 turnOn/turnOff → 即时广播权威状态 → 客户端 adapter Apply。
-        if (runtime != null && __instance != null && __instance.GetComponent<Generator>() != null)
+        // 用 GetComponentInChildren 兜底：Generator 组件若挂在 Item 所在 GO 的子物体上，自身上取不到会漏拦截。
+        var generator = __instance != null ? (__instance.GetComponent<Generator>() ?? __instance.GetComponentInChildren<Generator>(true)) : null;
+        if (generator != null)
         {
-            if (runtime.replication.TryGetId(__instance, out var genId))
-                runtime.TryRequestStateObjectInteract(genId, "toggle");
+            var hasId = runtime.replication.TryGetId(__instance, out var genId);
+            DarkwoodAdapterRuntime.LogMessage($"[GEN-INTERCEPT] item={__instance.name} generator={generator.name} hasEntityId={hasId}{(hasId ? $" id={genId}" : "")}");
+            if (hasId) runtime.TryRequestStateObjectInteract(genId, "toggle");
+            else DarkwoodAdapterRuntime.LogMessage("[GEN-INTERCEPT] 该发电机无注册 EntityId——无法走意图链路（跳过原版，避免本地双写）。");
             __state = false; // 不执行原版、不上报
             return false;
         }
