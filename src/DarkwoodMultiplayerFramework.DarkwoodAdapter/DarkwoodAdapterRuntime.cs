@@ -34,7 +34,6 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     private bool quitting;
     public bool IsQuitting => quitting;
     private void OnApplicationQuit() { quitting = true; }
-    private void OnDestroy() { quitting = true; }
     long IMultiplayerRuntimeHost.ServerTick => serverTick;
     DarkwoodEntityReplication IMultiplayerRuntimeHost.Replication => replication;
     DarkwoodPlayerService IMultiplayerRuntimeHost.Players => Players;
