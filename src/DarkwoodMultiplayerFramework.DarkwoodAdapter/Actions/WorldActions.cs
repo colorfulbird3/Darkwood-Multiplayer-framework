@@ -47,6 +47,34 @@ public static class WorldActions
                 else if (!on && g.isOn) g.turnOff();
             }
             catch (Exception error) { runtime?.log?.LogWarning($"[ACTION] gen replay 执行失败：{error.Message}"); }
+            // 灯可见性镜像（v0.9.0 修）：原版灯亮/灭由 ItemLight.light.gameObject.SetActive + Item.turnOn/turnOff +
+            // Controller.updateLogicLights 决定（不是 light.enabled）。发电机 turnOn 只 restorePower（强度渐变），
+            // 这里按主机最终状态对每盏受电灯强制走原版可见路径，保证客户端灯真正亮/灭。
+            try
+            {
+                var items = g.powerItems;
+                if (items != null)
+                {
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        var it = items[i];
+                        if (it == null || !it.isLight) continue;
+                        try
+                        {
+                            if (on)
+                            {
+                                it.restorePower();
+                                if (it.itemLight != null && it.itemLight.light != null && it.itemLight.light.gameObject != null && !it.itemLight.light.gameObject.activeSelf)
+                                    it.itemLight.light.gameObject.SetActive(true);
+                            }
+                            else it.powerDown();
+                        }
+                        catch (Exception) { }
+                    }
+                    try { if (Singleton<Controller>.Instance != null) Singleton<Controller>.Instance.updateLogicLights(); } catch (Exception) { }
+                }
+            }
+            catch (Exception) { }
             // 详查：重放后本地电源网络状态（灯是否由本地 restorePower 点亮）。
             try
             {
