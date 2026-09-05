@@ -15,6 +15,13 @@ namespace DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions;
 /// </summary>
 public sealed class ActionSyncManager
 {
+    /// <summary>ActionKey 分配表（新动作在此登记）。</summary>
+    public static class Keys
+    {
+        public const byte GeneratorToggle = 1; // A1：发电机 on/off（Replay = 原版 turnOn/turnOff，本地电源给灯供电）
+        public const byte DoorToggle = 2;      // A4：门开/关（Replay = 原版 openClose）
+    }
+
     /// <summary>一种世界对象动作：Host 唯一执行 + 各端 Replay（副作用重放）。</summary>
     public interface IWorldObjectAction
     {
@@ -88,6 +95,18 @@ public sealed class ActionSyncManager
         catch (Exception error) { runtime.log?.LogWarning($"[ACTION] Replay 失败 key={message.ActionKey} id={id}: {error.Message}"); }
         finally { runtime.replication.EndRemoteApply(); }
         runtime.log?.LogInfo($"[ACTION] Replay 完成 key={message.ActionKey} id={id} tick={message.Tick}");
+        return true;
+    }
+
+    /// <summary>Host 已在原地执行完副作用（inline 路径）时，只负责广播 ActionExecuted 让各端 Replay。</summary>
+    public bool BroadcastExecuted(DarkwoodAdapterRuntime runtime, EntityId id, byte actionKey, byte[] param, int actorId = 0)
+    {
+        if (runtime == null || !runtime.IsHost) return false;
+        if (!actions.ContainsKey(actionKey)) { runtime.log?.LogWarning($"[ACTION] 广播未注册 key={actionKey}（跳过）。"); return false; }
+        var tick = runtime.replication.AllocateRevision();
+        var payload = ReplicationProtocolCodec.Encode(new ActionExecutedMessage(id.Value, id.IsPersistent, actionKey, param, (long)tick, actorId));
+        foreach (var pid in runtime.ReadyPeersSnapshot) runtime.Queue(pid, ProtocolMessageType.ActionExecuted, payload);
+        runtime.log?.LogInfo($"[ACTION] Host 广播 key={actionKey} id={id} tick={tick} peers={runtime.ReadyPeersSnapshot.Length}");
         return true;
     }
 

@@ -34,6 +34,7 @@ var tests = new (string Name, Action Run)[]
     ("world event name bounds", WorldEventNameBounds),
     ("action executed roundtrip", ActionExecutedRoundtrip),
     ("action executed param bounds", ActionExecutedParamBounds),
+    ("remove world item roundtrip", RemoveWorldItemRoundtrip),
     ("inventory state roundtrip", InventoryStateRoundtrip),
     ("player pose roundtrip", PlayerPoseRoundtrip),
     ("action request roundtrip", ActionRequestRoundtrip),
@@ -225,6 +226,11 @@ static void ActionExecutedRoundtrip()
 static void ActionExecutedParamBounds()
 {
     ExpectFailure(() => ReplicationProtocolCodec.Encode(new ActionExecutedMessage(1, true, 1, new byte[2049], 1, 0)));
+}
+static void RemoveWorldItemRoundtrip()
+{
+    var d = ReplicationProtocolCodec.DecodeRemoveWorldItem(ReplicationProtocolCodec.Encode(new RemoveWorldItemMessage(0x9876, true)));
+    Require(d.EntityValue == 0x9876 && d.Persistent);
 }
 static void InventoryStateRoundtrip()
 {

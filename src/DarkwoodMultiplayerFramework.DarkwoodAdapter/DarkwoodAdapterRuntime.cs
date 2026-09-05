@@ -324,6 +324,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         SaveState = new DarkwoodSaveTransferService(this);
         SyncHealth = new SyncHealthStats(this); // v0.9.2 P0-SYNC-HEALTH
         Actions = new Actions.ActionSyncManager(); // v0.9.0 Action Sync
+        DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.WorldActions.RegisterAll(Actions);
         World = new DarkwoodWorldAuthorityService(this, RuntimeEntities);
         Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;
@@ -355,6 +356,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Players.RemotePlayers.Tick();
         TickPendingLocalDrop(); // v0.9.0 Trusted Client Drop：临时本地对象超时清理
         TickPendingDropCaptureRetry(); // v0.9.2 修：DropCommit 首帧捕获失败的重试队列（≤1s）
+        TickRemovalReporter(); // v0.9.0 A3：客户端本地移除的持久世界物 → 上报 Host 销毁
         TickDirtyReport();      // v0.9：客户端本地原版交互 → 背包/容器快照节流上报
         SyncHealth.Tick();      // v0.9.2 P0-SYNC-HEALTH：每 5s 输出双方同步计数器
         TestAgent?.TickBootstrap(); // v0.9.2 BOOT-TEST-2: 状态机每帧推进

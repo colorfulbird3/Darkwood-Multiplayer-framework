@@ -288,6 +288,7 @@ public sealed partial class DarkwoodAdapterRuntime
                 if (powered > 0) log?.LogInfo($"[GENERATOR] 电源网络即时广播 {powered} 个受电 Item（id={id.Value:X8}）。");
             }
             catch (Exception error) { log?.LogWarning($"[GENERATOR] powerItems 即时广播失败（不影响主状态）：{error.Message}"); }
+            BroadcastAction(id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.GeneratorToggle, (byte)(g.isOn ? 1 : 0), peer);
         }
         else
         {
@@ -462,6 +463,55 @@ public sealed partial class DarkwoodAdapterRuntime
             catch (Exception) { }
             if (!ok && now < p.Until) pendingDropCaptures.Add(p); // 下一帧再试
         }
+    }
+
+    // v0.9.0 A3：客户端本地移除（拆夹子/回收部署物等，原版 Destroy 了持久绑定实体）→ 通知 Host 销毁其副本。
+    internal void HandleRemoveWorldItemRequest(int peer, Core.EntityId id)
+    {
+        if (!replication.TryGetComponent(id, out var component) || component == null || component.gameObject == null)
+        { log?.LogWarning($"[A3-REMOVE] peer={peer} 请求移除的实体已不存在 id={id}"); return; }
+        log?.LogInfo($"[A3-REMOVE] peer={peer} 请求移除持久世界物 id={id} name={component.name} → Host 销毁（权威 despawn 将广播）。");
+        try { UnityEngine.Object.Destroy(component.gameObject); }
+        catch (Exception error) { log?.LogWarning($"[A3-REMOVE] Host 销毁失败 id={id}: {error.Message}"); }
+    }
+    internal void ReportLocalRemoval(Core.EntityId id)
+    {
+        if (clientSession == null || clientSession.Session.Lifecycle.State != ConnectionState.Ready) return;
+        try
+        {
+            clientSession.Send(ProtocolMessageType.RemoveWorldItem, ReplicationProtocolCodec.Encode(new RemoveWorldItemMessage(id.Value, id.IsPersistent)));
+            log?.LogInfo($"[A3-REMOVE] 客户端本地已移除持久实体，上报 Host：id={id}");
+        }
+        catch (Exception error) { log?.LogWarning($"[A3-REMOVE] 上报失败 id={id}: {error.Message}"); }
+    }
+
+    // v0.9.0 A3：客户端检测「本地真正被 Destroy 的持久绑定实体」（Unity 对象已销毁但尚未收到 Host despawn）→ 上报一次。
+    private float nextRemovalScan;
+    private readonly HashSet<long> reportedRemoval = new HashSet<long>();
+    internal void TickRemovalReporter()
+    {
+        if (!IsClient || clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
+        if (Time.unscaledTime < nextRemovalScan) return;
+        nextRemovalScan = Time.unscaledTime + 1f;
+        foreach (var pair in replication.EntitySnapshot())
+        {
+            if (!pair.Key.IsPersistent) continue;
+            var gone = false;
+            try { gone = pair.Value == null || pair.Value.gameObject == null; } catch { gone = true; }
+            if (!gone) continue;
+            var key = unchecked((long)pair.Key.Value);
+            if (reportedRemoval.Contains(key)) continue;
+            if (reportedRemoval.Count > 512) reportedRemoval.Clear();
+            reportedRemoval.Add(key);
+            ReportLocalRemoval(pair.Key);
+        }
+    }
+
+    // v0.9.0 A1/A4：Host 已 inline 执行原版后的 Action 广播（客户端 Replay 副作用）。
+    private void BroadcastAction(Core.EntityId id, byte actionKey, byte param0, int actorId)
+    {
+        try { Actions?.BroadcastExecuted(this, id, actionKey, new[] { param0 }, actorId); }
+        catch (Exception error) { log?.LogWarning($"[ACTION] 广播失败 key={actionKey} id={id}: {error.Message}"); }
     }
 
     // v0.9.2：客户端玩家背包 revision 单调递增（Client 自有 Owner，Host 仅门控 incoming > last）
@@ -772,6 +822,7 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!Players.TryGetRemotePosition(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
         // FIX-011：信任模型——距离/版本/封板判断全部移除，客户端本地已执行，主机直接执行并广播。
         door.openClose(Combat.GetAttackAnchor(peer,pose).transform);
+        BroadcastAction(id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.DoorToggle, (byte)(door.opened ? 1 : 0), peer);
         AcceptInteract(peer,request,id,door,0);
         log?.LogInfo($"主机已批准开关门 {request.RequestId}：玩家 {peer}，门 {id}。");
     }

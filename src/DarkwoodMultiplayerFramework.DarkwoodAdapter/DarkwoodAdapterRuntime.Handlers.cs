@@ -220,7 +220,7 @@ public sealed partial class DarkwoodAdapterRuntime
         public HostCommitHandlers(DarkwoodAdapterRuntime runtime) => this.runtime = runtime;
 
         public bool Handles(ProtocolMessageType type) =>
-            runtime.IsHost && (type == ProtocolMessageType.InventoryCommit || type == ProtocolMessageType.InventoryTransactionCommit || type == ProtocolMessageType.ContainerCommit || type == ProtocolMessageType.PickupCommit || type == ProtocolMessageType.DropCommit);
+            runtime.IsHost && (type == ProtocolMessageType.InventoryCommit || type == ProtocolMessageType.InventoryTransactionCommit || type == ProtocolMessageType.ContainerCommit || type == ProtocolMessageType.PickupCommit || type == ProtocolMessageType.DropCommit || type == ProtocolMessageType.RemoveWorldItem);
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -231,6 +231,11 @@ public sealed partial class DarkwoodAdapterRuntime
                 else if (envelope.MessageType == ProtocolMessageType.ContainerCommit) HandleContainerCommitLegacy(peer, ReplicationProtocolCodec.DecodeContainerCommit(envelope.Payload));
                 else if (envelope.MessageType == ProtocolMessageType.PickupCommit) HandlePickupCommit(peer, ReplicationProtocolCodec.DecodePickupCommit(envelope.Payload));
                 else if (envelope.MessageType == ProtocolMessageType.DropCommit) HandleDropCommit(peer, ReplicationProtocolCodec.DecodeDropCommit(envelope.Payload));
+                else if (envelope.MessageType == ProtocolMessageType.RemoveWorldItem)
+                {
+                    var m = ReplicationProtocolCodec.DecodeRemoveWorldItem(envelope.Payload);
+                    runtime.HandleRemoveWorldItemRequest(peer.PeerId, new Core.EntityId(m.EntityValue, m.Persistent));
+                }
             }
             catch (Exception error) { runtime.log?.LogWarning($"[COMMIT] handle failed peer={peer.PeerId} type={envelope.MessageType}: {error.Message}"); }
         }

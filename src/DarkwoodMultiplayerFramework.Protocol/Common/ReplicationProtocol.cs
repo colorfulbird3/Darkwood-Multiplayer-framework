@@ -199,6 +199,8 @@ public static class ReplicationProtocolCodec
     private const int MaxActionParam = 2048;
     public static byte[] Encode(ActionExecutedMessage m)=>Write(w=>{w.Write(m.EntityValue);w.Write(m.Persistent);w.Write(m.ActionKey);WriteBytes(w,m.Param,MaxActionParam);w.Write(m.Tick);w.Write(m.ActorId);});
     public static ActionExecutedMessage DecodeActionExecuted(byte[] p)=>Read(p,r=>new ActionExecutedMessage(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),ReadBytes(r,MaxActionParam),r.ReadInt64(),r.ReadInt32()));
+    public static byte[] Encode(RemoveWorldItemMessage m)=>Write(w=>{w.Write(m.EntityValue);w.Write(m.Persistent);});
+    public static RemoveWorldItemMessage DecodeRemoveWorldItem(byte[] p)=>Read(p,r=>new RemoveWorldItemMessage(r.ReadUInt64(),r.ReadBoolean()));
     private static void GuardUtf8(string s, int maxBytes, string what)
     {
         if (s != null && System.Text.Encoding.UTF8.GetByteCount(s) > maxBytes) throw new InvalidOperationException(what + " too long.");
