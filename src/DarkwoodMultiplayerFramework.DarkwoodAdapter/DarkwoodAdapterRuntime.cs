@@ -31,6 +31,10 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     public int[] ReadyPeersSnapshot { get { lock (readyPeers) return readyPeers.ToArray(); } }
     // v0.9.0 Action Sync（三分法）：Host 执行副作用 → 广播 → 各端 Replay 的收口管理器。
     public Actions.ActionSyncManager? Actions { get; private set; }
+    private bool quitting;
+    public bool IsQuitting => quitting;
+    private void OnApplicationQuit() { quitting = true; }
+    private void OnDestroy() { quitting = true; }
     long IMultiplayerRuntimeHost.ServerTick => serverTick;
     DarkwoodEntityReplication IMultiplayerRuntimeHost.Replication => replication;
     DarkwoodPlayerService IMultiplayerRuntimeHost.Players => Players;
@@ -349,7 +353,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     public void Update()
     {
-        if (UnityEngine.Application.isQuitting) return; // 退出阶段不再执行任何每帧调度（防关闭卡死）
+        if (quitting) return; // 退出阶段不再执行任何每帧调度（防关闭卡死）
         PollHotkeys();
         try { hostSession?.Tick(); clientSession?.Tick(); }
         catch (Exception error) { FailClient("TRANSPORT_TICK_FAILED",error); }
