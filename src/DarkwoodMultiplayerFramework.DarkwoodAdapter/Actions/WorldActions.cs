@@ -64,8 +64,12 @@ public static class WorldActions
                             if (on)
                             {
                                 it.restorePower();
-                                if (it.itemLight != null && it.itemLight.light != null && it.itemLight.light.gameObject != null && !it.itemLight.light.gameObject.activeSelf)
-                                    it.itemLight.light.gameObject.SetActive(true);
+                                if (it.itemLight != null && it.itemLight.light != null && it.itemLight.light.gameObject != null)
+                                {
+                                    if (!it.itemLight.light.gameObject.activeSelf) it.itemLight.light.gameObject.SetActive(true);
+                                    // 亮度快照：跳过 powerUp 渐变动画（host 观感是即时亮）。
+                                    it.itemLight.destLightIntensity = it.itemLight.lightIntensity;
+                                }
                             }
                             else it.powerDown();
                         }

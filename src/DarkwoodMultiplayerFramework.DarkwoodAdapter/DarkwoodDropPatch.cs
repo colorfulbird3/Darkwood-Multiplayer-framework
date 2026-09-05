@@ -32,7 +32,19 @@ internal static class DarkwoodDropPatch
         if (runtime == null || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
         if (runtime.IsHost)
         {
-            // Host 本地丢弃：原版对象由 Host 运行时扫描注册并广播（RUNTIME-CHECK 生命周期）。绝不二次创建。
+            // v0.9.0 修：Host 本地丢弃→立即注册+广播（不等 5 秒扫描）；TryGetId 门防与扫描重复。
+            if (__result == null) return;
+            var inv = __result.GetComponent<Inventory>();
+            if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) return;
+            try
+            {
+                if (!runtime.replication.TryGetId(inv, out _))
+                {
+                    var initialState = ReplicationProtocolCodec.Encode(runtime.replication.CaptureInventoryState(inv, 0));
+                    runtime.RuntimeEntities.RegisterAndBroadcastDroppedItem(inv, inv.transform.position, inv.transform.rotation, initialState);
+                }
+            }
+            catch (Exception error) { runtime.log?.LogWarning($"[DROP] Host 即时注册失败：{error.Message}"); }
             return;
         }
         var player = Player.Instance;
