@@ -30,39 +30,53 @@ internal static class DarkwoodDropPatch
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null || runtime.State != ConnectionState.Ready || InvItemClass.isNull(_item)) return;
         var player = Player.Instance;
-        Inventory? captured = null;
-        if (player != null)
+        if (TryCaptureSpawnedDropped(_item, player, out var captured))
         {
-            var origin = player._transform.position;
-            try
+            if (runtime.IsHost)
             {
-                foreach (var itemObj in UnityEngine.Object.FindObjectsOfType<Item>(false))
-                {
-                    if (itemObj == null || !itemObj.isDroppedItem) continue;
-                    if (runtime.replication.TryGetId(itemObj, out _)) continue;
-                    var inv = DarkwoodDroppedItemAccessor.GetInventory(itemObj);
-                    if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) continue;
-                    if (inv.slots[0].invItem.type != _item.type) continue;
-                    if (Vector3.Distance(itemObj.transform.position, origin) > 4f) continue;
-                    captured = inv; break;
-                }
+                var payload = BuildPayload(_item);
+                if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
+                    runtime.World.DropItem(0, payload, default, (_, _, _, _) => { });
+                return;
             }
-            catch (Exception) { }
+            runtime.SubmitDropCommit(captured, _item, player);
+            return;
         }
-        if (captured == null)
+        // 首帧未捕获到刚生成的掉落物：进重试队列（掉落物可能延迟一帧注册/可发现），1s 内逐帧重试。
+        if (runtime.IsClient)
+        {
+            runtime.QueuePendingDropCapture(_item, player);
+            DarkwoodAdapterRuntime.LogMessage("[DROP] 首帧未捕获到原版掉落物，进入重试队列（≤1s）。");
+        }
+        else
         {
             DarkwoodAdapterRuntime.LogMessage("[DROP] 本地原版 spawnDroppedInvItem 后未捕获到对象（诡异）；跳过 DropCommit。");
-            return;
         }
-        if (runtime.IsHost)
+    }
+
+    /// <summary>扫描刚由 spawnDroppedInvItem 生成的本地掉落物（未入网、同类型、距玩家 ≤4m）。</summary>
+    internal static bool TryCaptureSpawnedDropped(InvItemClass _item, Player player, out Inventory captured)
+    {
+        captured = null;
+        if (InvItemClass.isNull(_item) || player == null) return false;
+        var runtime = DarkwoodAdapterRuntime.Instance;
+        if (runtime == null) return false;
+        var origin = player._transform.position;
+        try
         {
-            var payload = BuildPayload(_item);
-            if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
-                runtime.World.DropItem(0, payload, default, (_, _, _, _) => { });
-            return;
+            foreach (var itemObj in UnityEngine.Object.FindObjectsOfType<Item>(false))
+            {
+                if (itemObj == null || !itemObj.isDroppedItem) continue;
+                if (runtime.replication.TryGetId(itemObj, out _)) continue;
+                var inv = DarkwoodDroppedItemAccessor.GetInventory(itemObj);
+                if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) continue;
+                if (inv.slots[0].invItem.type != _item.type) continue;
+                if (Vector3.Distance(itemObj.transform.position, origin) > 4f) continue;
+                captured = inv; return true;
+            }
         }
-        // Client 玩家：发 DropCommit
-        runtime.SubmitDropCommit(captured, _item, player);
+        catch (Exception) { }
+        return false;
     }
 
     internal static DropItemPayload BuildPayload(InvItemClass item)

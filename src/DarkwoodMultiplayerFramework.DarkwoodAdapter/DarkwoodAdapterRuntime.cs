@@ -351,6 +351,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         PumpOutgoing();
         Players.RemotePlayers.Tick();
         TickPendingLocalDrop(); // v0.9.0 Trusted Client Drop：临时本地对象超时清理
+        TickPendingDropCaptureRetry(); // v0.9.2 修：DropCommit 首帧捕获失败的重试队列（≤1s）
         TickDirtyReport();      // v0.9：客户端本地原版交互 → 背包/容器快照节流上报
         SyncHealth.Tick();      // v0.9.2 P0-SYNC-HEALTH：每 5s 输出双方同步计数器
         TestAgent?.TickBootstrap(); // v0.9.2 BOOT-TEST-2: 状态机每帧推进

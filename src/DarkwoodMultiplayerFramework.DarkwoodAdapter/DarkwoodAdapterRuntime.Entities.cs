@@ -417,6 +417,36 @@ public sealed partial class DarkwoodAdapterRuntime
         // token 不主动超时；按 spawn 到达时复用；world-stable 注册后可清理
     }
 
+    // v0.9.2 修：DropCommit 捕获重试——原版掉落物首帧未被捕获时入队，逐帧重试 ≤1s（捕获后即上报）。
+    private readonly List<(InvItemClass Item, Player Player, float Until)> pendingDropCaptures = new List<(InvItemClass, Player, float)>();
+    internal void QueuePendingDropCapture(InvItemClass item, Player player)
+    {
+        if (InvItemClass.isNull(item) || player == null) return;
+        pendingDropCaptures.Add((item, player, Time.unscaledTime + 1.0f));
+    }
+    internal void TickPendingDropCaptureRetry()
+    {
+        if (pendingDropCaptures.Count == 0) return;
+        var now = Time.unscaledTime;
+        var retry = new List<(InvItemClass Item, Player Player, float Until)>(pendingDropCaptures);
+        pendingDropCaptures.Clear();
+        foreach (var p in retry)
+        {
+            var ok = false;
+            try
+            {
+                if (p.Player != null && p.Player.gameObject != null && now < p.Until && DarkwoodDropPatch.TryCaptureSpawnedDropped(p.Item, p.Player, out var captured))
+                {
+                    SubmitDropCommit(captured, p.Item, p.Player);
+                    log?.LogInfo($"[DROP] 重试捕获成功 → DropCommit 已上报（{p.Item.type}）。");
+                    ok = true;
+                }
+            }
+            catch (Exception) { }
+            if (!ok && now < p.Until) pendingDropCaptures.Add(p); // 下一帧再试
+        }
+    }
+
     // v0.9.2：客户端玩家背包 revision 单调递增（Client 自有 Owner，Host 仅门控 incoming > last）
     public int NextLocalInventoryRevision(int peer)
     {
