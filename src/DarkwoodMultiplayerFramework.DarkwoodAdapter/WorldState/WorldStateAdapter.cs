@@ -47,6 +47,7 @@ public static class WorldStateSchemas
 public sealed class WorldStateAdapterRegistry
 {
     private readonly List<IWorldStateAdapter> adapters = new List<IWorldStateAdapter>();
+    private readonly Dictionary<ushort, Type> componentTypes = new Dictionary<ushort, Type>();
     public void Register(IWorldStateAdapter adapter)
     {
         if (adapter == null) return;
@@ -60,5 +61,24 @@ public sealed class WorldStateAdapterRegistry
         foreach (var a in adapters) if (a.CanHandle(component)) return a;
         return null;
     }
+    /// <summary>按 schema id 找 adapter（多 payload 应用端/owner 捕获端用）。找不到返回 null。</summary>
+    public IWorldStateAdapter ResolveBySchema(ushort schema)
+    {
+        foreach (var a in adapters) if (a.SchemaId == schema) return a;
+        return null;
+    }
+    /// <summary>owner-binding：登记某 schema 的「复合对象组件类型」（如 Generator/Light 挂在 primary Item 所在 GameObject 上）。
+    /// 捕获端据此在绑定根上定位真实 typed 组件；应用端据此发现 apply 目标。</summary>
+    public void RegisterComponentType(ushort schema, Type componentType)
+    {
+        if (componentType == null) return;
+        componentTypes[schema] = componentType;
+    }
+    public Type ComponentTypeForSchema(ushort schema)
+    {
+        Type t;
+        return componentTypes.TryGetValue(schema, out t) ? t : null;
+    }
+    public IEnumerable<KeyValuePair<ushort, Type>> ComponentTypes => componentTypes;
     public IEnumerable<IWorldStateAdapter> All => adapters;
 }

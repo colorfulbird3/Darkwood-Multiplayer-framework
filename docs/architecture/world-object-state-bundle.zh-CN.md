@@ -1,7 +1,7 @@
 # World Object State Bundle —— 通用世界对象同步（owner-binding + 多 typed payload）
 
-> 状态：DESIGN / Phase 1（wire 模型）实现中 —— 对应规格「World Object Synchronization System：Object Registry + Adapter + State Snapshot/Event Sync」的架构落位，取代先前 PLANNNED 的 `docs/problems/world-state-owner-binding.md` 单点方案。
-> 基线：0.8.9.3-pre.1（companion commit 508c24d）。用户选定方向 A（2026-09-06）。
+> 状态：Phase 1（wire 模型）已提交（companion dd8684b，Framework 0.8.9.4-pre.1）；Phase 2（owner-binding 捕获/应用）代码已实现、build+SelfTests 绿（companion 里程碑提交后），**游戏内/真机待验**。对应规格「World Object Synchronization System」架构落位，取代先前 PLANNED 的 `docs/problems/world-state-owner-binding.md` 单点方案。
+> 基线：0.8.9.3-pre.1（companion commit 508c24d）→ wire 0.8.9.4-pre.1。用户选定方向 A（2026-09-06）。
 
 ## 1. 为什么不是「Furniture/家具」
 

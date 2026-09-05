@@ -334,6 +334,10 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         replication.Adapters.Register(new World.GenericItemStateAdapter());
         replication.Adapters.Register(new World.GeneratorStateAdapter());
         replication.Adapters.Register(new World.LightStateAdapter());
+        // owner-binding（Phase 2）：复合世界对象 typed 组件可能挂在 primary（多为 Item）所在 GameObject / 子物体上。
+        // 登记 schema → 组件类型，捕获端在绑定根上定位真实 typed 组件、应用端按 schema 发现 apply 目标。
+        replication.Adapters.RegisterComponentType(WorldStateSchemas.Generator, typeof(Generator));
+        replication.Adapters.RegisterComponentType(WorldStateSchemas.Light, typeof(ItemLight));
     }
 
     /// <summary>延迟停服（战斗服务的全员倒地结局回调）。</summary>

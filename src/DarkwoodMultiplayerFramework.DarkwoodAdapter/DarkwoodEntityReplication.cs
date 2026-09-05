@@ -17,6 +17,54 @@ public sealed class DarkwoodEntityReplication
     // 阶段二 Tick 分层：世界状态对象低频捕获（1Hz），事件即时广播（BroadcastStateNow）不受限。
     private static readonly HashSet<ushort> StateThrottledSchemas = new HashSet<ushort> { WorldStateSchemas.Generator, WorldStateSchemas.Light, WorldStateSchemas.BearTrap };
     private readonly Dictionary<EntityId,float> lastStateSync=new Dictionary<EntityId,float>(); private const float StateSyncIntervalSeconds=1f;
+    // ── owner-binding（Phase 2）：绑定根上的复合 typed 组件（Generator/Light 等）发现缓存 + 多 payload 捕获/应用 ──
+    private readonly Dictionary<EntityId, Component[]> ownerRefs = new Dictionary<EntityId, Component[]>();
+    private readonly Dictionary<EntityId, bool> ownerResolved = new Dictionary<EntityId, bool>();
+    private void ForgetOwnerRefs(EntityId id) { ownerRefs.Remove(id); ownerResolved.Remove(id); }
+    private Component[] ResolveOwnerComponents(EntityId id, Component primary)
+    {
+        if (ownerResolved.TryGetValue(id, out var done) && done) return ownerRefs.TryGetValue(id, out var list) ? list : Array.Empty<Component>();
+        var found = new List<Component>();
+        try
+        {
+            foreach (var pair in Adapters.ComponentTypes)
+            {
+                var typed = primary.GetComponentInChildren(pair.Value, true);
+                if (typed != null && !ReferenceEquals(typed, primary)) found.Add(typed);
+            }
+        }
+        catch (Exception) { /* 对象已销毁等一次性异常：本次当作无 owner 组件 */ }
+        ownerResolved[id] = true;
+        if (found.Count > 0) { ownerRefs[id] = found.ToArray(); return found.ToArray(); }
+        return Array.Empty<Component>();
+    }
+    /// <summary>捕获一个实体的全部 typed payload：primary adapter（仅当有非空数据，历史语义）+ 注册型 owner 组件（按 schema 去重）。</summary>
+    private EntityStatePayload[] CaptureStatePayloads(EntityId id, Component primary)
+    {
+        var payloads = new List<EntityStatePayload>();
+        var seen = new HashSet<ushort>();
+        try
+        {
+            var primaryAdapter = Adapters.Resolve(primary);
+            if (primaryAdapter != null && primaryAdapter.SchemaId != 0 && primaryAdapter.CanHandle(primary))
+            {
+                var extra = primaryAdapter.Capture(primary);
+                if (extra != null && extra.Length > 0) { payloads.Add(new EntityStatePayload(primaryAdapter.SchemaId, extra)); seen.Add(primaryAdapter.SchemaId); }
+            }
+            foreach (var owner in ResolveOwnerComponents(id, primary))
+            {
+                var adapter = Adapters.Resolve(owner);
+                if (adapter == null || adapter.SchemaId == 0 || seen.Contains(adapter.SchemaId)) continue;
+                var extra = adapter.Capture(owner);
+                if (extra != null && extra.Length > 0) { payloads.Add(new EntityStatePayload(adapter.SchemaId, extra)); seen.Add(adapter.SchemaId); }
+            }
+        }
+        catch (Exception) { /* 限频诊断交给外层；此处降级为无 typed payload（legacy 字段仍有效） */ }
+        return payloads.Count > 0 ? payloads.ToArray() : Array.Empty<EntityStatePayload>();
+    }
+    private static bool IsStateThrottled(EntityStatePayload[] payloads) { foreach (var p in payloads) if (StateThrottledSchemas.Contains(p.Schema)) return true; return false; }
+    private static EntityStateWire AttachPayloads(EntityStateWire baseWire, EntityStatePayload[] payloads)
+    { return payloads == null || payloads.Length == 0 ? baseWire : new EntityStateWire(baseWire.Value, baseWire.Persistent, baseWire.Kind, baseWire.X, baseWire.Y, baseWire.Z, baseWire.Qx, baseWire.Qy, baseWire.Qz, baseWire.Qw, baseWire.Health, baseWire.StateA, baseWire.StateB, baseWire.Flags, baseWire.Animation, baseWire.Frame, baseWire.Revision, payloads); }
     // P0-I（决策：AuthorityReplayScope 进入时也置 ApplyingRemote，防止 Replay 内原版交互再发 Intent）。
     public void BeginRemoteApply()=>ApplyingRemote=true;
     public void EndRemoteApply()=>ApplyingRemote=false;
@@ -59,7 +107,7 @@ public sealed class DarkwoodEntityReplication
         if(pendingAuthoritativeDespawns.Count==0)return Array.Empty<EntityStateWire>();
         var a=pendingAuthoritativeDespawns.ToArray();
         pendingAuthoritativeDespawns.Clear();
-        foreach(var wire in a){var id=new EntityId(wire.Value,wire.Persistent);entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
+        foreach(var wire in a){var id=new EntityId(wire.Value,wire.Persistent);entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);ForgetOwnerRefs(id);}
         stalePending.Clear();
         return a;
     }
@@ -67,15 +115,15 @@ public sealed class DarkwoodEntityReplication
     public IEnumerable<KeyValuePair<EntityId,Component>> AllEntities=>entities;
     /// <summary>World State Adapter registry（typed 业务状态；Capture 时附加、Apply 时调用）。</summary>
     public WorldStateAdapterRegistry Adapters { get; } = new WorldStateAdapterRegistry();
-    public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
+    public void Rebuild(DarkwoodEntityScanner scanner){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();ownerRefs.Clear();ownerResolved.Clear();deadCharacters.Clear();foreach(var c in scanner.ScanScene()){var id=scanner.ToPersistentId(c);if(!entities.ContainsKey(id))entities[id]=c;}}
     /// <summary>用主机权威注册表同一份扫描结果构建复制状态（避免 registry 与 replication 各扫一次）。</summary>
-    public void Rebuild(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<EntityId, Component>> pairs){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();foreach(var pair in pairs)if(!entities.ContainsKey(pair.Key))entities[pair.Key]=pair.Value;}
-    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision);}catch(Exception error){LogStale(pair.Key,component,"CaptureAll",error);continue;}a.Add(state);last[pair.Key]=state;}return a.ToArray();}
+    public void Rebuild(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<EntityId, Component>> pairs){RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();ownerRefs.Clear();ownerResolved.Clear();deadCharacters.Clear();foreach(var pair in pairs)if(!entities.ContainsKey(pair.Key))entities[pair.Key]=pair.Value;}
+    public EntityStateWire[] CaptureAll(){var a=new List<EntityStateWire>();foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}EntityStateWire state;try{state=AttachPayloads(DarkwoodEntityStateAdapter.Capture(pair.Key,component,++revision),CaptureStatePayloads(pair.Key,component));}catch(Exception error){LogStale(pair.Key,component,"CaptureAll",error);continue;}a.Add(state);last[pair.Key]=state;}return a.ToArray();}
     public EntityStateWire[] CaptureDeltas(){var a=new List<EntityStateWire>();var changed=0;foreach(var pair in entities.ToArray()){var component=pair.Value;if(IsStale(component)){QueueAuthoritativeDespawn(pair.Key);continue;}
-        // 阶段二 Tick 分层：世界状态对象（Generator/Light/BearTrap）1Hz 低频捕获；玩家/常规实体保持 15Hz diff。事件即时广播单独走 CaptureNow（不受限）。
-        var adapterNow=Adapters.Resolve(component);
-        if(adapterNow!=null&&StateThrottledSchemas.Contains(adapterNow.SchemaId)){if(lastStateSync.TryGetValue(pair.Key,out var ls)&&Time.unscaledTime-ls<StateSyncIntervalSeconds)continue;lastStateSync[pair.Key]=Time.unscaledTime;}
-        EntityStateWire state;try{state=DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision);if(adapterNow!=null){var extra=adapterNow.Capture(component);if(extra!=null&&extra.Length>0)state=state.WithSchema(adapterNow.SchemaId,extra);}}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
+        EntityStatePayload[] payloads;
+        try{payloads=CaptureStatePayloads(pair.Key,component);}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}
+        if(IsStateThrottled(payloads)){if(lastStateSync.TryGetValue(pair.Key,out var ls)&&Time.unscaledTime-ls<StateSyncIntervalSeconds)continue;lastStateSync[pair.Key]=Time.unscaledTime;}
+        EntityStateWire state;try{state=AttachPayloads(DarkwoodEntityStateAdapter.Capture(pair.Key,component,last.TryGetValue(pair.Key,out var old)?old.Revision+1:++revision),payloads);}catch(Exception error){LogStale(pair.Key,component,"CaptureDeltas",error);stalePending.Add(pair.Key);continue;}if(!last.TryGetValue(pair.Key,out var old2)||Changed(old2,state)){a.Add(state);last[pair.Key]=state;changed++;KindSent[state.Kind]++;KindChanged[state.Kind]++;}}LastDeltaChangedCount=changed;LastDeltaSentCount=a.Count;return a.ToArray();}
     public void Apply(IEnumerable<EntityStateWire> states,bool immediate){Apply(states,immediate,out _);}
     public ApplyStats Apply(IEnumerable<EntityStateWire> states,bool immediate,out ApplyStats stats)
     {
@@ -91,10 +139,9 @@ public sealed class DarkwoodEntityReplication
                 try
                 {
                     DarkwoodEntityStateAdapter.Apply(component,s,immediate,frozen,deadCharacters);
-                    if (s.StateSchema != 0)
+                    if (s.Payloads != null && s.Payloads.Length > 0)
                     {
-                        var adapter = Adapters.Resolve(component);
-                        if (adapter != null && adapter.SchemaId == s.StateSchema) adapter.Apply(component, s.ExtraState);
+                        foreach (var payload in s.Payloads) ApplyStatePayload(id, component, payload);
                     }
                 }
                 catch(Exception error){LogStale(id,component,"Apply",error);continue;}
@@ -103,6 +150,27 @@ public sealed class DarkwoodEntityReplication
         }
         finally{ApplyingRemote=false;}
         return stats;
+    }
+    private void ApplyStatePayload(EntityId id, Component primary, EntityStatePayload payload)
+    {
+        if (payload.Schema == 0 || payload.Data == null) return;
+        Component target = primary;
+        try
+        {
+            var adapter = Adapters.ResolveBySchema(payload.Schema);
+            if (adapter == null) return;
+            if (!adapter.CanHandle(primary))
+            {
+                // owner-binding：schema 对应注册型组件类型（Generator/Light 等）挂在绑定根上 → 定位后 apply。
+                var ownerType = Adapters.ComponentTypeForSchema(payload.Schema);
+                if (ownerType == null) return;
+                var owner = primary.GetComponentInChildren(ownerType, true);
+                if (owner == null) return;
+                target = owner;
+            }
+            adapter.Apply(target, payload.Data);
+        }
+        catch (Exception error) { LogStale(id, target, "ApplyStatePayload", error); }
     }
     private string DescribeMissing(EntityId id,EntityStateWire s)
     {
@@ -125,7 +193,7 @@ public sealed class DarkwoodEntityReplication
     {
         if (!entities.TryGetValue(id, out var component) || IsStale(component)) return null;
         EntityStateWire state;
-        try { state = DarkwoodEntityStateAdapter.Capture(id, component, ++revision); }
+        try { state = AttachPayloads(DarkwoodEntityStateAdapter.Capture(id, component, ++revision), CaptureStatePayloads(id, component)); }
         catch (Exception error) { LogStale(id, component, "CaptureNow", error); return null; }
         last[id] = state;
         return state;
@@ -173,7 +241,7 @@ public sealed class DarkwoodEntityReplication
     public bool TryGetCharacter(EntityId id,out Character character){if(TryGetBinding(id,out var binding)&&binding.Character!=null){character=binding.Character;return true;}character=null;return false;}
 
     /// <summary>移除运行时实体的注册（Despawn 后不再参与 delta）。</summary>
-    public void UnregisterRuntimeEntity(EntityId id){entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);}
+    public void UnregisterRuntimeEntity(EntityId id){entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);ForgetOwnerRefs(id);}
     /// <summary>枚举全部注册实体（持久销毁检测用；调用方不得在遍历时修改）。</summary>
     public IEnumerable<KeyValuePair<EntityId,Component>> Entities(){foreach(var pair in entities)yield return pair;}
     /// <summary>实体已被游戏销毁（夹子拆除/物品拾取等）——构造 Despawn 状态并移出注册表。</summary>
@@ -182,7 +250,7 @@ public sealed class DarkwoodEntityReplication
         if(!entities.ContainsKey(id))throw new InvalidOperationException("Entity does not exist.");
         var nextRevision=last.TryGetValue(id,out var known)?known.Revision+1:++revision;
         var wire=new EntityStateWire(id.Value,id.IsPersistent,known.Kind,known.X,known.Y,known.Z,known.Qx,known.Qy,known.Qz,known.Qw,known.Health,known.StateA,known.StateB,(byte)(known.Flags&~16),known.Animation,known.Frame,nextRevision);
-        entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);
+        entities.Remove(id);bindings.Remove(id);last.Remove(id);targets.Remove(id);lastInventories.Remove(id);ForgetOwnerRefs(id);
         return wire;
     }
     public void ApplyDespawns(IEnumerable<EntityStateWire> states)
@@ -196,7 +264,7 @@ public sealed class DarkwoodEntityReplication
             var bindingRoot = (UnityEngine.Object)null;
             var bindingRootAlive = false;
             try { if (bindings.TryGetValue(id, out var binding2) && binding2.Root != null) { bindingRoot = binding2.Root; bindingRootAlive = true; } } catch (Exception) { }
-            entities.Remove(id); bindings.Remove(id); targets.Remove(id); last.Remove(id); lastInventories.Remove(id);
+            entities.Remove(id); bindings.Remove(id); targets.Remove(id); last.Remove(id); lastInventories.Remove(id); ForgetOwnerRefs(id);
             var componentAlive = component != null;
             var visualDisabled = false;
             var root = (UnityEngine.GameObject)null;
@@ -239,7 +307,7 @@ public sealed class DarkwoodEntityReplication
     public void BindFromManifest(EntityBindingEntryWire[] entries, EntityBindingOutcome outcome, Component[] localCandidates)
     {
         RestoreSimulation();
-        entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();descriptorByEntity.Clear();
+        entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();ownerRefs.Clear();ownerResolved.Clear();deadCharacters.Clear();descriptorByEntity.Clear();
         foreach(var pair in outcome.Pairs)
         {
             var entry=entries[pair.EntryIndex];
@@ -263,7 +331,7 @@ public sealed class DarkwoodEntityReplication
     public int RegistryGeneration {get;private set;}
     public int BoundEntityCount => entities.Count;
     /// <summary>注册表代际换代：清空全部绑定与状态（收到新 generation manifest / 场景切换时）。</summary>
-    public void BeginNewGeneration(int generation){RegistryGeneration=generation;RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();deadCharacters.Clear();descriptorByEntity.Clear();ResetDeltaDiagnostics();}
+    public void BeginNewGeneration(int generation){RegistryGeneration=generation;RestoreSimulation();entities.Clear();bindings.Clear();last.Clear();targets.Clear();lastInventories.Clear();ownerRefs.Clear();ownerResolved.Clear();deadCharacters.Clear();descriptorByEntity.Clear();ResetDeltaDiagnostics();}
     public bool TryGetDescriptor(EntityId id,out EntityBindingEntryWire entry)=>descriptorByEntity.TryGetValue(id,out entry);
     /// <summary>枚举已绑定的权威描述符（主机快照缺失诊断用）。</summary>
     public IEnumerable<EntityBindingEntryWire> BoundDescriptors=>descriptorByEntity.Values;
