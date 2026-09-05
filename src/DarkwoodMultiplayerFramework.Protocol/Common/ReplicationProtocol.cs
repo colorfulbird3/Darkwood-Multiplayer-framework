@@ -4,19 +4,38 @@ using System.Text;
 
 namespace DarkwoodMultiplayerFramework.Protocol;
 
+public readonly struct EntityStatePayload
+{
+    public EntityStatePayload(ushort schema, byte[] data) { Schema = schema; Data = data ?? System.Array.Empty<byte>(); }
+    public ushort Schema { get; }
+    public byte[] Data { get; }
+    public bool IsEmpty => Schema == 0 && Data.Length == 0;
+}
+
 public readonly struct EntityStateWire
 {
+    // 便捷构造：无 typed payload。
     public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision)
-        : this(value, persistent, kind, x, y, z, qx, qy, qz, qw, health, stateA, stateB, flags, animation, frame, revision, 0, System.Array.Empty<byte>()) { }
+        : this(value, persistent, kind, x, y, z, qx, qy, qz, qw, health, stateA, stateB, flags, animation, frame, revision, System.Array.Empty<EntityStatePayload>()) { }
+    // 便捷构造：单 typed payload（历史路径；NormalizePayloads 保证 schema==0 且空 → 零 payload，wire 不变小写习惯）。
     public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision, ushort stateSchema, byte[] extraState)
-    { Value=value; Persistent=persistent; Kind=kind; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; Health=health; StateA=stateA; StateB=stateB; Flags=flags; Animation=animation ?? string.Empty; Frame=frame; Revision=revision; StateSchema=stateSchema; ExtraState=extraState ?? System.Array.Empty<byte>(); }
+        : this(value, persistent, kind, x, y, z, qx, qy, qz, qw, health, stateA, stateB, flags, animation, frame, revision, NormalizePayloads(stateSchema, extraState)) { }
+    // 核心构造：一个 EntityId 携带 0..N 个 typed payload（owner-binding：复合世界对象一次携带 GenericItem+Generator+Light…）。
+    public EntityStateWire(ulong value, bool persistent, byte kind, float x, float y, float z, float qx, float qy, float qz, float qw, float health, int stateA, int stateB, byte flags, string animation, int frame, ulong revision, EntityStatePayload[] payloads)
+    { Value=value; Persistent=persistent; Kind=kind; X=x; Y=y; Z=z; Qx=qx; Qy=qy; Qz=qz; Qw=qw; Health=health; StateA=stateA; StateB=stateB; Flags=flags; Animation=animation ?? string.Empty; Frame=frame; Revision=revision; Payloads=payloads ?? System.Array.Empty<EntityStatePayload>(); }
     public ulong Value { get; } public bool Persistent { get; } public byte Kind { get; }
     public float X { get; } public float Y { get; } public float Z { get; }
     public float Qx { get; } public float Qy { get; } public float Qz { get; } public float Qw { get; }
     public float Health { get; } public int StateA { get; } public int StateB { get; } public byte Flags { get; }
     public string Animation { get; } public int Frame { get; } public ulong Revision { get; }
-    public ushort StateSchema { get; } public byte[] ExtraState { get; }
+    /// <summary>typed 状态包数组（每项 schema+payload）。单 payload 历史语义由 StateSchema/ExtraState 派生保持。</summary>
+    public EntityStatePayload[] Payloads { get; }
+    // 便捷派生（= 首个 payload；保证既有读取点零改动）：不存在 payload 时 = 0 / 空数组。
+    public ushort StateSchema => Payloads.Length > 0 ? Payloads[0].Schema : (ushort)0;
+    public byte[] ExtraState => Payloads.Length > 0 ? Payloads[0].Data : System.Array.Empty<byte>();
     public EntityStateWire WithSchema(ushort schema, byte[] extra) => new EntityStateWire(Value,Persistent,Kind,X,Y,Z,Qx,Qy,Qz,Qw,Health,StateA,StateB,Flags,Animation,Frame,Revision,schema,extra);
+    private static EntityStatePayload[] NormalizePayloads(ushort schema, byte[] extra)
+    { if (schema == 0 && (extra == null || extra.Length == 0)) return System.Array.Empty<EntityStatePayload>(); return new[] { new EntityStatePayload(schema, extra ?? System.Array.Empty<byte>()) }; }
 }
 
 public readonly struct EntityDeltaMessage
@@ -42,13 +61,14 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9.3-pre.1";
+    public const string Framework = "0.8.9.4-pre.1";
 }
 
 public static class ReplicationProtocolCodec
 {
     private const int MaxChunks = 4096, MaxEntities = 4096, MaxString = 4096, MaxHash = 64;
-    private const int MaxExtraState = 4096; // 单实体 typed adapter 状态上限（trap/door/character 远小于此）
+    private const int MaxStatePayloadBytes = 4096; // 单个 typed payload 上限（trap/door/character 远小于此）
+    private const int MaxStatePayloads = 8;        // 单实体多 typed payload（owner-binding 复合对象）数量上限
     private const int MaxBindingEntries = 20000;
     public static byte[] Encode(SaveTransferRequest m) => Write(w => w.Write(m.RequestId.ToByteArray()));
     public static SaveTransferRequest DecodeSaveTransferRequest(byte[] p) => Read(p, r => new SaveTransferRequest(new Guid(ReadExact(r,16))));
@@ -167,8 +187,8 @@ public static class ReplicationProtocolCodec
     private const byte GuestProfileFormatVersion = 1;
     private static void WriteInventorySlots(BinaryWriter w,InventorySlotWire[] slots){if(slots.Length>256)throw new InvalidOperationException("Too many player inventory slots.");w.Write(slots.Length);foreach(var s in slots){WriteString(w,s.Type);w.Write(s.Amount);w.Write(s.Durability);w.Write(s.Quality);w.Write(s.Recipe);}}
     private static InventorySlotWire[] ReadInventorySlots(BinaryReader r){var count=ReadCount(r,256);var slots=new InventorySlotWire[count];for(var i=0;i<count;i++)slots[i]=new InventorySlotWire(ReadString(r),r.ReadInt32(),r.ReadSingle(),r.ReadInt32(),r.ReadBoolean());return slots;}
-    private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);w.Write(e.StateSchema);WriteBytes(w,e.ExtraState,MaxExtraState);} }
-    private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++) a[i]=new EntityStateWire(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadSingle(),r.ReadInt32(),r.ReadInt32(),r.ReadByte(),ReadString(r),r.ReadInt32(),r.ReadUInt64(),r.ReadUInt16(),ReadBytes(r,MaxExtraState)); return a; }
+    private static void WriteEntities(BinaryWriter w, EntityStateWire[] a) { if(a.Length>MaxEntities) throw new InvalidOperationException("Too many entities."); w.Write(a.Length); foreach(var e in a){w.Write(e.Value);w.Write(e.Persistent);w.Write(e.Kind);w.Write(e.X);w.Write(e.Y);w.Write(e.Z);w.Write(e.Qx);w.Write(e.Qy);w.Write(e.Qz);w.Write(e.Qw);w.Write(e.Health);w.Write(e.StateA);w.Write(e.StateB);w.Write(e.Flags);WriteString(w,e.Animation);w.Write(e.Frame);w.Write(e.Revision);if(e.Payloads.Length>MaxStatePayloads)throw new InvalidOperationException("Too many entity state payloads.");w.Write(e.Payloads.Length);foreach(var p in e.Payloads){w.Write(p.Schema);WriteBytes(w,p.Data,MaxStatePayloadBytes);}} }
+    private static EntityStateWire[] ReadEntities(BinaryReader r) { var n=ReadCount(r,MaxEntities); var a=new EntityStateWire[n]; for(var i=0;i<n;i++){var value=r.ReadUInt64();var persistent=r.ReadBoolean();var kind=r.ReadByte();var x=r.ReadSingle();var y=r.ReadSingle();var z=r.ReadSingle();var qx=r.ReadSingle();var qy=r.ReadSingle();var qz=r.ReadSingle();var qw=r.ReadSingle();var health=r.ReadSingle();var stateA=r.ReadInt32();var stateB=r.ReadInt32();var flags=r.ReadByte();var animation=ReadString(r);var frame=r.ReadInt32();var revision=r.ReadUInt64();var pCount=ReadCount(r,MaxStatePayloads);var payloads=new EntityStatePayload[pCount];for(var j=0;j<pCount;j++)payloads[j]=new EntityStatePayload(r.ReadUInt16(),ReadBytes(r,MaxStatePayloadBytes));a[i]=new EntityStateWire(value,persistent,kind,x,y,z,qx,qy,qz,qw,health,stateA,stateB,flags,animation,frame,revision,payloads);} return a; }
     private static byte[] Write(Action<BinaryWriter> a){using var s=new MemoryStream();using var w=new BinaryWriter(s,Encoding.UTF8);a(w);return s.ToArray();}
     private static T Read<T>(byte[] p,Func<BinaryReader,T> a){using var s=new MemoryStream(p??Array.Empty<byte>());using var r=new BinaryReader(s,Encoding.UTF8);var v=a(r);if(s.Position!=s.Length)throw new InvalidDataException("Trailing protocol payload.");return v;}
     private static void WriteString(BinaryWriter w,string s){var b=Encoding.UTF8.GetBytes(s??string.Empty);if(b.Length>MaxString)throw new InvalidOperationException("String too long.");w.Write(b.Length);w.Write(b);}

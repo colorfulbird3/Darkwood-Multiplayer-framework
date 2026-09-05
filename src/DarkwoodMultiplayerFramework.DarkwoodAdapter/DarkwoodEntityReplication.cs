@@ -284,6 +284,14 @@ public sealed class DarkwoodEntityReplication
         return $"共享={shared}，同类型={sameType}{typeInfo}，同名={sameName}{nameInfo}";
     }
     public int SharedInventoryCount{get{var count=0;foreach(var pair in entities)if(pair.Value is Inventory inventory&&DarkwoodEntityStateAdapter.IsShared(inventory))count++;return count;}}
-    private static bool Changed(EntityStateWire a, EntityStateWire b)=>Math.Abs(a.X-b.X)>.01f||Math.Abs(a.Y-b.Y)>.01f||Math.Abs(a.Z-b.Z)>.01f||Math.Abs(a.Qx-b.Qx)>.001f||Math.Abs(a.Qy-b.Qy)>.001f||Math.Abs(a.Qz-b.Qz)>.001f||Math.Abs(a.Qw-b.Qw)>.001f||Math.Abs(a.Health-b.Health)>.01f||a.StateA!=b.StateA||a.StateB!=b.StateB||a.Flags!=b.Flags||a.Frame!=b.Frame||a.Animation!=b.Animation||a.StateSchema!=b.StateSchema||!BytesEqual(a.ExtraState,b.ExtraState);
+    private static bool Changed(EntityStateWire a, EntityStateWire b)=>Math.Abs(a.X-b.X)>.01f||Math.Abs(a.Y-b.Y)>.01f||Math.Abs(a.Z-b.Z)>.01f||Math.Abs(a.Qx-b.Qx)>.001f||Math.Abs(a.Qy-b.Qy)>.001f||Math.Abs(a.Qz-b.Qz)>.001f||Math.Abs(a.Qw-b.Qw)>.001f||Math.Abs(a.Health-b.Health)>.01f||a.StateA!=b.StateA||a.StateB!=b.StateB||a.Flags!=b.Flags||a.Frame!=b.Frame||a.Animation!=b.Animation||StatePayloadsChanged(a,b);
+    /// <summary>owner-binding 多 payload：逐项比 schema+data（空 payload 视作无变化）。</summary>
+    private static bool StatePayloadsChanged(EntityStateWire a, EntityStateWire b)
+    {
+        var pa = a.Payloads; var pb = b.Payloads;
+        if (pa.Length != pb.Length) return true;
+        for (var i = 0; i < pa.Length; i++) if (pa[i].Schema != pb[i].Schema || !BytesEqual(pa[i].Data, pb[i].Data)) return true;
+        return false;
+    }
     private static bool BytesEqual(byte[] a,byte[] b){if(a==null||b==null)return a==b;if(a.Length!=b.Length)return false;for(var i=0;i<a.Length;i++)if(a[i]!=b[i])return false;return true;}
 }

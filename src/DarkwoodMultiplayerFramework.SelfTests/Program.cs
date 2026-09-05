@@ -24,6 +24,8 @@ var tests = new (string Name, Action Run)[]
     ("chunk transfer reorder", ChunkTransferReorder),
     ("chunk transfer corrupt", ChunkTransferCorrupt),
     ("entity delta roundtrip", EntityDeltaRoundtrip),
+    ("entity state multi payload roundtrip", EntityStateMultiPayloadRoundtrip),
+    ("entity state payload bounds", EntityStatePayloadBounds),
     ("inventory state roundtrip", InventoryStateRoundtrip),
     ("player pose roundtrip", PlayerPoseRoundtrip),
     ("action request roundtrip", ActionRequestRoundtrip),
@@ -153,6 +155,25 @@ static void ChunkTransferCorrupt()
 static void EntityDeltaRoundtrip()
 {
     var entity=new EntityStateWire(77,true,2,1,2,3,0,0,0,1,50,4,5,3,"open",7,9);var decoded=ReplicationProtocolCodec.DecodeEntityDelta(ReplicationProtocolCodec.Encode(new EntityDeltaMessage("scene",42,new[]{entity},Array.Empty<EntityStateWire>())));Require(decoded.Scene=="scene"&&decoded.ServerTick==42&&decoded.Entities.Length==1&&decoded.Entities[0].Value==77&&decoded.Entities[0].Revision==9);
+}
+static void EntityStateMultiPayloadRoundtrip()
+{
+    var p1=new EntityStatePayload(7,new byte[]{1,2,3});var p2=new EntityStatePayload(8,new byte[]{4,5});
+    var entity=new EntityStateWire(9,true,4,0,0,0,0,0,0,1,50,0,0,1,"",0,11,new[]{p1,p2});
+    var d=ReplicationProtocolCodec.DecodeEntityDelta(ReplicationProtocolCodec.Encode(new EntityDeltaMessage("scene",42,new[]{entity},Array.Empty<EntityStateWire>())));
+    Require(d.Entities.Length==1&&d.Entities[0].Payloads.Length==2&&d.Entities[0].Payloads[0].Schema==7&&d.Entities[0].Payloads[0].Data[0]==1&&d.Entities[0].Payloads[0].Data[2]==3&&d.Entities[0].Payloads[1].Schema==8&&d.Entities[0].Payloads[1].Data[1]==5);
+    // 便捷派生 = 首个 payload（历史读取点零改动）
+    Require(d.Entities[0].StateSchema==7&&d.Entities[0].ExtraState.Length==3);
+    // 零 payload 历史路径：派生值应为 0 / 空
+    var legacy=new EntityStateWire(77,true,2,1,2,3,0,0,0,1,50,4,5,3,"open",7,9);
+    var dl=ReplicationProtocolCodec.DecodeEntityDelta(ReplicationProtocolCodec.Encode(new EntityDeltaMessage("s",1,new[]{legacy},Array.Empty<EntityStateWire>())));
+    Require(dl.Entities[0].Payloads.Length==0&&dl.Entities[0].StateSchema==0&&dl.Entities[0].ExtraState.Length==0);
+}
+static void EntityStatePayloadBounds()
+{
+    var many=new System.Collections.Generic.List<EntityStatePayload>();for(var i=0;i<9;i++)many.Add(new EntityStatePayload((ushort)(i+1),new byte[]{1}));
+    ExpectFailure(()=>ReplicationProtocolCodec.Encode(new EntityDeltaMessage("s",1,new[]{new EntityStateWire(1,true,1,0,0,0,0,0,0,1,1,0,0,0,"",0,1,many.ToArray())},Array.Empty<EntityStateWire>())));
+    ExpectFailure(()=>ReplicationProtocolCodec.Encode(new EntityDeltaMessage("s",1,new[]{new EntityStateWire(2,true,1,0,0,0,0,0,0,1,1,0,0,0,"",0,1,new[]{new EntityStatePayload(7,new byte[4097])})},Array.Empty<EntityStateWire>())));
 }
 static void InventoryStateRoundtrip()
 {
