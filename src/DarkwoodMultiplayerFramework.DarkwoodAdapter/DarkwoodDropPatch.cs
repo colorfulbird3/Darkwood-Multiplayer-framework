@@ -33,23 +33,12 @@ internal static class DarkwoodDropPatch
         if (runtime.IsHost)
         {
             // v0.9.0 修：Host 本地丢弃→立即注册+广播（不等 5 秒扫描）；TryGetId 门防与扫描重复。
-            // r15 诊断：玻璃瓶等容器/特殊物品结构可能不同（ThrownItem/多 Inventory），先把真实结构打出来断点。
             if (__result == null)
             {
                 DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] __result=null type={_item.type} x{_item.amount}（spawnDroppedInvItem 未返回掉落物）");
                 return;
             }
             var hostInv = __result.GetComponent<Inventory>();
-            try
-            {
-                var invs = new System.Text.StringBuilder();
-                foreach (var subInv in __result.GetComponentsInChildren<Inventory>(true))
-                    invs.Append($"[{subInv.invType}:slots={subInv.slots?.Count ?? -1}:first={(subInv.slots != null && subInv.slots.Count > 0 && subInv.slots[0].invItem != null ? subInv.slots[0].invItem.type + "x" + subInv.slots[0].invItem.amount : "?")}]");
-                var comps = new System.Text.StringBuilder();
-                foreach (var c in __result.GetComponentsInChildren<Component>(true)) { if (comps.Length > 2000) break; comps.Append(c.GetType().Name).Append(','); }
-                DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] type={_item.type} x{_item.amount} result={__result.name} goInv={(hostInv != null ? hostInv.invType.ToString() : "无")} invs={invs} comps=[{comps}]");
-            }
-            catch (Exception) { }
             if (hostInv == null || hostInv.slots == null || hostInv.slots.Count == 0 || InvItemClass.isNull(hostInv.slots[0].invItem))
             {
                 DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] 掉落物 Inventory 无效，跳过注册 type={_item.type}");
