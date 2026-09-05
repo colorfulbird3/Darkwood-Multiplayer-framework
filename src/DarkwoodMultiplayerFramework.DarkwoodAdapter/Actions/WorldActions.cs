@@ -15,6 +15,7 @@ public static class WorldActions
     {
         manager?.Register(new GeneratorToggleAction());
         manager?.Register(new DoorToggleAction());
+        manager?.Register(new LampToggleAction());
     }
 
     private static Generator? FindGenerator(Component target)
@@ -134,6 +135,40 @@ public static class WorldActions
                 d.openClose(opener);
             }
             catch (Exception) { }
+        }
+    }
+
+    /// <summary>灯开关（Item.activate / isOn 切换）即时镜像：param[0]=主机最终 isOn。Replay 不改发电机，只即时开/关该灯。</summary>
+    public sealed class LampToggleAction : ActionSyncManager.IWorldObjectAction
+    {
+        public byte ActionKey => ActionSyncManager.Keys.LampToggle;
+        public void ExecuteHost(DarkwoodAdapterRuntime runtime, EntityId id, byte[] param) { }
+        public void Replay(DarkwoodAdapterRuntime runtime, Component target, byte[] param)
+        {
+            Item it = target as Item;
+            if (it == null) { try { it = target.GetComponentInChildren<Item>(true); } catch { } }
+            if (it == null || !it.isLight) { runtime?.log?.LogWarning("[ACTION] lamp replay: 目标无 isLight Item"); return; }
+            var on = param != null && param.Length > 0 && param[0] == 1;
+            try
+            {
+                it.isOn = on;
+                var il = it.itemLight;
+                if (il != null)
+                {
+                    if (on && it.hasPower)
+                    {
+                        il.destLightIntensity = il.lightIntensity;
+                        if (il.light != null) { il.light.enabled = true; if (!il.light.gameObject.activeSelf) il.light.gameObject.SetActive(true); }
+                    }
+                    else
+                    {
+                        il.destLightIntensity = 0f;
+                        if (il.light != null) { il.light.enabled = false; if (il.light.gameObject.activeSelf) il.light.gameObject.SetActive(false); }
+                    }
+                }
+                try { if (Singleton<Controller>.Instance != null) Singleton<Controller>.Instance.updateLogicLights(); } catch (Exception) { }
+            }
+            catch (Exception error) { runtime?.log?.LogWarning($"[ACTION] lamp replay 失败：{error.Message}"); }
         }
     }
 }

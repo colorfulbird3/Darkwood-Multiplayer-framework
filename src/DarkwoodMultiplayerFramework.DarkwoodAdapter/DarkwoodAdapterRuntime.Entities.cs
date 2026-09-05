@@ -861,6 +861,7 @@ public sealed partial class DarkwoodAdapterRuntime
         item.isOn = interact.ValueA != 0;
         AcceptInteract(peer,request,id,item,0);
         var gen = component.GetComponentInChildren<Generator>(true);
+        if (item.isLight) try { Actions?.BroadcastExecuted(this, id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.LampToggle, new byte[] { (byte)(item.isOn ? 1 : 0) }, peer); } catch (Exception) { }
         log?.LogInfo($"主机已应用物品开关 {request.RequestId}：玩家 {peer}，物品 {id} name={item.name} isOn={item.isOn} isGenerator={gen != null}。{(gen != null ? "[GEN-INFO] ItemActivate 报告的发电机开关，主机未执行原版 turnOn/turnOff（半迁移断层）。" : "")}");
     }
 

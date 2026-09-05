@@ -20,14 +20,14 @@ internal static class DarkwoodPickupPatch
     private static void Prefix(Item __instance)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready || __instance == null) return;
-        runtime.log?.LogInfo($"[PICKUP-LOCAL] Item.getDroppedItem ENTER");
+        if (runtime == null || !(runtime.IsClient || runtime.IsHost) || runtime.State != ConnectionState.Ready || __instance == null) return;
+        if (runtime.IsClient) runtime.log?.LogInfo($"[PICKUP-LOCAL] Item.getDroppedItem ENTER");
         if (runtime.replication.TryGetId(__instance, out var rid))
         {
             lock (pendingPickupRuntimeIds) pendingPickupRuntimeIds.Add(rid.Value);
-            runtime.log?.LogInfo($"[PICKUP-LOCAL] 已记录 pre runtime=0x{rid.Value:X8} persistent={rid.IsPersistent}");
+            if (runtime.IsClient) runtime.log?.LogInfo($"[PICKUP-LOCAL] 已记录 pre runtime=0x{rid.Value:X8} persistent={rid.IsPersistent}");
         }
-        else
+        else if (runtime.IsClient)
         {
             runtime.log?.LogInfo($"[PICKUP-LOCAL] __instance 未注册到 replication（可能是本地对象或非 Host Entity），后续 Postfix 可能跳过 PickupCommit");
         }
@@ -36,7 +36,32 @@ internal static class DarkwoodPickupPatch
     private static void Postfix(Item __instance)
     {
         var runtime = DarkwoodAdapterRuntime.Instance;
-        if (runtime == null || !runtime.IsClient || runtime.State != ConnectionState.Ready) return;
+        if (runtime == null || runtime.State != ConnectionState.Ready) return;
+
+        // v0.9.1：主机本地拾取 → 立即广播 RuntimeEntityDespawn（不再等 5 秒扫描），客户端掉落物即时消失。
+        if (runtime.IsHost)
+        {
+            ulong ridH = 0; bool perH = false;
+            if (__instance != null && runtime.replication.TryGetId(__instance, out var ridHObj)) { ridH = ridHObj.Value; perH = ridHObj.IsPersistent; }
+            else
+            {
+                lock (pendingPickupRuntimeIds) { foreach (var v in pendingPickupRuntimeIds) { ridH = v; break; } pendingPickupRuntimeIds.Clear(); }
+            }
+            if (ridH != 0 && !perH)
+            {
+                try
+                {
+                    runtime.replication.UnregisterRuntimeEntity(new EntityId(ridH, false));
+                    var msg = new RuntimeEntityDespawnMessage(ridH, runtime.serverTick, RuntimeEntityDespawnReason.Collected);
+                    var payload = ReplicationProtocolCodec.Encode(msg);
+                    foreach (var pid in runtime.ReadyPeersSnapshot) runtime.Queue(pid, ProtocolMessageType.RuntimeEntityDespawn, payload);
+                    runtime.log?.LogInfo($"[DROP] 主机拾取即时 despawn：runtime=0x{ridH:X8} peers={runtime.ReadyPeersSnapshot.Length}");
+                }
+                catch (Exception error) { runtime.log?.LogWarning($"[DROP] 主机拾取 despawn 失败：{error.Message}"); }
+            }
+            return;
+        }
+        if (!runtime.IsClient) return;
 
         // 尝试直接从 __instance 取 rid
         ulong rid = 0;

@@ -120,9 +120,20 @@ internal static class DarkwoodItemActivatePatch
 
     private static void Postfix(Item __instance, bool __state)
     {
-        if (!__state) return;
+        if (__state) return;
         var runtime = DarkwoodAdapterRuntime.Instance;
         if (runtime == null) return;
+        // v0.9.1：主机本地开/关灯（Item.activate 直开 isOn）→ 广播 LampToggle 让客户端即时镜像。
+        if (runtime.IsHost && runtime.State == ConnectionState.Ready && __instance != null && __instance.isLight)
+        {
+            try
+            {
+                if (runtime.replication.TryGetId(__instance, out var lid))
+                    runtime.Actions?.BroadcastExecuted(runtime, lid, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.LampToggle, new byte[] { (byte)(__instance.isOn ? 1 : 0) });
+            }
+            catch (Exception) { }
+            return;
+        }
         // P1-A：掉落物不产生 ItemActivate——点击掉落物只走 Pickup intent（避免重复 interaction 路由 / Pickup·ItemActivate race）。
         if (__instance != null && __instance.isDroppedItem) return;
         runtime.TryRequestItemActivate(__instance);

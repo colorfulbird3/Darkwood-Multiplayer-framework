@@ -20,6 +20,7 @@ public sealed class ActionSyncManager
     {
         public const byte GeneratorToggle = 1; // A1：发电机 on/off（Replay = 原版 turnOn/turnOff，本地电源给灯供电）
         public const byte DoorToggle = 2;      // A4：门开/关（Replay = 原版 openClose）
+        public const byte LampToggle = 3;      // 灯开关（Item.activate / isOn）即时镜像
     }
 
     /// <summary>一种世界对象动作：Host 唯一执行 + 各端 Replay（副作用重放）。</summary>
