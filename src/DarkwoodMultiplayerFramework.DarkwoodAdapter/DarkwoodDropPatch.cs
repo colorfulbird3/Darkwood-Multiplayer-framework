@@ -33,15 +33,39 @@ internal static class DarkwoodDropPatch
         if (runtime.IsHost)
         {
             // v0.9.0 修：Host 本地丢弃→立即注册+广播（不等 5 秒扫描）；TryGetId 门防与扫描重复。
-            if (__result == null) return;
+            // r15 诊断：玻璃瓶等容器/特殊物品结构可能不同（ThrownItem/多 Inventory），先把真实结构打出来断点。
+            if (__result == null)
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] __result=null type={_item.type} x{_item.amount}（spawnDroppedInvItem 未返回掉落物）");
+                return;
+            }
             var hostInv = __result.GetComponent<Inventory>();
-            if (hostInv == null || hostInv.slots == null || hostInv.slots.Count == 0 || InvItemClass.isNull(hostInv.slots[0].invItem)) return;
+            try
+            {
+                var invs = new System.Text.StringBuilder();
+                foreach (var subInv in __result.GetComponentsInChildren<Inventory>(true))
+                    invs.Append($"[{subInv.invType}:slots={subInv.slots?.Count ?? -1}:first={(subInv.slots != null && subInv.slots.Count > 0 && subInv.slots[0].invItem != null ? subInv.slots[0].invItem.type + "x" + subInv.slots[0].invItem.amount : "?")}]");
+                var comps = new System.Text.StringBuilder();
+                foreach (var c in __result.GetComponentsInChildren<Component>(true)) { if (comps.Length > 2000) break; comps.Append(c.GetType().Name).Append(','); }
+                DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] type={_item.type} x{_item.amount} result={__result.name} goInv={(hostInv != null ? hostInv.invType.ToString() : "无")} invs={invs} comps=[{comps}]");
+            }
+            catch (Exception) { }
+            if (hostInv == null || hostInv.slots == null || hostInv.slots.Count == 0 || InvItemClass.isNull(hostInv.slots[0].invItem))
+            {
+                DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] 掉落物 Inventory 无效，跳过注册 type={_item.type}");
+                return;
+            }
             try
             {
                 if (!runtime.replication.TryGetId(hostInv, out _))
                 {
                     var initialState = ReplicationProtocolCodec.Encode(runtime.replication.CaptureInventoryState(hostInv, 0));
-                    runtime.RuntimeEntities.RegisterAndBroadcastDroppedItem(hostInv, hostInv.transform.position, hostInv.transform.rotation, initialState);
+                    var rid = runtime.RuntimeEntities.RegisterAndBroadcastDroppedItem(hostInv, hostInv.transform.position, hostInv.transform.rotation, initialState);
+                    DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] 注册+广播完成 type={_item.type} slot0={hostInv.slots[0].invItem.type} x{hostInv.slots[0].invItem.amount} rid=0x{rid:X8} peers={runtime.ReadyPeersSnapshot.Length}");
+                }
+                else
+                {
+                    DarkwoodAdapterRuntime.LogMessage($"[DROP-HOST] 已注册（跳过重复）type={_item.type}");
                 }
             }
             catch (Exception error) { runtime.log?.LogWarning($"[DROP] Host 即时注册失败：{error.Message}"); }
