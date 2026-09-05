@@ -152,6 +152,8 @@ public sealed class DualInstanceTestAgent
         Result.FailReason = reason;
         Result.DurationMs = (long)(DateTime.UtcNow - Result.StartedUtc).TotalMilliseconds;
         Trace.Log("TEST-RESULT", $"result={result} reason={reason} durationMs={Result.DurationMs}");
+        // 带括号标记写 BepInEx LogOutput.log —— Run-DualInstance.ps1 的 [TEST-RESULT] 轮询依赖它。
+        DarkwoodAdapterRuntime.Instance?.log?.LogInfo($"[TEST-RESULT] result={result} reason={reason} durationMs={Result.DurationMs}");
         SendTestControl(new TestControlMessage("Complete", ScenarioName, -1, $"{{\"result\":\"{result}\",\"reason\":\"{reason.Replace("\"","")}\"}}"));
     }
 }

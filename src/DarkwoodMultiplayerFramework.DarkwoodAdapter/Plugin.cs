@@ -76,6 +76,7 @@ public sealed class Plugin : BaseUnityPlugin
             {
                 runtime.StartHost();
                 Logger.LogInfo("[TESTHARNESS] Host auto-started (TestMode)");
+                Logger.LogInfo("[TEST-HOST-LISTENING] role=Host"); // Run-DualInstance.ps1 BOOT-TEST-3 轮询标记
             }
             else if (TestConfig.IsClient && !string.IsNullOrEmpty(TestConfig.Address))
             {

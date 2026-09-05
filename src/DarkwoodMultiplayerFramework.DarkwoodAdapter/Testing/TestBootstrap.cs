@@ -132,6 +132,8 @@ public sealed class TestBootstrap
                         agent.Trace?.Log("BOOT2", $"phase=WorldStable ms={(nowUtc - startedUtc).TotalMilliseconds:F0}");
                         agent.Trace?.Log("READY", "test=BOOT-TEST-2 result=PASS");
                         agent.Trace?.Log("TEST-RESULT", "test=BOOT-TEST-2 result=PASS");
+                        // 带括号标记写 BepInEx LogOutput.log —— Run-DualInstance.ps1 按 [TEST-HOST-WORLD-READY]/[TEST-RESULT] 轮询。
+                        DarkwoodAdapterRuntime.Instance?.log?.LogInfo("[TEST-HOST-WORLD-READY] boot=2 result=PASS");
                     }
                     else if ((nowUtc - (PlayerReadyAtUtc ?? nowUtc)).TotalSeconds > WorldStableTimeoutSec)
                     {
@@ -152,6 +154,7 @@ public sealed class TestBootstrap
         Phase = BootPhase.Failed;
         agent.Trace?.Log("BOOT2-FAIL", $"phase={Phase} reason={reason}");
         agent.Trace?.Log("TEST-RESULT", $"test=BOOT-TEST-2 result=FAIL phase={Phase} reason={reason}");
+        DarkwoodAdapterRuntime.Instance?.log?.LogError($"[TEST-RESULT] test=BOOT-TEST-2 result=FAIL phase={Phase} reason={reason}");
     }
 
     private bool TryDetectMainMenuReady(out string reason)
