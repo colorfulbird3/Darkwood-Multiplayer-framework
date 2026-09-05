@@ -144,8 +144,9 @@ public sealed class DarkwoodRuntimeEntityService
                 if (message.RuntimeEntityId == 0) continue;
                 hostInventories[inventory] = message.RuntimeEntityId;
                 runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(message.RuntimeEntityId,false),Root=inventory.gameObject,Primary=inventory,Inventory=inventory,Item=inventory.GetComponentInChildren<Item>(),Kind=WorldEntityKind.LootContainer});
-                pendingEvents[message.RuntimeEntityId] = message;
-                runtime.log?.LogInfo($"主机登记随机事件容器（待客户端进入范围触发）：ID {message.RuntimeEntityId}，prefab {inventory.name}，位置 ({message.X:F0},{message.Y:F0},{message.Z:F0})。");
+                // 立即广播（v0.9.0 修：原"待客户端进范围"的 pendingEvents 延迟导致主机掉落物客户端看不见）。
+                foreach (var rp in runtime.readyPeers.ToArray()) SendSpawnTo(rp, message);
+                runtime.log?.LogInfo($"主机登记并即时广播随机事件容器：ID {message.RuntimeEntityId}，prefab {inventory.name}，位置 ({message.X:F0},{message.Y:F0},{message.Z:F0})。");
             }
             else if (component is Inventory dropped && dropped.invType == Inventory.InvType.itemInv
                 && !runtime.replication.TryGetId(dropped, out _))
@@ -159,8 +160,9 @@ public sealed class DarkwoodRuntimeEntityService
                 if (droppedMessage.RuntimeEntityId == 0) continue;
                 hostInventories[dropped] = droppedMessage.RuntimeEntityId;
                 runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(droppedMessage.RuntimeEntityId,false),Root=dropped.gameObject,Primary=dropped,Inventory=dropped,Item=dropped.GetComponentInChildren<Item>(),Kind=WorldEntityKind.DroppedItem});
-                pendingEvents[droppedMessage.RuntimeEntityId] = droppedMessage;
-                runtime.log?.LogInfo($"主机登记掉落物（待客户端进入范围触发）：ID {droppedMessage.RuntimeEntityId}，位置 ({droppedMessage.X:F0},{droppedMessage.Y:F0},{droppedMessage.Z:F0})。");
+                // 立即广播（v0.9.0 修：主机自己扔的掉落物必须让客户端立刻可见）。
+                foreach (var rp in runtime.readyPeers.ToArray()) SendSpawnTo(rp, droppedMessage);
+                runtime.log?.LogInfo($"主机登记并即时广播掉落物：ID {droppedMessage.RuntimeEntityId}，位置 ({droppedMessage.X:F0},{droppedMessage.Y:F0},{droppedMessage.Z:F0})。");
             }
             else if (component is Character character && !(character is Player))
             {
@@ -173,8 +175,9 @@ public sealed class DarkwoodRuntimeEntityService
                 if (enemyMessage.RuntimeEntityId == 0) continue;
                 hostEnemies[character] = enemyMessage.RuntimeEntityId;
                 runtime.replication.RegisterBinding(new WorldEntityBinding{Id=new EntityId(enemyMessage.RuntimeEntityId,false),Root=character.gameObject,Primary=character,Character=character,Item=character.GetComponentInChildren<Item>(),Kind=WorldEntityKind.Enemy});
-                pendingEvents[enemyMessage.RuntimeEntityId] = enemyMessage;
-                runtime.log?.LogInfo($"主机登记运行时敌人（待客户端进入范围触发）：ID {enemyMessage.RuntimeEntityId}，prefab {prefabName}，位置 ({enemyMessage.X:F0},{enemyMessage.Y:F0},{enemyMessage.Z:F0})。");
+                // 立即广播（v0.9.0：运行时敌人即时可见，避免客户端缺实体）。
+                foreach (var rp in runtime.readyPeers.ToArray()) SendSpawnTo(rp, enemyMessage);
+                runtime.log?.LogInfo($"主机登记并即时广播运行时敌人：ID {enemyMessage.RuntimeEntityId}，prefab {prefabName}，位置 ({enemyMessage.X:F0},{enemyMessage.Y:F0},{enemyMessage.Z:F0})。");
             }
         }
         scanStopwatch.Stop();
