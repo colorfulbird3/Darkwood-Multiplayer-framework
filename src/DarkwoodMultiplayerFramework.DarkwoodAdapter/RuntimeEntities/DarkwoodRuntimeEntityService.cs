@@ -393,7 +393,9 @@ public sealed class DarkwoodRuntimeEntityService
                 }
                 else
                 {
-                    // 优先用物品自身原型 prefab（ItemsDatabase.getItem(type).item），无则回退通用 DroppedItem（Coop 同策略）。
+                    // 优先用物品自身原型 prefab（ItemsDatabase.getItem(type).item）；原型若并非「可拾取地面掉落形态」
+                    // （无 Inventory 或带 ThrownItem/FastProjectile——玻璃瓶等物品的 .item 世界原型是投掷瓶，vanilla
+                    // 丢弃它们走的是通用 Items/DroppedItem）→ 回退通用 DroppedItem（与 vanilla spawnDroppedInvItem 一致）。
                     go = null;
                     var protoPrefab = (UnityEngine.Object)null;
                     try
@@ -405,17 +407,41 @@ public sealed class DarkwoodRuntimeEntityService
                         }
                     }
                     catch (Exception) { }
-                    var prefabName = protoPrefab != null ? null : "Items/DroppedItem";
+                    var usedProto = false;
                     if (protoPrefab != null)
-                        go = global::Core.AddPrefab((GameObject)protoPrefab, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
-                    else
-                        go = global::Core.AddPrefab(prefabName, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                    {
+                        try
+                        {
+                            go = global::Core.AddPrefab((GameObject)protoPrefab, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                            if (go != null)
+                            {
+                                var inv0 = go.GetComponent<Inventory>();
+                                var thrown0 = go.GetComponentInChildren<ThrownItem>(true);
+                                if (inv0 == null || thrown0 != null)
+                                {
+                                    // 原型是投掷物/非掉落形态 → 弃用，回退通用（玻璃瓶等）
+                                    runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} 原型 {authoritativeType}.item 非掉落形态（inv={(inv0 != null ? "有" : "无")} thrown={(thrown0 != null ? "有" : "无")} name={go.name}）→ 回退通用 DroppedItem");
+                                    UnityEngine.Object.Destroy(go);
+                                    go = null;
+                                }
+                                else usedProto = true;
+                            }
+                        }
+                        catch (Exception) { go = null; }
+                    }
+                    if (!usedProto)
+                    {
+                        try
+                        {
+                            go = global::Core.AddPrefab("Items/DroppedItem", new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                        }
+                        catch (Exception) { go = null; }
+                    }
                     if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
                     dropped = go.GetComponent<Inventory>();
                     if (dropped == null)
                     {
-                        // r18 诊断：generic Items/DroppedItem 实例为何无根 Inventory（vanilla 同 AddPrefab 后直接取得到）——
-                        // 打印 go 结构与子级 Inventory，决定正确创建路径。
+                        // r18 诊断：仍拿不到 Inventory 时打印 go 结构与子级 Inventory，决定下一步正确创建路径。
                         try
                         {
                             var sb = new System.Text.StringBuilder();
@@ -424,7 +450,6 @@ public sealed class DarkwoodRuntimeEntityService
                             runtime.log?.LogWarning($"掉落物镜像根无 Inventory：{spawn.PrototypeId} name={go.name} active={go.activeSelf} parent={(go.transform.parent != null ? go.transform.parent.name : "null")} childInv={(invChild != null ? "有:" + invChild.name : "无")} comps=[{sb}]");
                         }
                         catch (Exception) { }
-                        // 兜底：Inventory 挂在子对象时仍可复用（vanilla 拾取/填充都作用于根——若仅子级存在则属异常 prefab，仍销毁防 ghost）
                         UnityEngine.Object.Destroy(go);
                         runtime.log?.LogWarning($"掉落物镜像无 Inventory 组件：{spawn.PrototypeId}。");
                         return;
@@ -453,7 +478,7 @@ public sealed class DarkwoodRuntimeEntityService
                                 if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
                                 slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
                                 try { dropped.refreshItems(); } catch (Exception) { }
-                                runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} amount={s.Amount} prefab={(protoPrefab != null ? "prototype:" + s.Type : "generic")} slots={dropped.slots.Count}");
+                                runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} amount={s.Amount} prefab={(usedProto ? "prototype:" + s.Type : "generic")} slots={dropped.slots.Count}");
                             }
                         }
                     }
