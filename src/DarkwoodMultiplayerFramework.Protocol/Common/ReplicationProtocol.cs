@@ -61,7 +61,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9.4-pre.1";
+    public const string Framework = "0.8.9.5-pre.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -181,6 +181,24 @@ public static class ReplicationProtocolCodec
     public static RuntimeEntityDespawnMessage DecodeRuntimeEntityDespawn(byte[] p)=>Read(p,r=>{var id=r.ReadUInt64();if(id==0)throw new InvalidDataException("Runtime entity id must not be zero.");return new RuntimeEntityDespawnMessage(id,r.ReadInt64(),ReadRuntimeEntityDespawnReason(r));});
     public static byte[] Encode(SceneChangeMessage m)=>Write(w=>WriteString(w,m.Scene));
     public static SceneChangeMessage DecodeSceneChange(byte[] p)=>Read(p,r=>new SceneChangeMessage(ReadString(r)));
+    // v0.9.5（P3 WorldState 域）codec：世界事件/flag/时钟/雨
+    private const int MaxWorldEventName = 64;
+    private const int MaxWorldEventPayload = 2048;
+    private const int MaxFlagName = 64;
+    public static byte[] Encode(WorldEventFiredMessage m)=>Write(w=>{GuardUtf8(m.EventName,MaxWorldEventName,"world event name");GuardUtf8(m.Payload,MaxWorldEventPayload,"world event payload");WriteString(w,m.EventName);WriteString(w,m.Payload);w.Write(m.ServerTick);});
+    public static WorldEventFiredMessage DecodeWorldEventFired(byte[] p)=>Read(p,r=>new WorldEventFiredMessage(ReadString(r),ReadString(r),r.ReadInt64()));
+    public static byte[] Encode(FlagBoolChangedMessage m)=>Write(w=>{GuardUtf8(m.Flag,MaxFlagName,"flag name");WriteString(w,m.Flag);w.Write(m.Value);});
+    public static FlagBoolChangedMessage DecodeFlagBoolChanged(byte[] p)=>Read(p,r=>new FlagBoolChangedMessage(ReadString(r),r.ReadBoolean()));
+    public static byte[] Encode(FlagIntChangedMessage m)=>Write(w=>{GuardUtf8(m.Flag,MaxFlagName,"flag name");WriteString(w,m.Flag);w.Write(m.Value);});
+    public static FlagIntChangedMessage DecodeFlagIntChanged(byte[] p)=>Read(p,r=>new FlagIntChangedMessage(ReadString(r),r.ReadInt32()));
+    public static byte[] Encode(ClockStateMessage m)=>Write(w=>{w.Write(m.HourOfDay);w.Write(m.Day);w.Write(m.Paused);});
+    public static ClockStateMessage DecodeClockState(byte[] p)=>Read(p,r=>new ClockStateMessage(r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
+    public static byte[] Encode(RainStateMessage m)=>Write(w=>{w.Write(m.Active);w.Write(m.Intensity);});
+    public static RainStateMessage DecodeRainState(byte[] p)=>Read(p,r=>new RainStateMessage(r.ReadBoolean(),r.ReadSingle()));
+    private static void GuardUtf8(string s, int maxBytes, string what)
+    {
+        if (s != null && System.Text.Encoding.UTF8.GetByteCount(s) > maxBytes) throw new InvalidOperationException(what + " too long.");
+    }
     private const int SnapshotMax = 256*1024;
     private const int ActionPayloadMax = 64*1024;
     private const int GuestProfileMax = 1024*1024;

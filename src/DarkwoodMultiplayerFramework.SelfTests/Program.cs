@@ -26,6 +26,12 @@ var tests = new (string Name, Action Run)[]
     ("entity delta roundtrip", EntityDeltaRoundtrip),
     ("entity state multi payload roundtrip", EntityStateMultiPayloadRoundtrip),
     ("entity state payload bounds", EntityStatePayloadBounds),
+    ("world event fired roundtrip", WorldEventFiredRoundtrip),
+    ("flag bool roundtrip", FlagBoolRoundtrip),
+    ("flag int roundtrip", FlagIntRoundtrip),
+    ("clock state roundtrip", ClockStateRoundtrip),
+    ("rain state roundtrip", RainStateRoundtrip),
+    ("world event name bounds", WorldEventNameBounds),
     ("inventory state roundtrip", InventoryStateRoundtrip),
     ("player pose roundtrip", PlayerPoseRoundtrip),
     ("action request roundtrip", ActionRequestRoundtrip),
@@ -174,6 +180,37 @@ static void EntityStatePayloadBounds()
     var many=new System.Collections.Generic.List<EntityStatePayload>();for(var i=0;i<9;i++)many.Add(new EntityStatePayload((ushort)(i+1),new byte[]{1}));
     ExpectFailure(()=>ReplicationProtocolCodec.Encode(new EntityDeltaMessage("s",1,new[]{new EntityStateWire(1,true,1,0,0,0,0,0,0,1,1,0,0,0,"",0,1,many.ToArray())},Array.Empty<EntityStateWire>())));
     ExpectFailure(()=>ReplicationProtocolCodec.Encode(new EntityDeltaMessage("s",1,new[]{new EntityStateWire(2,true,1,0,0,0,0,0,0,1,1,0,0,0,"",0,1,new[]{new EntityStatePayload(7,new byte[4097])})},Array.Empty<EntityStateWire>())));
+}
+static void WorldEventFiredRoundtrip()
+{
+    var m = new WorldEventFiredMessage("night_scenario:forest_hunt", "{\"kind\":1}", 4242);
+    var d = ReplicationProtocolCodec.DecodeWorldEventFired(ReplicationProtocolCodec.Encode(m));
+    Require(d.EventName == "night_scenario:forest_hunt" && d.Payload == "{\"kind\":1}" && d.ServerTick == 4242);
+}
+static void FlagBoolRoundtrip()
+{
+    var d = ReplicationProtocolCodec.DecodeFlagBoolChanged(ReplicationProtocolCodec.Encode(new FlagBoolChangedMessage("quest:knight_door", true)));
+    Require(d.Flag == "quest:knight_door" && d.Value);
+}
+static void FlagIntRoundtrip()
+{
+    var d = ReplicationProtocolCodec.DecodeFlagIntChanged(ReplicationProtocolCodec.Encode(new FlagIntChangedMessage("wolf_den_kills", 7)));
+    Require(d.Flag == "wolf_den_kills" && d.Value == 7);
+}
+static void ClockStateRoundtrip()
+{
+    var d = ReplicationProtocolCodec.DecodeClockState(ReplicationProtocolCodec.Encode(new ClockStateMessage(21.5f, 3, false)));
+    Require(Math.Abs(d.HourOfDay - 21.5f) < .001f && d.Day == 3 && !d.Paused);
+}
+static void RainStateRoundtrip()
+{
+    var d = ReplicationProtocolCodec.DecodeRainState(ReplicationProtocolCodec.Encode(new RainStateMessage(true, 0.8f)));
+    Require(d.Active && Math.Abs(d.Intensity - 0.8f) < .001f);
+}
+static void WorldEventNameBounds()
+{
+    ExpectFailure(() => ReplicationProtocolCodec.Encode(new WorldEventFiredMessage(new string('x', 65), "p", 1)));
+    ExpectFailure(() => ReplicationProtocolCodec.Encode(new FlagBoolChangedMessage(new string('y', 65), false)));
 }
 static void InventoryStateRoundtrip()
 {

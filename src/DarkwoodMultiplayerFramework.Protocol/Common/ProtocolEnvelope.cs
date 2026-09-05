@@ -48,6 +48,12 @@ public enum ProtocolMessageType : ushort
     ContainerReconcile = 74,        // v0.9.2 P0-4：Host → 客户端冲突权威回滚（含 transactionId + 真实 EntityId + slots）
     TransactionReconcile = 75,      // v0.9.2 P0-6：Host → 客户端整事务回滚（含 PlayerInventory + 所有 ContainerMutations 权威快照）
     InventoryTransactionCommit = 76,// v0.9.2 P0-6：原子提交 玩家背包 + N 个容器 mutation（全有/全无）
+    // v0.9.5（P3 WorldState 域）：世界级事件/状态——Host 单点决定，事件广播，Client 只读镜像。
+    WorldEventFired = 77,    // 世界事件触发（夜事件/任务/剧情因果广播；Host 单点）
+    FlagBoolChanged = 78,    // 剧情/任务 bool flag 变化
+    FlagIntChanged = 79,     // 剧情/任务 int flag 变化
+    ClockState = 80,         // 世界时钟（小时/天/暂停）——Host 权威
+    RainState = 81,          // 天气（雨）状态
     TestControl = 200,               // v0.9.2 TestHarness：仅 TestMode 启用，不影响正式协议兼容
     Error = 255
 }
