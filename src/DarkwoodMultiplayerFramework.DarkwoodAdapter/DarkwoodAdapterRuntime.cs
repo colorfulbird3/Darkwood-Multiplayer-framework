@@ -427,22 +427,34 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         "BoxCollider","BoxCollider2D","CircleCollider2D","PolygonCollider2D","CapsuleCollider2D","SphereCollider",
         "Rigidbody","Rigidbody2D","tk2dSprite","tk2dSpriteAnimator","Animator","Animation","TrailRenderer","LineRenderer",
     };
-    /// <summary>P0-H：客户端周期诊断——扫描世界掉落物（itemInv/deathDrop），未注册且在 runtime mirror/replication 之外 = ghost（联机下必须为 0）。</summary>
+    /// <summary>P0-H：客户端周期诊断——扫描世界掉落物（itemInv/deathDrop），未注册且在 runtime mirror/replication 之外 = ghost（联机下必须为 0）。
+    /// v0.9.5 升级：READY 后发现的 ghost 直接销毁（它们是上个存档/本地残留，会造成"带进来"的杂物）；
+    /// 但挂起中的本地 Drop mirror（pendingLocalDropByToken / 旧 PendingLocalDrop，等 Host spawn 复用）绝不误杀。</summary>
     private void ScanGhostDroppedItems()
     {
         if (clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
-        var ghosts = new List<string>();
+        var pending = new System.Collections.Generic.HashSet<Inventory>();
+        foreach (var pv in pendingLocalDropByToken.Values) if (pv != null && pv.gameObject != null) pending.Add(pv);
+        if (PendingLocalDropInventory != null && PendingLocalDropInventory.gameObject != null) pending.Add(PendingLocalDropInventory);
+        var ghosts = new System.Collections.Generic.List<Inventory>();
         foreach (var inv in UnityEngine.Object.FindObjectsOfType<Inventory>())
         {
             if (inv == null) continue;
             if (inv.invType != Inventory.InvType.itemInv && inv.invType != Inventory.InvType.deathDrop) continue;
             if (RuntimeEntities.IsKnownDroppedMirror(inv)) continue;
             if (replication.TryGetId(inv, out _)) continue;
-            var it = inv.slots != null && inv.slots.Count > 0 ? inv.slots[0].invItem : null;
-            ghosts.Add($"{inv.name}@{inv.transform.position} {(it != null ? it.type : "?")}");
-            if (ghosts.Count >= 5) break;
+            if (pending.Contains(inv)) continue;
+            ghosts.Add(inv);
         }
-        if (ghosts.Count > 0) log?.LogWarning($"[RUNTIME-GHOST] 发现 {ghosts.Count} 个本地未注册掉落物（联机下必须为 0）：{string.Join(" | ", ghosts)}");
+        if (ghosts.Count == 0) return;
+        var it = ghosts[0].slots != null && ghosts[0].slots.Count > 0 ? ghosts[0].slots[0].invItem : null;
+        log?.LogWarning($"[RUNTIME-GHOST] 发现 {ghosts.Count} 个本地未注册掉落物（联机下必须为 0），销毁清理：{ghosts[0].name}@{(it != null ? it.type : "?")}");
+        var destroyed = 0;
+        foreach (var inv in ghosts)
+        {
+            if (destroyed >= 8 || inv == null || inv.gameObject == null) break;
+            try { UnityEngine.Object.Destroy(inv.gameObject); destroyed++; } catch (Exception) { }
+        }
     }
 
     private void RunWorldAudit()

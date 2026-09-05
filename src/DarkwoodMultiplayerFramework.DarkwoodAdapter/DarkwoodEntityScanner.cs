@@ -19,8 +19,12 @@ public sealed class DarkwoodEntityScanner
 
             foreach (var component in root.GetComponentsInChildren<Component>(true))
             {
-                if (!(component is Character || component is Door || component is Window || component is Item || component is Inventory))
-                    continue;
+                var isTarget = component is Character || component is Door || component is Window || component is Item || component is Inventory;
+                // P3 灯同步：独立 ItemLight（所在 GO 无任何 Item 祖先）也作为实体入网（Light typed schema 8 同步 on/亮度/断电）。
+                // 已是某个 Item 实体 owner 复合对象（同 GO/祖先有 Item）的 ItemLight 不再单开实体（防双注册）。
+                if (!isTarget && component is ItemLight && component.GetComponentInParent<Item>() == null)
+                    isTarget = true;
+                if (!isTarget) continue;
                 if (component is Character && component.GetComponentInParent<Player>() != null)
                     continue;
                 if (component is Inventory && component.GetComponentInParent<Player>() != null)
