@@ -174,13 +174,23 @@ public sealed class GeneratorStateAdapter : IWorldStateAdapter
         using var r = new BinaryReader(new MemoryStream(state));
         var isOn = r.ReadBoolean(); var fuel = r.ReadSingle(); var lowPower = r.ReadBoolean();
         bool changed = g.isOn != isOn || Math.Abs(g.fuel - fuel) > 0.01f || g.lowPower != lowPower;
-        // 幂等赋值（禁止 toggle）；fuel 为 Host 权威值（客户端绝不 drain）。
+        // 本地电源镜像（借鉴 Coop GeneratorSync.ApplyChanges）：主机权威 isOn 变化时，客户端也执行原版
+        // turnOn()/turnOff()，让「本地电源网络」给本地灯 restorePower/powerDown —— 否则客户端灯永远不会亮。
+        var shouldTurnOn = isOn && !g.isOn;
+        var shouldTurnOff = !isOn && g.isOn;
+        // 幂等赋值（禁止 toggle）；fuel 为 Host 权威值（客户端绝不 drain——但 turnOn 后本地 drain 会被下一次 Host fuel 覆盖）。
         if (g.isOn != isOn) g.isOn = isOn;
         g.fuel = fuel;
         if (g.lowPower != lowPower) g.lowPower = lowPower;
         var item = g.GetComponent<Item>();
         if (item != null && item.isOn != isOn) item.isOn = isOn;
-        if (changed) DarkwoodAdapterRuntime.LogMessage($"[GENERATOR] id={component.gameObject.name} running={isOn} fuel={fuel:F0} powered={!lowPower} source=Host");
+        try
+        {
+            if (shouldTurnOn) g.turnOn();
+            else if (shouldTurnOff) g.turnOff();
+        }
+        catch (Exception) { /* 镜像电源执行失败不影响权威字段 */ }
+        if (changed) DarkwoodAdapterRuntime.LogMessage($"[GENERATOR] id={component.gameObject.name} running={isOn} fuel={fuel:F0} powered={!lowPower} source=Host{(shouldTurnOn ? " +mirror-turnOn" : shouldTurnOff ? " +mirror-turnOff" : "")}");
     }
     public void EnterClientProxyMode(Component component) { /* 客户端仅视觉代理：fuel 由 Host 权威广播，绝不本地 drain */ }
     public void ExitClientProxyMode(Component component) { }

@@ -344,8 +344,8 @@ public sealed class DarkwoodRuntimeEntityService
             // v0.9.0 Trusted Client：drop 发起者本地已用原版 spawnDroppedInvItem 生成了掉落物——
             // 若与本次 Host spawn 匹配（类型/位置），直接复用为 mirror（不重复 Instantiate，杜绝双份/ghost）。
             var pending = runtime.TakePendingLocalDrop(spawn);
-            Inventory dropped;
-            GameObject go;
+            Inventory dropped = null!;
+            GameObject go = null!;
             if (pending != null)
             {
                 dropped = pending;
@@ -354,24 +354,77 @@ public sealed class DarkwoodRuntimeEntityService
             }
             else
             {
-                go = global::Core.AddPrefab("Items/DroppedItem", new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
-                if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
-                dropped = go.GetComponent<Inventory>();
-                if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
+                // 借鉴 Coop DropSync.ApplyCreate：先找「本地已原生存在、同类型、2m 内、未入网」的掉落物 → 收养而非新建（杜绝双份）。
+                var authoritativeType = "";
                 if (spawn.InitialState.Length > 0)
                 {
-                    var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
-                    if (state.Slots.Length > 0)
+                    try
                     {
-                        var s = state.Slots[0];
-                        var slot = dropped.slots[0];
-                        slot.inventory = dropped;
-                        // P0-1：镜像物品必须经原版按 type 创建链（createItem(string,...) → new InvItemClass(type,...) + initialize），
-                        // 绝不复制 DroppedItem prefab 默认 InvItem/UI/baseClass/sprite；InitialState 仅作为权威数据。
-                        if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
-                        slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
-                        try { dropped.refreshItems(); } catch (Exception) { }
-                        runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} slotType={(slot.invItem != null ? slot.invItem.type : "?")} baseClass={(slot.invItem != null && slot.invItem.baseClass != null ? slot.invItem.baseClass.type : "?")} amount={(slot.invItem != null ? slot.invItem.amount : 0)} spriteName=无(世界对象无UI槽，光标UI由Host权威Held重建)");
+                        var st = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
+                        if (st.Slots.Length > 0) authoritativeType = st.Slots[0].Type ?? "";
+                    }
+                    catch (Exception) { }
+                }
+                var adopted = false;
+                if (!string.IsNullOrEmpty(authoritativeType))
+                {
+                    try
+                    {
+                        foreach (var existing in UnityEngine.Object.FindObjectsOfType<Inventory>())
+                        {
+                            if (existing == null || existing.gameObject == null) continue;
+                            if (existing.invType != Inventory.InvType.itemInv && existing.invType != Inventory.InvType.deathDrop) continue;
+                            if (existing.slots == null || existing.slots.Count == 0 || InvItemClass.isNull(existing.slots[0].invItem)) continue;
+                            if (existing.slots[0].invItem.type != authoritativeType) continue;
+                            if (Vector3.Distance(existing.transform.position, new Vector3(spawn.X, spawn.Y, spawn.Z)) > 2f) continue;
+                            if (runtime.replication.TryGetId(existing, out _)) continue;
+                            dropped = existing; go = existing.gameObject; adopted = true;
+                            break;
+                        }
+                    }
+                    catch (Exception) { }
+                }
+                if (adopted)
+                {
+                    runtime.log?.LogInfo($"[DROP-MIRROR] 收养本地原生掉落物（避免双份）：ID {spawn.RuntimeEntityId} type={authoritativeType}");
+                }
+                else
+                {
+                    // 优先用物品自身原型 prefab（ItemsDatabase.getItem(type).item），无则回退通用 DroppedItem（Coop 同策略）。
+                    go = null;
+                    var protoPrefab = (UnityEngine.Object)null;
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(authoritativeType) && Singleton<ItemsDatabase>.Instance != null)
+                        {
+                            var entry = Singleton<ItemsDatabase>.Instance.getItem(authoritativeType, false);
+                            if (entry != null && entry.item != null) protoPrefab = entry.item;
+                        }
+                    }
+                    catch (Exception) { }
+                    var prefabName = protoPrefab != null ? null : "Items/DroppedItem";
+                    if (protoPrefab != null)
+                        go = global::Core.AddPrefab((GameObject)protoPrefab, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                    else
+                        go = global::Core.AddPrefab(prefabName, new Vector3(spawn.X, spawn.Y, spawn.Z), new Quaternion(spawn.Qx, spawn.Qy, spawn.Qz, spawn.Qw), global::Core.ItemContainer);
+                    if (go == null) { runtime.log?.LogWarning($"客户端无法实例化掉落物镜像：prefab {spawn.PrototypeId} 不存在或不可用。"); return; }
+                    dropped = go.GetComponent<Inventory>();
+                    if (dropped == null || dropped.slots == null || dropped.slots.Count == 0) { UnityEngine.Object.Destroy(go); runtime.log?.LogWarning($"掉落物镜像无容器：{spawn.PrototypeId}。"); return; }
+                    if (spawn.InitialState.Length > 0)
+                    {
+                        var state = ReplicationProtocolCodec.DecodeInventoryState(spawn.InitialState);
+                        if (state.Slots.Length > 0)
+                        {
+                            var s = state.Slots[0];
+                            var slot = dropped.slots[0];
+                            slot.inventory = dropped;
+                            // P0-1：镜像物品必须经原版按 type 创建链（createItem(string,...) → new InvItemClass(type,...) + initialize），
+                            // 绝不复制 DroppedItem prefab 默认 InvItem/UI/baseClass/sprite；InitialState 仅作为权威数据。
+                            if (!InvItemClass.isNull(slot.invItem)) slot.invItem.clear();
+                            slot.createItem(s.Type, s.Amount, s.Durability, (InvItem.ModifierQuality)s.Quality, s.Recipe);
+                            try { dropped.refreshItems(); } catch (Exception) { }
+                            runtime.log?.LogInfo($"[DROP-MIRROR] runtimeId={spawn.RuntimeEntityId} authoritativeType={s.Type} amount={s.Amount} prefab={(protoPrefab != null ? "prototype:" + s.Type : "generic")}");
+                        }
                     }
                 }
             }
