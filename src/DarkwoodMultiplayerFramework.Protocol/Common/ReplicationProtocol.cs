@@ -195,6 +195,10 @@ public static class ReplicationProtocolCodec
     public static ClockStateMessage DecodeClockState(byte[] p)=>Read(p,r=>new ClockStateMessage(r.ReadSingle(),r.ReadInt32(),r.ReadBoolean()));
     public static byte[] Encode(RainStateMessage m)=>Write(w=>{w.Write(m.Active);w.Write(m.Intensity);});
     public static RainStateMessage DecodeRainState(byte[] p)=>Read(p,r=>new RainStateMessage(r.ReadBoolean(),r.ReadSingle()));
+    // v0.9.0（Action Sync）：Host 执行某原版副作用后的事件回放消息
+    private const int MaxActionParam = 2048;
+    public static byte[] Encode(ActionExecutedMessage m)=>Write(w=>{w.Write(m.EntityValue);w.Write(m.Persistent);w.Write(m.ActionKey);WriteBytes(w,m.Param,MaxActionParam);w.Write(m.Tick);w.Write(m.ActorId);});
+    public static ActionExecutedMessage DecodeActionExecuted(byte[] p)=>Read(p,r=>new ActionExecutedMessage(r.ReadUInt64(),r.ReadBoolean(),r.ReadByte(),ReadBytes(r,MaxActionParam),r.ReadInt64(),r.ReadInt32()));
     private static void GuardUtf8(string s, int maxBytes, string what)
     {
         if (s != null && System.Text.Encoding.UTF8.GetByteCount(s) > maxBytes) throw new InvalidOperationException(what + " too long.");

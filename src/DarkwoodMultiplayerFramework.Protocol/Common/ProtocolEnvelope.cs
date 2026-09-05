@@ -54,6 +54,7 @@ public enum ProtocolMessageType : ushort
     FlagIntChanged = 79,     // 剧情/任务 int flag 变化
     ClockState = 80,         // 世界时钟（小时/天/暂停）——Host 权威
     RainState = 81,          // 天气（雨）状态
+    ActionExecuted = 82,     // v0.9.0 Action Sync：Host 已执行某原版副作用 → 各端 Replay 同一函数（EntityId+ActionKey+Param+Tick）
     TestControl = 200,               // v0.9.2 TestHarness：仅 TestMode 启用，不影响正式协议兼容
     Error = 255
 }

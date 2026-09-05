@@ -618,7 +618,8 @@ public sealed partial class DarkwoodAdapterRuntime
 
         public bool Handles(ProtocolMessageType type) =>
             type == ProtocolMessageType.EntityDelta || type == ProtocolMessageType.InventoryState ||
-            type == ProtocolMessageType.RuntimeEntitySpawn || type == ProtocolMessageType.RuntimeEntityDespawn;
+            type == ProtocolMessageType.RuntimeEntitySpawn || type == ProtocolMessageType.RuntimeEntityDespawn ||
+            type == ProtocolMessageType.ActionExecuted;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -678,6 +679,13 @@ public sealed partial class DarkwoodAdapterRuntime
                     var despawn = ReplicationProtocolCodec.DecodeRuntimeEntityDespawn(envelope.Payload);
                     if (runtime.clientSession?.Session.Lifecycle.State == ConnectionState.Ready)
                         runtime.RuntimeEntities.HandleDespawn(despawn); // 镜像销毁归服务
+                    break;
+                }
+                case ProtocolMessageType.ActionExecuted:
+                {
+                    // v0.9.0 Action Sync：Host 已执行的原版副作用 → 各端 Replay（含去重）。
+                    try { runtime.Actions?.HandleReceived(runtime, envelope.Payload); }
+                    catch (Exception error) { runtime.log?.LogError($"客户端 ActionExecuted 处理异常（已隔离）：{error}"); }
                     break;
                 }
             }

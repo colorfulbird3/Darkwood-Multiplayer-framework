@@ -29,6 +29,8 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
     IReadOnlyCollection<int> IMultiplayerRuntimeHost.ReadyPeers => readyPeers;
     /// <summary>v0.9.2：Host/Commit handler 内部使用——返回 readyPeers 快照数组（避免 IMultiplayerRuntimeHost 接口暴露可变集合）。</summary>
     public int[] ReadyPeersSnapshot { get { lock (readyPeers) return readyPeers.ToArray(); } }
+    // v0.9.0 Action Sync（三分法）：Host 执行副作用 → 广播 → 各端 Replay 的收口管理器。
+    public Actions.ActionSyncManager? Actions { get; private set; }
     long IMultiplayerRuntimeHost.ServerTick => serverTick;
     DarkwoodEntityReplication IMultiplayerRuntimeHost.Replication => replication;
     DarkwoodPlayerService IMultiplayerRuntimeHost.Players => Players;
@@ -321,6 +323,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
         Players = new DarkwoodPlayerService(this, new DarkwoodRemotePlayers()); // 所有权拆分
         SaveState = new DarkwoodSaveTransferService(this);
         SyncHealth = new SyncHealthStats(this); // v0.9.2 P0-SYNC-HEALTH
+        Actions = new Actions.ActionSyncManager(); // v0.9.0 Action Sync
         World = new DarkwoodWorldAuthorityService(this, RuntimeEntities);
         Players.RemotePlayers.Logger = message => log?.LogInfo(message);
         lastScene = CurrentScene;

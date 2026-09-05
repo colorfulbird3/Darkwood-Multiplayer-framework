@@ -32,6 +32,8 @@ var tests = new (string Name, Action Run)[]
     ("clock state roundtrip", ClockStateRoundtrip),
     ("rain state roundtrip", RainStateRoundtrip),
     ("world event name bounds", WorldEventNameBounds),
+    ("action executed roundtrip", ActionExecutedRoundtrip),
+    ("action executed param bounds", ActionExecutedParamBounds),
     ("inventory state roundtrip", InventoryStateRoundtrip),
     ("player pose roundtrip", PlayerPoseRoundtrip),
     ("action request roundtrip", ActionRequestRoundtrip),
@@ -211,6 +213,18 @@ static void WorldEventNameBounds()
 {
     ExpectFailure(() => ReplicationProtocolCodec.Encode(new WorldEventFiredMessage(new string('x', 65), "p", 1)));
     ExpectFailure(() => ReplicationProtocolCodec.Encode(new FlagBoolChangedMessage(new string('y', 65), false)));
+}
+static void ActionExecutedRoundtrip()
+{
+    var m = new ActionExecutedMessage(0x1234ABCD, true, 7, new byte[] { 1, 2, 3 }, 424242, 1);
+    var d = ReplicationProtocolCodec.DecodeActionExecuted(ReplicationProtocolCodec.Encode(m));
+    Require(d.EntityValue == 0x1234ABCD && d.Persistent && d.ActionKey == 7 && d.Param[2] == 3 && d.Tick == 424242 && d.ActorId == 1);
+    var zero = ReplicationProtocolCodec.DecodeActionExecuted(ReplicationProtocolCodec.Encode(new ActionExecutedMessage(9, false, 0, null, 1, 0)));
+    Require(zero.Param.Length == 0 && !zero.Persistent);
+}
+static void ActionExecutedParamBounds()
+{
+    ExpectFailure(() => ReplicationProtocolCodec.Encode(new ActionExecutedMessage(1, true, 1, new byte[2049], 1, 0)));
 }
 static void InventoryStateRoundtrip()
 {
