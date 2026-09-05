@@ -42,16 +42,10 @@ internal static class DarkwoodDropPatch
             runtime.SubmitDropCommit(captured, _item, player);
             return;
         }
-        // 首帧未捕获到刚生成的掉落物：进重试队列（掉落物可能延迟一帧注册/可发现），1s 内逐帧重试。
-        if (runtime.IsClient)
-        {
-            runtime.QueuePendingDropCapture(_item, player);
-            DarkwoodAdapterRuntime.LogMessage("[DROP] 首帧未捕获到原版掉落物，进入重试队列（≤1s）。");
-        }
-        else
-        {
-            DarkwoodAdapterRuntime.LogMessage("[DROP] 本地原版 spawnDroppedInvItem 后未捕获到对象（诡异）；跳过 DropCommit。");
-        }
+        // 首帧未捕获到刚生成的掉落物：进重试队列（扔掷物可能飞出一段距离/延迟一帧可发现），≤1s 逐帧重试。
+        // Host 本地丢弃也入队（Host 权威路径经 World.DropItem 走正式 Spawn 广播，避免仅本地可见）。
+        runtime.QueuePendingDropCapture(_item, player);
+        DarkwoodAdapterRuntime.LogMessage($"[DROP] 首帧未捕获到原版掉落物，进入重试队列（role={(runtime.IsHost ? "Host" : "Client")}，≤1s）。");
     }
 
     /// <summary>扫描刚由 spawnDroppedInvItem 生成的本地掉落物（未入网、同类型、距玩家 ≤4m）。</summary>
@@ -71,7 +65,7 @@ internal static class DarkwoodDropPatch
                 var inv = DarkwoodDroppedItemAccessor.GetInventory(itemObj);
                 if (inv == null || inv.slots == null || inv.slots.Count == 0 || InvItemClass.isNull(inv.slots[0].invItem)) continue;
                 if (inv.slots[0].invItem.type != _item.type) continue;
-                if (Vector3.Distance(itemObj.transform.position, origin) > 4f) continue;
+                if (Vector3.Distance(itemObj.transform.position, origin) > 12f) continue; // 扔掷会飞出较远；4m 会漏
                 captured = inv; return true;
             }
         }

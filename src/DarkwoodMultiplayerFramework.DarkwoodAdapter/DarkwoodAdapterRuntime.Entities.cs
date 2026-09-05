@@ -257,9 +257,13 @@ public sealed partial class DarkwoodAdapterRuntime
         var id = new EntityId(request.TargetValue, request.TargetPersistent);
         if (!replication.TryGetBinding(id, out var binding) || binding.Primary == null) { RejectAction(peer, request, "ENTITY_NOT_FOUND", 0); return; }
         var comp = binding.Primary;
+        // 发电机实体在权威注册表里的 primary 是 Item（复合对象）；typed 组件在绑定根上 →
+        // 与客户端拦截一致用 GetComponentInChildren 解析，避免 NOT_STATE_OBJECT 误拒。
+        var generator = comp.GetComponent<Generator>() ?? comp.GetComponentInChildren<Generator>(true);
         // 类型化原版执行（禁字符串分发；Host 是唯一 authority）：
-        if (comp is Generator g)
+        if (generator != null)
         {
+            var g = generator;
             // v0.9.2 P0-11：hostBefore/hostAfter/broadcastRevision 区分 old state vs requested outcome
             var hostBefore = g.isOn;
             if (payload.Interaction == "toggle") { if (g.isOn) g.turnOff(); else g.turnOn(); }
@@ -437,8 +441,19 @@ public sealed partial class DarkwoodAdapterRuntime
             {
                 if (p.Player != null && p.Player.gameObject != null && now < p.Until && DarkwoodDropPatch.TryCaptureSpawnedDropped(p.Item, p.Player, out var captured))
                 {
-                    SubmitDropCommit(captured, p.Item, p.Player);
-                    log?.LogInfo($"[DROP] 重试捕获成功 → DropCommit 已上报（{p.Item.type}）。");
+                    if (IsHost)
+                    {
+                        // Host 本地丢弃：走正式 World.DropItem 权威路径（不占 DropCommit 线）。
+                        var payload = DarkwoodDropPatch.BuildPayload(p.Item);
+                        if (payload.Origin != DropOriginWire.PlayerSlot || payload.SlotIndex >= 0)
+                            World.DropItem(0, payload, default, (_, _, _, _) => { });
+                        log?.LogInfo($"[DROP] Host 重试捕获成功 → World.DropItem（{p.Item.type}）。");
+                    }
+                    else
+                    {
+                        SubmitDropCommit(captured, p.Item, p.Player);
+                        log?.LogInfo($"[DROP] 重试捕获成功 → DropCommit 已上报（{p.Item.type}）。");
+                    }
                     ok = true;
                 }
             }
