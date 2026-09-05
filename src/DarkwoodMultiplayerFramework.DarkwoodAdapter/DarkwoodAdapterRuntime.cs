@@ -349,6 +349,7 @@ public sealed partial class DarkwoodAdapterRuntime : MonoBehaviour, IMultiplayer
 
     public void Update()
     {
+        if (UnityEngine.Application.isQuitting) return; // 退出阶段不再执行任何每帧调度（防关闭卡死）
         PollHotkeys();
         try { hostSession?.Tick(); clientSession?.Tick(); }
         catch (Exception error) { FailClient("TRANSPORT_TICK_FAILED",error); }

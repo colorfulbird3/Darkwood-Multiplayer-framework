@@ -827,8 +827,11 @@ public sealed partial class DarkwoodAdapterRuntime
         if(!replication.TryGetComponent(id,out var component)||!(component is Door door)){RejectAction(peer,request,"DOOR_NOT_FOUND",0);return;}
         if(!Players.TryGetRemotePosition(peer,out var pose)){RejectAction(peer,request,"PLAYER_POSE_MISSING",0);return;}
         // FIX-011：信任模型——距离/版本/封板判断全部移除，客户端本地已执行，主机直接执行并广播。
+        var beforeOpen = door.opened;
         door.openClose(Combat.GetAttackAnchor(peer,pose).transform);
-        BroadcastAction(id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.DoorToggle, (byte)(door.opened ? 1 : 0), peer);
+        // 仅状态真变化才广播 Action（防 blocked/重复请求洪泛拖垮退出）。
+        if (door.opened != beforeOpen)
+            BroadcastAction(id, DarkwoodMultiplayerFramework.DarkwoodAdapter.Actions.ActionSyncManager.Keys.DoorToggle, (byte)(door.opened ? 1 : 0), peer);
         AcceptInteract(peer,request,id,door,0);
         log?.LogInfo($"主机已批准开关门 {request.RequestId}：玩家 {peer}，门 {id}。");
     }

@@ -101,7 +101,7 @@ public sealed class ActionSyncManager
     /// <summary>Host 已在原地执行完副作用（inline 路径）时，只负责广播 ActionExecuted 让各端 Replay。</summary>
     public bool BroadcastExecuted(DarkwoodAdapterRuntime runtime, EntityId id, byte actionKey, byte[] param, int actorId = 0)
     {
-        if (runtime == null || !runtime.IsHost) return false;
+        if (runtime == null || !runtime.IsHost || UnityEngine.Application.isQuitting) return false;
         if (!actions.ContainsKey(actionKey)) { runtime.log?.LogWarning($"[ACTION] 广播未注册 key={actionKey}（跳过）。"); return false; }
         var tick = runtime.replication.AllocateRevision();
         var payload = ReplicationProtocolCodec.Encode(new ActionExecutedMessage(id.Value, id.IsPersistent, actionKey, param, (long)tick, actorId));
