@@ -428,6 +428,18 @@ public sealed partial class DarkwoodAdapterRuntime
     {
         pendingLocalDropByToken.Remove(token); pendingLocalDropType.Remove(token); pendingLocalDropAmount.Remove(token); pendingLocalDropPos.Remove(token);
     }
+    // r21：该本地掉落物是否处于「等自己 DropCommit 的 spawn 复用」的 pending 状态——
+    // adopt（远端 spawn 的全场景同类型收养）必须跳过它们，避免主机新 spawn 被误收养到客户端自己刚扔的瓶上。
+    public bool IsLocalDropPending(Inventory inv)
+    {
+        if (inv == null) return false;
+        if (PendingLocalDropInventory != null && ReferenceEquals(PendingLocalDropInventory, inv)) return true;
+        lock (pendingLocalDropByToken)
+        {
+            foreach (var kv in pendingLocalDropByToken) if (kv.Value != null && ReferenceEquals(kv.Value, inv)) return true;
+        }
+        return false;
+    }
     public void TickPendingLocalDrop()
     {
         // 兼容旧 pending（无 token）；按 token 清理超时对象

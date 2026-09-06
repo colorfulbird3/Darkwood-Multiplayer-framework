@@ -89,6 +89,17 @@ public sealed class BearTrapStateAdapter : IWorldStateAdapter
         DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] id={item.name} armed={armed} triggered={triggered} localTriggered={trigger?.triggered} broken={destroyed} visualRefreshed={refreshed} source=Host");
         // r17：客户端把该夹子纳入本地触发 watch（踩中上报；本 Apply 只注册不上报）
         try { DarkwoodAdapterRuntime.Instance?.WatchTrap(item); } catch (Exception) { }
+        // r21：权威合拢刚发生时（Apply 翻转，天然只播一次）→ 在被夹处播 vanilla 受击血渍 FX，
+        // 让远端玩家看到「夹住喷血」视觉（与 Player.getHit 普通受伤同款 Shotsplat_stay）。
+        if (refreshed)
+        {
+            try
+            {
+                var pos = item.transform != null ? item.transform.position : Vector3.zero;
+                global::Core.AddPrefab("FX/Bloodsplats/Shotsplat_stay", pos + new Vector3(0f, 0.15f, 0f), Quaternion.Euler(90f, UnityEngine.Random.Range(0, 360), 0f), null);
+            }
+            catch (Exception error) { DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] 出血 FX 播放失败：{error.Message}"); }
+        }
     }
     public void EnterClientProxyMode(Component component) { }
     public void ExitClientProxyMode(Component component) { }

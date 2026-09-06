@@ -381,6 +381,8 @@ public sealed class DarkwoodRuntimeEntityService
                             if (existing.slots[0].invItem.type != authoritativeType) continue;
                             if (Vector3.Distance(existing.transform.position, new Vector3(spawn.X, spawn.Y, spawn.Z)) > 6f) continue;
                             if (runtime.replication.TryGetId(existing, out _)) continue;
+                            // r21：跳过客户端自己「等 spawn 复用」的 pending 本地掉落物（它们只该被自己的 DropCommitAck 匹配）
+                            if (runtime.IsLocalDropPending(existing)) continue;
                             dropped = existing; go = existing.gameObject; adopted = true;
                             break;
                         }
