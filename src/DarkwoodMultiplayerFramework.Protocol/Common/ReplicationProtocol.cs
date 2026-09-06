@@ -61,7 +61,7 @@ public static class ProtocolVersions
 {
     /// <summary>Envelope framing version (ProtocolEnvelope header). Constant within the framework line.</summary>
     public const int EnvelopeProtocol = 3;
-    public const string Framework = "0.8.9.7-pre.1";
+    public const string Framework = "0.8.9.8-pre.1";
 }
 
 public static class ReplicationProtocolCodec
@@ -203,6 +203,9 @@ public static class ReplicationProtocolCodec
     public static RemoveWorldItemMessage DecodeRemoveWorldItem(byte[] p)=>Read(p,r=>new RemoveWorldItemMessage(r.ReadUInt64(),r.ReadBoolean()));
     public static byte[] Encode(TrapTriggeredMessage m)=>Write(w=>{w.Write(m.EntityValue);w.Write(m.Persistent);});
     public static TrapTriggeredMessage DecodeTrapTriggered(byte[] p)=>Read(p,r=>new TrapTriggeredMessage(r.ReadUInt64(),r.ReadBoolean()));
+    private const int PresentationMaxLen = 512;
+    public static byte[] Encode(PresentationEventMessage m)=>Write(w=>{w.Write(m.Kind);GuardUtf8(m.Target,PresentationMaxLen,"presentation target");GuardUtf8(m.Data,PresentationMaxLen,"presentation data");WriteString(w,m.Target);WriteString(w,m.Data);});
+    public static PresentationEventMessage DecodePresentationEvent(byte[] p)=>Read(p,r=>new PresentationEventMessage(r.ReadByte(),ReadString(r),ReadString(r)));
     private static void GuardUtf8(string s, int maxBytes, string what)
     {
         if (s != null && System.Text.Encoding.UTF8.GetByteCount(s) > maxBytes) throw new InvalidOperationException(what + " too long.");

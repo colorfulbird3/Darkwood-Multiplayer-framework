@@ -57,6 +57,8 @@ public enum ProtocolMessageType : ushort
     ActionExecuted = 82,     // v0.9.0 Action Sync：Host 已执行某原版副作用 → 各端 Replay 同一函数（EntityId+ActionKey+Param+Tick）
     RemoveWorldItem = 83,    // v0.9.0 A3：客户端本地移除的持久世界物（拆夹子等）→ 通知 Host 销毁并广播 despawn
     TrapTriggered = 84,      // v0.9.0（r17）：客户端本地夹子触发（合拢）→ 上报 Host → Host 本体合拢 + 权威广播（双向夹子视觉同步）
+    PresentationEvent = 85,  // v0.9.0（P1）：Host→All 通用瞬时表现事件（气泡/地点发现/外部场景/地图标记/受击音等）——
+                             // {Kind(byte), TargetId(str), Data(str)}，按 kind 扩展语义，无需再改 wire
     TestControl = 200,               // v0.9.2 TestHarness：仅 TestMode 启用，不影响正式协议兼容
     Error = 255
 }

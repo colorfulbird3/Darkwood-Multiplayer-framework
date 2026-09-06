@@ -644,7 +644,10 @@ public sealed partial class DarkwoodAdapterRuntime
         public bool Handles(ProtocolMessageType type) =>
             type == ProtocolMessageType.EntityDelta || type == ProtocolMessageType.InventoryState ||
             type == ProtocolMessageType.RuntimeEntitySpawn || type == ProtocolMessageType.RuntimeEntityDespawn ||
-            type == ProtocolMessageType.ActionExecuted;
+            type == ProtocolMessageType.ActionExecuted ||
+            type == ProtocolMessageType.WorldEventFired || type == ProtocolMessageType.FlagBoolChanged ||
+            type == ProtocolMessageType.FlagIntChanged || type == ProtocolMessageType.ClockState ||
+            type == ProtocolMessageType.RainState || type == ProtocolMessageType.PresentationEvent;
 
         public void Handle(PeerContext peer, ProtocolEnvelope envelope)
         {
@@ -711,6 +714,42 @@ public sealed partial class DarkwoodAdapterRuntime
                     // v0.9.0 Action Sync：Host 已执行的原版副作用 → 各端 Replay（含去重）。
                     try { runtime.Actions?.HandleReceived(runtime, envelope.Payload); }
                     catch (Exception error) { runtime.log?.LogError($"客户端 ActionExecuted 处理异常（已隔离）：{error}"); }
+                    break;
+                }
+                case ProtocolMessageType.WorldEventFired:
+                {
+                    try { runtime.ClientApplyWorldEventFired(ReplicationProtocolCodec.DecodeWorldEventFired(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 worldEvent 处理异常：{error.Message}"); }
+                    break;
+                }
+                case ProtocolMessageType.FlagBoolChanged:
+                {
+                    try { runtime.ClientApplyFlag(ReplicationProtocolCodec.DecodeFlagBoolChanged(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 flag 处理异常：{error.Message}"); }
+                    break;
+                }
+                case ProtocolMessageType.FlagIntChanged:
+                {
+                    try { runtime.ClientApplyFlag(ReplicationProtocolCodec.DecodeFlagIntChanged(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 flag 处理异常：{error.Message}"); }
+                    break;
+                }
+                case ProtocolMessageType.ClockState:
+                {
+                    try { runtime.ClientApplyClock(ReplicationProtocolCodec.DecodeClockState(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 clock 处理异常：{error.Message}"); }
+                    break;
+                }
+                case ProtocolMessageType.RainState:
+                {
+                    try { runtime.ClientApplyRain(ReplicationProtocolCodec.DecodeRainState(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 rain 处理异常：{error.Message}"); }
+                    break;
+                }
+                case ProtocolMessageType.PresentationEvent:
+                {
+                    try { runtime.ClientApplyPresentation(ReplicationProtocolCodec.DecodePresentationEvent(envelope.Payload)); }
+                    catch (Exception error) { runtime.log?.LogWarning($"客户端 presentation 处理异常：{error.Message}"); }
                     break;
                 }
             }
