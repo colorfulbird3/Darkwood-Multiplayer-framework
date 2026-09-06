@@ -96,7 +96,11 @@ public sealed class BearTrapStateAdapter : IWorldStateAdapter
             try
             {
                 var pos = item.transform != null ? item.transform.position : Vector3.zero;
-                global::Core.AddPrefab("FX/Bloodsplats/Shotsplat_stay", pos + new Vector3(0f, 0.15f, 0f), Quaternion.Euler(90f, UnityEngine.Random.Range(0, 360), 0f), null);
+                Vector3 ground;
+                try { ground = global::Core.getYPos(pos, global::PosType.items1); }
+                catch (Exception) { ground = pos; }
+                var fxGo = global::Core.AddPrefab("FX/Bloodsplats/Shotsplat_stay", ground + new Vector3(0f, 0.08f, 0f), Quaternion.Euler(90f, UnityEngine.Random.Range(0, 360), 0f), null);
+                DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP-FX] 出血播发 item={item.name} pos=({pos.x:F0},{pos.y:F0},{pos.z:F0}) ground=({ground.x:F0},{ground.y:F0},{ground.z:F0}) goNull={(fxGo == null ? "是" : "否")}");
             }
             catch (Exception error) { DarkwoodAdapterRuntime.LogMessage($"[BEARTRAP] 出血 FX 播放失败：{error.Message}"); }
         }
