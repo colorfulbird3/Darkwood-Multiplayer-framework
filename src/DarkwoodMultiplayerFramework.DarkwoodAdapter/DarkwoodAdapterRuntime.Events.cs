@@ -23,6 +23,7 @@ public static class PresentationKinds
     public const byte OutsideLocationEntered = 3;// Target: locationName
     public const byte OutsideLocationReturned = 4;// Data: "b,b"
     public const byte MapMarkerShown = 5;        // Target: elementName
+    public const byte ExplodeActivate = 10;      // Data: "x,y,z"（爆炸物世界坐标，client 端按位置找 Explodes 归零复演）
 }
 
 public sealed partial class DarkwoodAdapterRuntime
@@ -202,13 +203,7 @@ public sealed partial class DarkwoodAdapterRuntime
     private void ClientApplyPresentation(PresentationEventMessage m)
     {
         if (!IsClient || clientSession?.Session.Lifecycle.State != ConnectionState.Ready) return;
-        // kind 分派：P1 仅登记；气泡/发现/外部场景/标记的具体复演随 P3 扩展，避免死代码。
-        switch (m.Kind)
-        {
-            default:
-                log?.LogInfo($"[EVENT] client 收到 presentation kind={m.Kind} target={m.Target} data={m.Data}（复演待接入）");
-                break;
-        }
+        ClientReplayPresentation(m); // 分派实现在 DarkwoodAdapterRuntime.Presentation.cs
     }
 }
 
